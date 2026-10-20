@@ -170,7 +170,7 @@ test("record, index and receipt commit atomically even when the final insert fai
   } finally { raw.close(); }
 });
 
-test("database lock is bounded and never reported as saved or queued", async t => {
+test("database lock is bounded and never reported as saved", async t => {
   const f = fixture(t);
   const p = await project(f.call);
   const r = await run(f.call, p);

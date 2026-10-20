@@ -86,6 +86,7 @@ export class MemoryService {
         kind: input.kind, body: input.body, environment: run.environment, repository: run.repository,
         source_fingerprint: input.source_fingerprint ?? null,
         observed_at: observedAt, recorded_at: now, supersedes: input.supersedes ?? null, superseded_by: null,
+        report_origin: input.report_origin ?? "unspecified",
       };
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
@@ -93,6 +94,7 @@ export class MemoryService {
         result: {
           status: "persisted", record_id: record.id, knowledge_status: "unknown",
           provenance: "agent_report", project_revision: project.revision + 1,
+          report_origin: record.report_origin,
         },
       };
     });
@@ -108,6 +110,7 @@ export class MemoryService {
         topic: "task-summary", kind: "summary", body: input.summary,
         environment: run.environment, repository: run.repository, source_fingerprint: null,
         observed_at: now, recorded_at: now, supersedes: null, superseded_by: null,
+        report_origin: input.report_origin ?? "unspecified",
       };
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
@@ -115,6 +118,7 @@ export class MemoryService {
         result: {
           status: "persisted", run_id: run.id, state: input.outcome, record_id: record.id,
           knowledge_status: "unknown", provenance: "agent_report",
+          report_origin: record.report_origin,
         },
       };
     });
@@ -160,6 +164,7 @@ export class MemoryService {
         provenance: "agent_report", knowledge_status: recordStatus(record, input.source_fingerprint),
         observed_at: record.observed_at, recorded_at: record.recorded_at,
         source_fingerprint: record.source_fingerprint, superseded_by: record.superseded_by,
+        report_origin: record.report_origin,
       });
       // Leave space for cursor metadata, independent of character width in UTF-8.
       if (encoder.encode(JSON.stringify(response)).byteLength > CONTEXT_BYTES - 1024) {

@@ -6,6 +6,7 @@ export class MemoryError extends Error {
     public readonly code: string,
     message: string,
     public readonly retryable = false,
+    public readonly recovery?: JsonObject,
   ) {
     super(message);
     this.name = "MemoryError";
@@ -48,6 +49,7 @@ export interface MemoryRecord {
   recorded_at: string;
   supersedes: string | null;
   superseded_by: string | null;
+  report_origin: "unspecified" | "contemporaneous" | "retrospective";
 }
 
 export interface RegisterProjectInput {
@@ -75,6 +77,7 @@ export interface CheckpointInput {
   observed_at?: string | undefined;
   supersedes?: string | undefined;
   idempotency_key: string;
+  report_origin?: MemoryRecord["report_origin"] | undefined;
 }
 
 export interface FinishTaskInput {
@@ -83,6 +86,7 @@ export interface FinishTaskInput {
   summary: string;
   outcome: "completed" | "interrupted";
   idempotency_key: string;
+  report_origin?: MemoryRecord["report_origin"] | undefined;
 }
 
 export interface QueryInput {

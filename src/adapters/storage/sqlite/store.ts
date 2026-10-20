@@ -31,8 +31,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 1) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 1) return;
+    if (version > 2) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 2) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -41,6 +41,9 @@ export class SqliteMemoryStore implements MemoryStore {
         if (tables !== 0) throw new MemoryError("foreign_database", "Refusing to initialize a nonempty database.");
         const migration = readFileSync(new URL("../../../../migrations/001-local-memory.sql", import.meta.url), "utf8");
         this.db.exec(migration);
+      }
+      if (lockedVersion < 2) {
+        this.db.exec(readFileSync(new URL("../../../../migrations/002-recovery.sql", import.meta.url), "utf8"));
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -66,6 +69,13 @@ export class SqliteMemoryStore implements MemoryStore {
   async getRun(projectId: string, runId: string): Promise<Run | undefined> {
     const row = this.db.prepare("SELECT * FROM runs WHERE project_id = ? AND id = ?").get(projectId, runId);
     return row ? runFrom(row) : undefined;
+  }
+
+  async unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number): Promise<Run[]> {
+    return this.db.prepare(`SELECT * FROM runs
+      WHERE project_id = ? AND repository = ? AND environment = ? AND state IN ('active', 'interrupted')
+      ORDER BY updated_at ASC, id ASC LIMIT ? OFFSET ?`)
+      .all(projectId, repository, environment, limit, offset).map(runFrom);
   }
 
   async getRecord(projectId: string, recordId: string): Promise<MemoryRecord | undefined> {
@@ -143,10 +153,10 @@ export class SqliteMemoryStore implements MemoryStore {
       if (change.record) {
         const r = change.record;
         this.db.prepare(`INSERT INTO records
-          (id, project_id, run_id, topic, kind, body, environment, repository, source_fingerprint, observed_at, recorded_at, supersedes, superseded_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          (id, project_id, run_id, topic, kind, body, environment, repository, source_fingerprint, observed_at, recorded_at, supersedes, superseded_by, report_origin)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(r.id, r.project_id, r.run_id, r.topic, r.kind, r.body, r.environment, r.repository, r.source_fingerprint,
-            r.observed_at, r.recorded_at, r.supersedes, r.superseded_by);
+            r.observed_at, r.recorded_at, r.supersedes, r.superseded_by, r.report_origin);
         if (r.supersedes) {
           const updated = this.db.prepare("UPDATE records SET superseded_by = ? WHERE project_id = ? AND id = ? AND superseded_by IS NULL")
             .run(r.id, r.project_id, r.supersedes);
@@ -195,6 +205,10 @@ function runFrom(row: Row): Run {
 }
 function recordFrom(row: Row): MemoryRecord {
   const kind = string(row, "kind");
+  const origin = string(row, "report_origin");
+  if (origin !== "unspecified" && origin !== "contemporaneous" && origin !== "retrospective") {
+    throw new MemoryError("invalid_data", "Invalid report origin.");
+  }
   if (kind !== "note" && kind !== "decision" && kind !== "change" && kind !== "issue" && kind !== "summary") {
     throw new MemoryError("invalid_data", "Invalid record kind.");
   }
@@ -204,6 +218,7 @@ function recordFrom(row: Row): MemoryRecord {
     environment: string(row, "environment"), repository: string(row, "repository"),
     source_fingerprint: nullable(row, "source_fingerprint"), observed_at: string(row, "observed_at"),
     recorded_at: string(row, "recorded_at"), supersedes: nullable(row, "supersedes"), superseded_by: nullable(row, "superseded_by"),
+    report_origin: origin,
   };
 }
 function storageError(error: unknown): Error {

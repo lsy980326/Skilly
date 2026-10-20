@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { MemoryError, type JsonObject } from "../core/memory/model.js";
+import { MemoryError, parseJsonObject, type JsonObject } from "../core/memory/model.js";
+import { isRecoverableWrite, type WriteRecovery } from "../core/memory/recovery.js";
 import type { MemoryService } from "../core/memory/service.js";
 import type { BoundMemory } from "../core/memory/binding.js";
 
@@ -10,11 +11,13 @@ const id = z.uuid();
 const key = z.string().min(1).max(128);
 const scope = z.string().trim().min(1).max(100);
 const body = z.string().min(1).max(16_000).refine(value => value.trim().length > 0, "Content cannot be blank.");
+const reportOrigin = z.enum(["unspecified", "contemporaneous", "retrospective"]).optional();
 const projectId = { project_id: id };
 const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
-export function createTools(service: MemoryService, bound?: BoundMemory): Record<string, ToolDefinition> {
+export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -48,13 +51,14 @@ export function createTools(service: MemoryService, bound?: BoundMemory): Record
         source_fingerprint: z.string().min(1).max(256).optional(),
         observed_at: z.iso.datetime({ offset: true }).transform(value => new Date(value).toISOString()).optional(),
         supersedes: id.optional(),
+        report_origin: reportOrigin,
       }),
       input => service.checkpoint(input),
     ),
     memory_finish_task: define(
       "Close a local SQLite task with a supplied summary. completed means the run ended; it does not verify the claims.",
       false,
-      z.strictObject({ ...runId, ...idempotency, summary: body, outcome: z.enum(["completed", "interrupted"]) }),
+      z.strictObject({ ...runId, ...idempotency, summary: body, outcome: z.enum(["completed", "interrupted"]), report_origin: reportOrigin }),
       input => service.finishTask(input),
     ),
     memory_query_context: define(
@@ -81,9 +85,29 @@ export function createTools(service: MemoryService, bound?: BoundMemory): Record
       "Read a local SQLite task's state and capture limitations. No polling is needed during ordinary work.",
       true,
       z.strictObject(runId),
-      input => service.getStatus(input.project_id, input.run_id),
+      async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery) }),
     ),
   };
+  if (recovery && retry) {
+    const recoveryScope = {
+      ...projectId,
+      repository: scope.default(bound?.binding.repository ?? "default"),
+      environment: scope.default(bound?.binding.environment ?? "development"),
+    };
+    tools["memory_recovery_status"] = define(
+      "Read unfinished/interrupted tasks and retained write requests. Active is not proof of a crash. Reads never retry or finish a task. Saved receipts do not verify report content.",
+      true,
+      z.strictObject({ ...recoveryScope, limit: z.int().min(1).max(20).default(10),
+        offset: z.int().min(0).max(1_000_000).default(0), request_id: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
+      input => recovery.status(input),
+    );
+    tools["memory_retry_write"] = define(
+      "Retry one retained request unchanged using its original key, or return its saved receipt. No automatic replay. Honor recording opt-out; never reconstruct missing payload or take over another session's active task.",
+      false,
+      z.strictObject({ ...recoveryScope, request_id: z.string().regex(/^[a-f0-9]{64}$/) }),
+      input => recovery.retry(input, retry),
+    );
+  }
   if (!bound) return tools;
   const { memory_register_project: _register, memory_list_projects: _list, ...scopedTools } = tools;
   return {
@@ -127,8 +151,8 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService, private readonly bound?: BoundMemory) {
-    this.tools = createTools(service, bound);
+  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input));
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {
@@ -147,6 +171,9 @@ export class ToolDispatcher {
       const parsed = definition.schema.safeParse(input);
       if (!parsed.success) throw new MemoryError("invalid_input", "Invalid tool input.");
       await this.bound?.assertScope(name, parsed.data);
+      if (this.recovery && isRecoverableWrite(name)) {
+        return this.recovery.execute(name, parseJsonObject(JSON.stringify(parsed.data)), () => definition.invoke(parsed.data));
+      }
       return definition.invoke(parsed.data);
     });
     this.pending.add(task);
@@ -162,7 +189,8 @@ export class ToolDispatcher {
 
 export function errorResult(error: unknown): JsonObject {
   if (error instanceof MemoryError) {
-    return { status: "rejected", error: { code: error.code, message: error.message, retryable: error.retryable } };
+    return { status: "rejected", error: { code: error.code, message: error.message, retryable: error.retryable },
+      ...(error.recovery ? { recovery: error.recovery } : {}) };
   }
   return { status: "rejected", error: { code: "internal_error", message: "The operation failed. Persistence is not confirmed.", retryable: false } };
 }

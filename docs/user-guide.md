@@ -57,6 +57,8 @@ npm run memory:inspect -- \
 본문은 최대 240자로 줄여 보여주며 전체 대화 로그를 출력하지 않는다.
 작업이 많으면 `--limit 10`, 특정 작업만 보려면 `--run 작업_UUID`,
 JSON 결과가 필요하면 `--json`을 추가한다. 다른 프로젝트에서는 경로를 맞춘다.
+미완료·중단 작업과 복구 보관 요청은 `--attention`으로 확인한다.
+복구 절차와 당시/소급 보고의 차이는 [중단·저장 실패 복구](recovery.md)를 따른다.
 
 확인할 것은 작업 ID, 변경 기록(`change` 등), 종료 요약(`summary`)의 존재다.
 변경이 없는 질문·검토 작업에는 변경 기록이 없을 수 있다.
@@ -90,7 +92,8 @@ node scripts/verify-codex.mjs --configured \
   --codex /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
 ```
 
-`sessions` 두 항목의 `mcp_connected: true`와 `tools: 7`을 확인한다.
+`sessions` 두 항목의 `mcp_connected: true`를 확인한다. 기본 기록 도구는 7개이며,
+복구 기능을 포함한 새 서버는 9개와 `recovery_tools_available: true`를 반환한다.
 `connection_check_passed: true`는 두 새 프로세스의 연결 검사 성공이며,
 현재 채팅이 복구됐다는 뜻은 아니다. `host_hooks_and_plugins_preserved: true`로
 기존 훅·플러그인을 유지한 검사임을 표시한다.

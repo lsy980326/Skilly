@@ -6,6 +6,8 @@ import { MemoryError } from "../../core/memory/model.js";
 import { SqliteMemoryStore } from "../../adapters/storage/sqlite/store.js";
 import { ToolDispatcher } from "../../transport/tools.js";
 import { BoundMemory, type ProjectBinding } from "../../core/memory/binding.js";
+import { WriteRecovery } from "../../core/memory/recovery.js";
+import { SqliteRecoveryJournal } from "../../adapters/storage/sqlite/recovery-journal.js";
 
 export function openLocal(path: string, binding?: ProjectBinding) {
   if (!isAbsolute(path)) throw new MemoryError("invalid_path", "Use an absolute local database path.");
@@ -17,16 +19,19 @@ export function openLocal(path: string, binding?: ProjectBinding) {
   }
   if (!lstatSync(path).isFile()) throw new MemoryError("invalid_path", "The database must be a regular local file.");
   const store = new SqliteMemoryStore(path);
-  const service = new MemoryService(store, {
+  const context = {
     id: randomUUID, now: () => new Date().toISOString(),
-    hash: value => createHash("sha256").update(canonical(value)).digest("hex"),
-  });
-  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined);
+    hash: (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex"),
+  };
+  const service = new MemoryService(store, context);
+  const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
+  const recovery = new WriteRecovery(store, journal, context);
+  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery);
   let closing: Promise<void> | undefined;
   return {
     dispatcher,
     close() {
-      closing ??= dispatcher.drain().then(() => { store.close(); });
+      closing ??= dispatcher.drain().then(() => { journal.close(); store.close(); });
       return closing;
     },
   };

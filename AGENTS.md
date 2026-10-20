@@ -32,3 +32,9 @@ Never claim that missing records were saved or queued. Never work around a trust
 decision, silently switch to CLI/direct DB writes, add a network fallback, or read
 private config/auth/transcript files. If the user asks not to record, stop all
 memory writes; their opt-out permits the requested work without a recording gate.
+
+When recovery tools are available, inspect unfinished tasks and retained requests
+after reconnecting. Retry only the original request for authorized work, preserving
+its key and input. Do not auto-close another session's active run. Later reconstructed
+reports must use `report_origin: retrospective`; their storage receipt never verifies
+the claimed work. An unavailable/full journal is not a successful queue receipt.

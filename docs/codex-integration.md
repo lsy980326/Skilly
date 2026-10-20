@@ -8,6 +8,8 @@ Skilly는 **Codex가 필요할 때 호출하는 로컬 MCP 서버**다. Codex의
 현재 지침은 기록을 사용하는 일반 구현을 시작 저장 성공 전에는 진행하지 않는다.
 도구 미노출·시작 저장 실패·체크포인트 실패 시 추가 구현을 멈춘다.
 사용자의 기록 거부, 읽기 전용 답변, 명시적으로 요청한 연결 수리는 별도로 처리한다.
+새 서버의 복구 도구 2개는 보관된 원래 저장 요청을 확인·재시도한다.
+재연결과 소급 보고의 구분은 [복구 안내](recovery.md)를 따른다.
 
 ## 지원 방식 확인
 
@@ -119,7 +121,7 @@ tool_timeout_sec = 10
 |---|---|
 | `src/adapters/project/binding.ts` | 지정된 루트의 식별 파일만 제한된 크기로 읽기 |
 | `src/core/memory/binding.ts` | 프로젝트 식별 및 요청의 프로젝트·저장소·환경 일치 확인 |
-| `src/core/memory/service.ts` | 기존 작업·기록·이력 규칙. SQLite schema 변경 없음 |
+| `src/core/memory/service.ts` | 작업·기록·이력 규칙과 보고 작성 시점 구분. 복구 추가 시 SQLite v2로 확장 |
 | `src/transport/tools.ts` | 기존 JSON 계약 유지, 연결 범위에 맞는 기본값 |
 | `src/transport/mcp/server.ts` | 연결 초기화 시 로컬 작업 기록 절차와 미검증 원칙 안내 |
 | `scripts/setup-codex.mjs` | 로컬 MCP 설정과 스킬 설치. 기존 설정 보존 |
@@ -127,9 +129,9 @@ tool_timeout_sec = 10
 | `scripts/verify-codex.mjs` | 실제 Codex 프로토콜 연결 점검. 일반 테스트와 별도 실행 |
 | `scripts/inspect-memory.mjs` | 기존 로컬 DB를 읽기 전용으로 열어 작업·기록 ID와 상태 확인. 자동 기록 대체 경로가 아님 |
 
-`--project` 없는 기존 CLI/MCP는 기존 8개 도구를 유지한다.
+`--project` 없는 CLI/MCP는 기존 8개 도구와 복구 도구 2개를 제공한다.
 프로젝트 연결 모드에서는 등록·프로젝트 목록 대신 `memory_resolve_project({})`를
-노출해 총 7개 도구를 제공한다. 조회·기록 도구의 기존 `project_id` 계약은 유지한다.
+노출해 총 9개 도구를 제공한다. 조회·기록 도구의 기존 `project_id` 계약은 유지한다.
 설정 범위와 다른 프로젝트·repository·environment·작업·원문 접근은 거부한다.
 `memory_resolve_project`만 최초 프로젝트를 등록하며 조회 요청은 등록하지 않는다.
 

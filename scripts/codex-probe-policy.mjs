@@ -10,6 +10,7 @@ export const REQUIRED_TOOLS = [
   "memory_resolve_project", "memory_query_context", "memory_begin_task",
   "memory_checkpoint", "memory_finish_task", "memory_get_evidence", "memory_get_status",
 ];
+const RECOVERY_TOOLS = ["memory_recovery_status", "memory_retry_write"];
 
 export function inspectInventory(inventory) {
   const server = inventory.data?.find(entry => entry.name === "skilly");
@@ -19,6 +20,7 @@ export function inspectInventory(inventory) {
   return {
     server_listed: Boolean(server), mcp_connected: Boolean(server) && missing.length === 0,
     tools: names.length, missing_tools: missing,
+    recovery_tools_available: RECOVERY_TOOLS.every(tool => names.some(name => name === tool || name.endsWith(`__${tool}`))),
   };
 }
 
