@@ -77,7 +77,15 @@ test("configured MCP completes work and a new session retrieves only unverified 
     return JSON.parse(reply.content[0].text);
   };
   const first = await connect();
-  assert.equal((await first.listTools()).tools.length, 7);
+  const tools = (await first.listTools()).tools;
+  assert.equal(tools.length, 7);
+  // The workflow must reach a real MCP client before any individual tool call.
+  assert.ok(first.getInstructions()?.includes("local SQLite"));
+  assert.ok(first.getInstructions()?.includes("unverified"));
+  for (const tool of tools) {
+    assert.equal(tool.annotations.openWorldHint, false);
+    assert.equal(tool.annotations.destructiveHint, false);
+  }
   const pid = (await call(first, "memory_resolve_project", {})).project.id;
   const task = { project_id: pid, goal: "댓글 기능", mode: "change", idempotency_key: "start" };
   const run = (await call(first, "memory_begin_task", task)).run.id;

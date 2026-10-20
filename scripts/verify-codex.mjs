@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import assert from "node:assert/strict";
+import { guardedProbeRequest, inspectInventory, probeOverrides } from "./codex-probe-policy.mjs";
 
 // A manual integration check, intentionally separate from npm test.
 // No model turn is sent. macOS enforces network denial for Codex and its children.
@@ -22,29 +23,18 @@ const main = fileURLToPath(new URL("../dist/runtime/local/main.js", import.meta.
 const mcp = { command: process.execPath, args: [main, "serve", "--project", root, "--db", values.db], cwd: root };
 const version = spawnSync("/usr/bin/sandbox-exec", ["-p", policy, executable, "--version"], { encoding: "utf8", timeout: 10_000 });
 assert.equal(version.status, 0, "Codex version check failed.");
-const configured = spawnSync("/usr/bin/sandbox-exec", ["-p", policy, executable, "-C", root, "mcp", "get", "skilly", "--json"],
-  { encoding: "utf8", timeout: 10_000 });
-// Do not print any user configuration. Only compare the expected Skilly fields.
-let configMatches = false;
-if (configured.status === 0) {
-  const config = JSON.parse(configured.stdout);
-  configMatches = config.transport?.command === mcp.command
-    && JSON.stringify(config.transport?.args) === JSON.stringify(mcp.args)
-    && config.transport?.cwd === root;
-}
-const inline = `{ skilly = { command = ${JSON.stringify(mcp.command)}, args = ${JSON.stringify(mcp.args)}, cwd = ${JSON.stringify(root)} } }`;
-const options = [
-  ...values.configured ? [] : ["-c", `mcp_servers=${inline}`],
-  "-c", "plugins={}",
-  "-c", "features.hooks=false", "-c", "features.apps=false",
-  "-c", "analytics.enabled=false",
-];
+// Do not request raw configuration: MCP entries can contain credentials.
+// In configured mode, --db describes the expected target; inventory alone
+// cannot prove which database the installed server uses.
+const options = probeOverrides(values.configured, mcp);
 const reports = [];
+let approvalRequests = 0;
 let projectTrustWarning = false;
 let projectId;
 let recordId;
 const probe = randomUUID();
 for (let session = 0; session < 2; session++) {
+  if (projectTrustWarning || approvalRequests > 0) break;
   const child = spawn("/usr/bin/sandbox-exec", ["-p", policy, executable, ...options, "-C", root, "app-server", "--stdio"],
     { cwd: root, stdio: "pipe" });
   child.stderr.resume();
@@ -77,11 +67,12 @@ for (let session = 0; session < 2; session++) {
         else entry?.resolve(message.result);
       } else if (message.id !== undefined) {
         // Never approve interactive requests from a diagnostic script.
+        approvalRequests++;
         child.stdin.write(`${JSON.stringify({ id: message.id, error: { code: -32601, message: "Unsupported by read-only diagnostic host." } })}\n`);
       }
     }
   });
-  const request = (method, params) => new Promise((resolve, reject) => {
+  const request = guardedProbeRequest((method, params) => new Promise((resolve, reject) => {
     const id = ++sequence;
     const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Timed out: ${method}`)); }, 20_000);
     pending.set(id, {
@@ -89,7 +80,7 @@ for (let session = 0; session < 2; session++) {
       reject: error => { clearTimeout(timer); reject(error); },
     });
     child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
-  });
+  }), () => projectTrustWarning || approvalRequests > 0);
   try {
     await request("initialize", {
       clientInfo: { name: "skilly_local_connection_check", version: "0.1.0" },
@@ -100,18 +91,17 @@ for (let session = 0; session < 2; session++) {
     const skill = skills.data?.flatMap(entry => entry.skills).find(entry =>
       entry.name === "use-skilly" && entry.path === join(root, ".agents/skills/use-skilly/SKILL.md"));
     assert.ok(skill, "Codex did not discover the installed use-skilly skill.");
+    const dependencyDeclared = skill.dependencies?.tools?.some(tool => tool.type === "mcp" && tool.value === "skilly") ?? false;
     const thread = await request("thread/start", { cwd: root, ephemeral: true });
     const threadId = thread.thread.id;
     const inventory = await request("mcpServerStatus/list", { threadId });
     // Some Codex distributions inject built-in servers. Never invoke them.
-    const skilly = inventory.data.find(server => server.name === "skilly");
-    if (!skilly && values.configured) {
-      reports.push({ session: session + 1, skill_discovered: true, mcp_connected: false, tools: 0, other_servers_invoked: 0 });
+    const connection = inspectInventory(inventory);
+    if (!connection.mcp_connected && values.configured) {
+      reports.push({ session: session + 1, skill_discovered: true, mcp_dependency_declared: dependencyDeclared, ...connection, other_servers_invoked: 0 });
       break;
     }
-    assert.ok(skilly, "Skilly server is missing from Codex inventory.");
-    const toolNames = Object.keys(skilly.tools);
-    assert.ok(toolNames.some(name => name.endsWith("memory_resolve_project")), "Skilly tools not connected.");
+    assert.ok(connection.mcp_connected, "Skilly workflow tools are missing from Codex inventory.");
     const call = async (tool, args) => {
       const result = await request("mcpServer/tool/call", { threadId, server: "skilly", tool, arguments: args });
       assert.notEqual(result.isError, true, `${tool} failed.`);
@@ -149,7 +139,7 @@ for (let session = 0; session < 2; session++) {
       }
     }
     reports.push({
-      session: session + 1, skill_discovered: true, mcp_connected: true, tools: toolNames.length,
+      session: session + 1, skill_discovered: true, mcp_dependency_declared: dependencyDeclared, ...connection,
       other_servers_invoked: 0,
     });
   } finally {
@@ -161,10 +151,16 @@ for (let session = 0; session < 2; session++) {
     clearTimeout(forced);
   }
 }
-const connected = reports.length === 2 && reports.every(report => report.mcp_connected);
+const connected = reports.length === 2 && reports.every(report => report.mcp_connected)
+  && !projectTrustWarning && approvalRequests === 0;
 if (!connected) process.exitCode = 1;
 process.stdout.write(`${JSON.stringify({
-  codex: version.stdout.trim(), effective_mcp_config_matches: configMatches,
+  codex: version.stdout.trim(), effective_mcp_config_matches: null,
+  configuration_inspection: "not requested; no raw config read or comparison",
+  verification_scope: "two new app-server processes, not the calling desktop chat",
+  installed_database_target_verified: false,
+  host_hooks_and_plugins_preserved: true, approval_requests_declined: approvalRequests,
+  connection_check_passed: connected,
   connection_configuration: values.configured
     ? "installed configuration; no MCP override or trust setting change"
     : "explicit CLI override; no trust setting changed",

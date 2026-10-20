@@ -5,3 +5,10 @@ interface:
 
 policy:
   allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "skilly"
+      description: "Installed local Skilly SQLite memory; no uploads or model calls"
+      transport: "stdio"
