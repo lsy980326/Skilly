@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MemoryError, type JsonObject } from "../core/memory/model.js";
 import type { MemoryService } from "../core/memory/service.js";
+import type { BoundMemory } from "../core/memory/binding.js";
 
 export const MAX_INPUT_BYTES = 128 * 1024;
 export const MAX_FRAME_BYTES = 160 * 1024;
@@ -13,8 +14,8 @@ const projectId = { project_id: id };
 const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
-export function createTools(service: MemoryService) {
-  return {
+export function createTools(service: MemoryService, bound?: BoundMemory): Record<string, ToolDefinition> {
+  const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
       false,
@@ -33,7 +34,8 @@ export function createTools(service: MemoryService) {
       z.strictObject({
         ...projectId, ...idempotency, goal: z.string().trim().min(1).max(2000),
         mode: z.enum(["answer", "diagnose", "review", "change"]),
-        environment: scope.default("development"), repository: scope.default("default"),
+        environment: scope.default(bound?.binding.environment ?? "development"),
+        repository: scope.default(bound?.binding.repository ?? "default"),
       }),
       input => service.beginTask(input),
     ),
@@ -61,7 +63,8 @@ export function createTools(service: MemoryService) {
       z.strictObject({
         ...projectId, query: z.string().trim().max(200).default("")
           .refine(value => (value.match(/[\p{L}\p{N}_]+/gu)?.length ?? 0) <= 12, "Use at most 12 search terms."),
-        environment: scope.default("development"), repository: scope.default("default"),
+        environment: scope.default(bound?.binding.environment ?? "development"),
+        repository: scope.default(bound?.binding.repository ?? "default"),
         topic: scope.optional(), source_fingerprint: z.string().min(1).max(256).optional(),
         history: z.boolean().default(false), limit: z.int().min(1).max(50).default(10),
         cursor: z.string().max(512).optional(),
@@ -81,6 +84,22 @@ export function createTools(service: MemoryService) {
       input => service.getStatus(input.project_id, input.run_id),
     ),
   };
+  if (!bound) return tools;
+  const { memory_register_project: _register, memory_list_projects: _list, ...scopedTools } = tools;
+  return {
+    ...scopedTools,
+    memory_resolve_project: define(
+      "Identify the project configured for this connection, registering it locally if needed. Use its project_id and scope; never guess IDs from folder names.",
+      false, z.strictObject({}), () => bound.resolve(),
+    ),
+  };
+}
+
+interface ToolDefinition {
+  description: string;
+  readOnly: boolean;
+  schema: z.ZodObject;
+  invoke(input: unknown): Promise<JsonObject>;
 }
 
 function define<S extends z.ZodRawShape>(
@@ -108,7 +127,9 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService) { this.tools = createTools(service); }
+  constructor(service: MemoryService, private readonly bound?: BoundMemory) {
+    this.tools = createTools(service, bound);
+  }
 
   async call(name: string, input: unknown): Promise<JsonObject> {
     const definition = Object.entries(this.tools).find(([key]) => key === name)?.[1];
@@ -121,7 +142,13 @@ export class ToolDispatcher {
       throw new MemoryError("busy", "Request capacity reached or connection is closing. Retry later.", true);
     }
     this.bytes += bytes;
-    const task = Promise.resolve().then(() => definition.invoke(input));
+    const task = Promise.resolve().then(async () => {
+      // Validate before scope lookup can register a project or access the database.
+      const parsed = definition.schema.safeParse(input);
+      if (!parsed.success) throw new MemoryError("invalid_input", "Invalid tool input.");
+      await this.bound?.assertScope(name, parsed.data);
+      return definition.invoke(parsed.data);
+    });
     this.pending.add(task);
     try { return await task; }
     finally { this.pending.delete(task); this.bytes -= bytes; }

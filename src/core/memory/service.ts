@@ -38,6 +38,10 @@ export class MemoryService {
     };
   }
 
+  async findProject(key: string): Promise<Project | undefined> {
+    return this.store.findProject(key);
+  }
+
   async beginTask(input: BeginTaskInput): Promise<JsonObject> {
     return this.mutate(input.project_id, input.idempotency_key, { operation: "begin", ...input }, async () => {
       const project = await this.requireProject(input.project_id);

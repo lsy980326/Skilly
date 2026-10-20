@@ -5,8 +5,9 @@ import { MemoryService } from "../../core/memory/service.js";
 import { MemoryError } from "../../core/memory/model.js";
 import { SqliteMemoryStore } from "../../adapters/storage/sqlite/store.js";
 import { ToolDispatcher } from "../../transport/tools.js";
+import { BoundMemory, type ProjectBinding } from "../../core/memory/binding.js";
 
-export function openLocal(path: string) {
+export function openLocal(path: string, binding?: ProjectBinding) {
   if (!isAbsolute(path)) throw new MemoryError("invalid_path", "Use an absolute local database path.");
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try {
@@ -20,7 +21,7 @@ export function openLocal(path: string) {
     id: randomUUID, now: () => new Date().toISOString(),
     hash: value => createHash("sha256").update(canonical(value)).digest("hex"),
   });
-  const dispatcher = new ToolDispatcher(service);
+  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined);
   let closing: Promise<void> | undefined;
   return {
     dispatcher,

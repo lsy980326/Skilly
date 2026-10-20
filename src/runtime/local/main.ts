@@ -8,20 +8,22 @@ import { errorResult, MAX_FRAME_BYTES, MAX_INPUT_BYTES } from "../../transport/t
 import { createMcpServer } from "../../transport/mcp/server.js";
 import { BoundedTransport } from "../../transport/mcp/bounded-transport.js";
 import { openLocal } from "./app.js";
+import { loadProjectBinding } from "../../adapters/project/binding.js";
 
 const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
-  skilly serve [--db /absolute/path/memory.sqlite]
-  skilly call <tool-name> [--db /absolute/path/memory.sqlite] < input.json
+  skilly serve [--db /absolute/path/memory.sqlite] [--project /absolute/project]
+  skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
   skilly --help
 
 Default DB: ~/.skilly/memory.sqlite
+--project binds this connection to skilly.project.json in that directory.
 serve uses MCP over stdin/stdout. call reads one JSON object from stdin.
 No network server, AI model, file watcher or automatic execution collector.
 `;
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
-    options: { db: { type: "string" }, help: { type: "boolean", short: "h" } },
+    options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" } },
     allowPositionals: true,
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
@@ -33,7 +35,8 @@ async function main(): Promise<void> {
   }
   // Validate CLI input before creating any database.
   const input = command === "call" ? await readInput() : undefined;
-  const app = openLocal(values.db ?? join(homedir(), ".skilly", "memory.sqlite"));
+  const binding = values.project ? loadProjectBinding(values.project) : undefined;
+  const app = openLocal(values.db ?? join(homedir(), ".skilly", "memory.sqlite"), binding);
   if (command === "call" && tool) {
     try { process.stdout.write(`${JSON.stringify(await app.dispatcher.call(tool, input))}\n`); }
     finally { await app.close(); }

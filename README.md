@@ -6,7 +6,7 @@
 
 **생각하고 개발하는 AI는 기존 Codex·Cursor입니다.** Skilly는 전달받은 내용을 저장하고, 인덱스로 찾고, 코드로 정한 규칙에 따라 기록 상태를 관리합니다. 자체 AI 모델·추론 서버·LLM API 호출을 넣지 않습니다.
 
-> 현재 단계: **로컬 MVP 0.1.0**. CLI와 MCP로 등록·기록·검색·정정 이력·작업 마감을 실행할 수 있습니다. 모든 기록은 AI가 제출한 미확인 설명입니다. 실행 결과를 관측하는 수집기와 자동 훅, 실제 클라이언트 연결은 아직 없습니다.
+> 현재 단계: **로컬 MVP 0.1.0 + Codex 연동**. CLI와 MCP로 등록·기록·검색·정정 이력·작업 마감을 실행하고, 프로젝트 식별·`use-skilly` 설치로 세션 간 기록을 연결합니다. 모든 기록은 AI가 제출한 미확인 설명입니다. 실행 결과 자동 수집기와 훅은 없습니다. 설정 생성·실제 연결·AI 자동 수행은 [Codex 연동 안내](docs/codex-integration.md)에서 구분합니다.
 
 ## 바로 실행
 
@@ -27,6 +27,7 @@ MCP 실행 명령은 `node dist/runtime/local/main.js serve`입니다. 기본 DB
 | 알고 싶은 것 | 문서 |
 |---|---|
 | 지금 실행할 수 있는 기능과 도구 입력은 무엇인가 | [개발·사용 안내](docs/development.md) |
+| Codex가 작업 중 어떻게 기록하고 다음 세션에서 찾는가 | [Codex 연동 안내](docs/codex-integration.md) |
 | 한 작업에서 누가 무엇을 호출하는가 | [한 사이클 따라가기](docs/workflow.md) |
 | 모듈·폴더·DB 연결을 어떻게 나누는가 | [아키텍처](docs/architecture.md) |
 | 다른 개발 작업을 방해하지 않게 어떻게 제한하는가 | [저자원 실행 기준](docs/architecture.md#7-빠르고-가볍게-만드는-기준) |
@@ -83,10 +84,10 @@ Skilly/
    └─ contracts/         저장소별 동일 동작 검증
 ```
 
-현재 핵심 규칙은 `src/core/memory`, SQLite 연결은 `src/adapters/storage/sqlite`에 있습니다. `transport`의 도구 계약을 CLI와 MCP가 함께 사용합니다. 스킬 배포 원본은 `integrations/skills/use-skilly/SKILL.md`에 있으며 실제 클라이언트에 설치하지는 않았습니다. 전체 목표 구조는 [아키텍처](docs/architecture.md)에 있습니다.
+현재 핵심 규칙은 `src/core/memory`, SQLite 연결은 `src/adapters/storage/sqlite`에 있습니다. `transport`의 도구 계약을 CLI와 MCP가 함께 사용합니다. 스킬 배포 원본은 `integrations/skills/use-skilly/SKILL.md`이며 `npm run setup:codex`로 프로젝트에 설치합니다. 전체 목표 구조는 [아키텍처](docs/architecture.md)에 있습니다.
 
 ## 코드와 사용자 데이터
 
 이 저장소는 소스·설계·스키마·스킬 배포 파일을 관리합니다. 실제 DB, 녹음, 첨부, 전송 대기 큐와 내보내기 묶음은 별도의 사용자 데이터 폴더에 둡니다. 개발용 데이터도 버전 관리에서 제외합니다.
 
-첫 실행 흐름은 “작업 AI의 도구 호출 → 기록 저장 → 다음 작업에서 재조회”입니다. 정상 자동 호출과 검증된 실행 근거 수집은 호스트별 연동을 추가한 뒤 확인합니다.
+첫 실행 흐름은 “작업 AI의 도구 호출 → 기록 저장 → 다음 작업에서 재조회”입니다. Codex 연동은 MCP와 스킬 지침으로 연결하며, AI 자동 호출의 실제 수행과 실행 근거 자동 수집은 별도로 구분해 확인합니다.

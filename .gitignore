@@ -23,3 +23,7 @@ exports/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+
+# Generated local Codex integration (source lives under integrations/)
+.codex/config.toml
+.agents/skills/use-skilly/

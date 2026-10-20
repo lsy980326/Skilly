@@ -1,0 +1,7 @@
+interface:
+  display_name: "Skilly"
+  short_description: "프로젝트의 이전 작업을 조회하고 진행 상황과 다음 작업을 기록"
+  default_prompt: "Use $use-skilly to recall this project's context and record the current task."
+
+policy:
+  allow_implicit_invocation: true
