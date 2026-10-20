@@ -1,0 +1,25 @@
+{
+  "name": "skilly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local project memory tools for existing coding agents",
+  "engines": { "node": ">=24.0.0" },
+  "bin": { "skilly": "dist/runtime/local/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "start": "node dist/runtime/local/main.js serve",
+    "demo": "npm run build && node scripts/demo.mjs",
+    "bench": "npm run build && node scripts/bench.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}
