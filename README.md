@@ -176,4 +176,6 @@ Skilly/
 
 프로젝트별 스킬 전문·버전·설치 안내와 마지막 파일 관측은 [스킬 라이브러리 안내](docs/skill-library.md)를 참고하세요.
 
+지속 부하와 유휴 비용은 `npm run bench:stability`로 확인합니다. 임시 테스트 DB에 합성 기록을 준비하고 여러 MCP 프로세스와 화면 조회를 함께 실행하며, 실사용 DB 경로는 입력받지 않습니다. [측정 방법과 한계](docs/user-guide.md#동시-작업과-리소스-측정)
+
 첫 설치·연결 문제는 `npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite`로 로컬 준비 상태부터 확인하세요. 설정 파일 내용을 읽거나 기존 파일을 고치지 않으며, 현재 채팅의 연결 성공을 대신 판정하지 않습니다. [설치·재연결 안내](docs/codex-integration.md#첫-설치와-연결-문제-진단)
