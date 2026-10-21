@@ -17,6 +17,9 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
   skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory
   skilly import --input /absolute/export-directory --output /absolute/new-db-directory [--db /absolute/base.sqlite]
+  skilly skill-export --db /absolute/memory.sqlite --project-id <UUID> --skill <key> [--version <version>] --output /absolute/new-package.json
+  skilly skill-install --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
+  skilly skill-verify --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
   skilly --help
 
 Default DB: ~/.skilly/memory.sqlite
@@ -31,11 +34,19 @@ Incomplete outputs are retained without a completion marker; never use them. No 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" },
-      input: { type: "string" }, output: { type: "string" }, "project-id": { type: "string" } },
+      input: { type: "string" }, output: { type: "string" }, "project-id": { type: "string" },
+      skill: { type: "string" }, version: { type: "string" }, tool: { type: "string" }, folder: { type: "string" } },
     allowPositionals: true,
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
   const [command, tool] = positionals;
+  if (command && ["skill-export", "skill-install", "skill-verify"].includes(command)) {
+    if (positionals.length !== 1) throw new MemoryError("invalid_command", "Use one skill package command.");
+    const { skillPackageCommand } = await import("./skill-package.js");
+    process.stdout.write(`${JSON.stringify(skillPackageCommand(command, values))}\n`);
+    return;
+  }
+  if (values.skill || values.version || values.tool || values.folder) throw new MemoryError("invalid_input", "Skill options require a skill package command.");
   if (command && ["backup", "restore", "export", "import"].includes(command)) {
     if (positionals.length !== 1) throw new MemoryError("invalid_command", "Maintenance takes one command only.");
     const { maintenance } = await import("./maintenance.js");
@@ -52,7 +63,7 @@ async function main(): Promise<void> {
   // Validate CLI input before creating any database.
   const input = command === "call" ? await readInput() : undefined;
   const binding = values.project ? loadProjectBinding(values.project) : undefined;
-  const app = openLocal(values.db ?? join(homedir(), ".skilly", "memory.sqlite"), binding);
+  const app = openLocal(values.db ?? join(homedir(), ".skilly", "memory.sqlite"), binding, values.project);
   if (command === "call" && tool) {
     try { process.stdout.write(`${JSON.stringify(await app.dispatcher.call(tool, input))}\n`); }
     finally { await app.close(); }

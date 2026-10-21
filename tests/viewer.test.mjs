@@ -71,7 +71,7 @@ test("reader supports legacy schemas without migration; writer upgrade preserves
   }
   const oldRows = db.prepare("SELECT * FROM runs").all();
   const app = openLocal(path);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 5);
   assert.deepEqual(db.prepare("SELECT * FROM runs").all(), oldRows);
   db.prepare("INSERT INTO runs VALUES (?, ?, '구형 실행 SQL', 'change', 'test', 'main', 'active', ?, ?)").run(randomUUID(), pid, date, date);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -218,8 +218,25 @@ test("viewer never creates, migrates or follows a linked database", async t => {
   assert.throws(() => new SqliteViewer("relative.sqlite"), { code: "invalid_input" });
   const path = join(f.directory, "future.sqlite");
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version=5; PRAGMA application_id=1397446988;"); db.close();
+  db.exec("PRAGMA user_version=6; PRAGMA application_id=1397446988;"); db.close();
   const before = readFileSync(path);
   assert.throws(() => new SqliteViewer(path), { code: "unavailable" });
   assert.deepEqual(readFileSync(path), before);
+});
+
+test("skill HTTP routes remain authenticated, project-isolated and read-only", async t => {
+  const f = fixture(t), pid = await project(f.call);
+  await f.call("memory_register_skill", { project_id: pid, skill_key: "sample", version: "1.0", source: "local:test", name: "샘플",
+    body: "<script>not executed</script>", install_instructions: "설치 안내", idempotency_key: "register-skill" });
+  const other = await project(f.call, "other-skills"), viewer = await startViewer({ db: f.path }); t.after(() => viewer.close());
+  const token = new URLSearchParams(new URL(viewer.url).hash.slice(1)).get("token"), auth = { Authorization: `Bearer ${token}` };
+  const before = readFileSync(f.path);
+  assert.equal((await request(viewer.origin, `/api/skills?project=${pid}`)).status, 401);
+  const list = await request(viewer.origin, `/api/skills?project=${pid}`, auth); assert.equal(list.status, 200);
+  assert.equal(JSON.parse(list.body).items[0].skill_key, "sample");
+  const detail = await request(viewer.origin, `/api/skill?project=${pid}&skill=sample&version=1.0`, auth);
+  assert.equal(detail.status, 200); assert.equal(JSON.parse(detail.body).skill.body, "<script>not executed</script>");
+  assert.equal((await request(viewer.origin, `/api/skill?project=${other}&skill=sample`, auth)).status, 404);
+  assert.equal((await request(viewer.origin, `/api/skill?project=${pid}&skill=sample`, auth, "POST")).status, 405);
+  assert.deepEqual(readFileSync(f.path), before);
 });

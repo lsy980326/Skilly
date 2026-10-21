@@ -56,10 +56,12 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const record = { id: "record", kind: "summary", topic: "task-summary", body: "변경 없는 기록",
     report_origin: "contemporaneous", observed_at: run.updated_at, recorded_at: run.updated_at,
     report: structured ? { title: "목록과 상세 시간 수정", summary: "<img src=x onerror=alert(1)>", changes: ["같은 시계 사용"], checks: [{ name: "시간 검사", result: "passed" }], next_steps: ["실제 화면 확인"] } : null };
+  const sampleSkill = { project_id: "project", skill_key: "sample", name: "샘플 스킬", version: "2.0", source: "local:sample", description: "보관 원문", content_hash: "a".repeat(64), files: [], body: "<img src=x onerror=alert(1)>", install_instructions: "설치 안내" };
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
+  const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
-  await runInNewContext(`(async () => {${board}\n${session}\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${app}\n})()`, {
     document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -73,6 +75,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
       const data = path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
+        : path.startsWith("/api/skills?") ? { items: [{ skill_key: "sample", name: "샘플 스킬", versions: 2, installations: [{ repository: "web", version: "1.0", state: "modified" }], installations_total: 1 }], next_offset: null }
+        : path.startsWith("/api/skill?") ? { skill: { ...sampleSkill, ...(path.includes("version=1.0") ? { version: "1.0", body: "이전 버전 전문" } : {}) }, versions: [{ version: "2.0" }, { version: "1.0" }], installations: [], installation_offset: 0, next_installation_offset: null }
         : path.startsWith("/api/overview") ? { summary: { total: 1, unfinished: 0, unclassified: 0 },
           items: path.includes("view=components") ? [{ key: "web", name: "Web", total: 1, unfinished: 0 }]
             : manyFeatures ? (path.includes("offset=40") ? [{ key: lateFeatureKey, name: "마지막 기능", total: 1, unfinished: 0 }]
@@ -249,4 +253,17 @@ test("new report animates once while older history pages never signal a new save
   assert.equal(firstReport.node("#detail").querySelector(".timeline-entry"), null);
   firstReport.saveRecord("first-change"); await firstReport.tick();
   assert.match(firstReport.node("#detail").querySelector(".timeline-entry").className, /newly-saved/);
+});
+
+test("skill tab renders versioned plain-text content and keeps unchanged detail stable during polling", async () => {
+  const app = await viewer();
+  app.node("#show-skills").listeners.click(); await new Promise(setImmediate);
+  assert.match(app.node("#tasks").textContent, /샘플 스킬/); assert.match(app.node("#tasks").textContent, /내용 변경/);
+  assert.match(app.node("#detail").textContent, /설치 방법/); assert.match(app.node("#detail").textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(app.node("#detail").querySelector("img"), null);
+  const before = app.node("#detail").children[0]; await app.tick();
+  assert.equal(app.node("#detail").children[0], before);
+  const select = app.node("#detail").querySelector("select"); select.value = "1.0"; select.listeners.change(); await new Promise(setImmediate);
+  assert.match(app.node("#detail").textContent, /이전 버전 전문/);
+  assert.ok(app.requests.some(path => path.startsWith("/api/skill?") && path.includes("version=1.0")));
 });

@@ -33,7 +33,7 @@ export async function copyDatabase(path: string, output: string) {
     newDirectory(output);
     await copySnapshot(snapshots.main, join(output, "memory.sqlite"));
     if (snapshots.recovery) await copySnapshot(snapshots.recovery, join(output, "memory.sqlite.recovery.sqlite"));
-    const manifest: Manifest = { format: "skilly-local-transfer", version: 1, kind: "backup", schema_version: 4,
+    const manifest: Manifest = { format: "skilly-local-transfer", version: 1, kind: "backup", schema_version: Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) === 5 ? 5 : 4,
       created_at: new Date().toISOString(), recovery_snapshot_at: snapshots.recoveryAt, main_snapshot_at: snapshots.mainAt,
       project_id: null, rows: null, files: { main: digest(join(output, "memory.sqlite")),
         recovery: snapshots.recovery ? digest(join(output, "memory.sqlite.recovery.sqlite")) : null } };

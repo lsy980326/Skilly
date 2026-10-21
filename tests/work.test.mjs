@@ -36,7 +36,7 @@ test("v3 migration preserves original rows and receipt replay without classifyin
   assert.deepEqual(viewer.runs(pid).items[0].components, []);
   assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 3); viewer.close();
   const app = openLocal(path); t.after(() => app.close()); t.after(() => raw.close());
-  assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 4);
+  assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 5);
   for (const table of Object.keys(before)) assert.deepEqual(raw.prepare(`SELECT * FROM ${table}`).all(), before[table]);
   const replay = await app.dispatcher.call("memory_begin_task", input);
   assert.deepEqual(replay.run, oldResult.run);

@@ -1,3 +1,4 @@
+import { SqliteSkills } from "./skills.js";
 import { DatabaseSync, type SQLOutputValue, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import {
@@ -12,6 +13,7 @@ type Row = Record<string, SQLOutputValue>;
 export class SqliteMemoryStore implements MemoryStore {
   private readonly db: DatabaseSync;
   readonly work: SqliteWorkReader;
+  readonly skills: SqliteSkills;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
@@ -20,6 +22,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.migrate();
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db);
+      this.skills = new SqliteSkills(this.db);
     } catch (error) {
       this.db.close();
       throw storageError(error);
@@ -34,8 +37,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 4) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 4) return;
+    if (version > 5) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 5) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -53,6 +56,9 @@ export class SqliteMemoryStore implements MemoryStore {
       }
       if (lockedVersion < 4) {
         this.db.exec(readFileSync(new URL("../../../../migrations/004-work-structure.sql", import.meta.url), "utf8"));
+      }
+      if (lockedVersion < 5) {
+        this.db.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       }
       this.db.exec("COMMIT");
     } catch (error) {

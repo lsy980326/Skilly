@@ -1,3 +1,5 @@
+import { validateSkillData } from "../sqlite/skills.js";
+import { readFileSync } from "node:fs";
 import { closeSync, fsyncSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
@@ -16,7 +18,7 @@ function select(table: Table): string {
   const where = table === "run_actors" ? "t.run_id IN (SELECT id FROM runs WHERE project_id = ?)"
     : table === "receipts" ? "(t.scope = ?1 OR (t.scope = 'registration' AND json_extract(t.result_json, '$.project.id') = ?1))"
     : table === "projects" ? "t.id = ?" : "t.project_id = ?";
-  return `SELECT ${fields} FROM ${table} t WHERE ${where} ORDER BY ${table === "records" ? "t.seq" : columns(table).map(name => `t."${name}"`).join(",")}`;
+  return `SELECT ${fields} FROM ${table} t WHERE ${where} ORDER BY ${(table === "records" || table === "skill_observations") ? "t.seq" : table === "skill_versions" ? "t.rowid" : columns(table).map(name => `t."${name}"`).join(",")}`;
 }
 function parsedRow(table: Table, value: unknown, projectId: string, runs: Set<string>): Row {
   const parsed = rowSchemas[table].safeParse(value);
@@ -51,6 +53,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (table.startsWith("skill_") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 5) continue;
         const db = table === "requests" ? snapshots.recovery : snapshots.main;
         if (!db) continue;
         for (const raw of db.prepare(select(table)).iterate(projectId)) {
@@ -64,7 +67,7 @@ export function exportProject(path: string, projectId: string, output: string) {
       }
       fsyncSync(fd);
     } finally { closeSync(fd); }
-    const manifest: Manifest = { format: "skilly-local-transfer", version: 1, kind: "project", schema_version: 4,
+    const manifest: Manifest = { format: "skilly-local-transfer", version: 1, kind: "project", schema_version: Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) === 5 ? 5 : 4,
       created_at: new Date().toISOString(), main_snapshot_at: snapshots.mainAt, recovery_snapshot_at: snapshots.recoveryAt,
       project_id: projectId, rows: count, files: { main: digest(join(output, "data.ndjson")), recovery: null } };
     writeNew(join(output, "manifest.json"), JSON.stringify(manifest));
@@ -99,6 +102,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     const table = entry.table as Table, index = tables.indexOf(table);
     if (index < lastTable || ++count > MAX_ROWS) fail("invalid_bundle", "Invalid row order/count.");
     lastTable = index;
+    if (manifest.schema_version < 5 && table.startsWith("skill_")) fail("invalid_bundle", "Skill rows require schema v5.");
     const row = parsedRow(table, entry.row, manifest.project_id, runs);
     if (table === "projects") projects++;
     visit(table, row);
@@ -120,6 +124,7 @@ export async function importProject(input: string, output: string, base?: string
     let journal: DatabaseSync | undefined;
     try {
       if (!base) initialize(main);
+      else if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 4) main.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {
@@ -138,6 +143,7 @@ export async function importProject(input: string, output: string, base?: string
         });
         if (main.prepare("PRAGMA foreign_key_check").all().length) fail("scope_mismatch", "Imported references are incomplete or foreign.");
         validateRecoveryPair(main, journal);
+        validateSkillData(main);
         checkFile(data, manifest.files.main);
         main.exec("COMMIT"); journal.exec("COMMIT");
       } catch (error) {

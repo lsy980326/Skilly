@@ -1,3 +1,4 @@
+import { SqliteSkills } from "./skills.js";
 import { lstatSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
@@ -55,8 +56,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v4)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v5)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -85,6 +86,23 @@ export class SqliteViewer {
       activity: activityFor(state as RunState, text(row, "updated_at"), this.now()),
       ...this.work.identity(text(row, "project_id"), text(row, "id")),
     };
+  }
+
+  skills(projectId: string, options: { key?: string; version?: string; offset?: number; query?: string } = {}) {
+    this.requireProject(projectId);
+    const reader = new SqliteSkills(this.db);
+    try {
+      if (options.key) {
+        if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(options.key) || (options.version?.length ?? 0) > 80) throw new ViewerError("invalid_input", "잘못된 스킬 조회 조건입니다.");
+        return reader.detail(projectId, options.key, options.version, pageOffset(options.offset ?? 0));
+      }
+      if ((options.query?.length ?? 0) > 200) throw new ViewerError("invalid_input", "검색어가 너무 깁니다.");
+      return reader.list(projectId, pageOffset(options.offset ?? 0), 12, options.query ?? "");
+    } catch (error) {
+      if (error instanceof ViewerError) throw error;
+      if (error instanceof Error && "code" in error && error.code === "not_found") throw new ViewerError("not_found", "해당 스킬 버전이 없습니다.");
+      throw error;
+    }
   }
 
   projects(offset = 0) {

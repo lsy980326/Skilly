@@ -1,3 +1,5 @@
+import { SkillLibrary } from "../../core/skills/model.js";
+import { LocalSkillObserver } from "../../adapters/skills/local-observer.js";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
@@ -9,7 +11,7 @@ import { BoundMemory, type ProjectBinding } from "../../core/memory/binding.js";
 import { WriteRecovery } from "../../core/memory/recovery.js";
 import { SqliteRecoveryJournal } from "../../adapters/storage/sqlite/recovery-journal.js";
 
-export function openLocal(path: string, binding?: ProjectBinding) {
+export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: string) {
   if (!isAbsolute(path)) throw new MemoryError("invalid_path", "Use an absolute local database path.");
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try {
@@ -26,7 +28,8 @@ export function openLocal(path: string, binding?: ProjectBinding) {
   const service = new MemoryService(store, context);
   const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
   const recovery = new WriteRecovery(store, journal, context);
-  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery);
+  const skills = new SkillLibrary(store.skills, context, projectRoot ? new LocalSkillObserver(projectRoot) : undefined);
+  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills);
   let closing: Promise<void> | undefined;
   return {
     dispatcher,

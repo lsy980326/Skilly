@@ -1,3 +1,4 @@
+import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
 
@@ -5,6 +6,8 @@ const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
 const state = { projects: [], project: null, run: null, view: "runs", filter: "all", query: "", items: [], records: [], nextProjects: null, nextItems: null, nextRecords: null,
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
+state.skillKey = null; state.skillVersion = null; state.skillOffset = 0;
+let lastSkill = "";
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
 let projectsPaged = false, listPaged = false, detailPaged = false, lastDetail = "";
 const paged = () => projectsPaged || listPaged || detailPaged;
@@ -117,7 +120,7 @@ async function loadProjects(more = false) {
 }
 async function selectProject(id) {
   if (state.project === id) return;
-  state.project = id; state.run = null; state.query = ""; state.filter = "all";
+  state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all";
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
   state.overviewTasks = []; state.overviewPartial = false;
   state.summary = {}; state.nextComponents = null; state.nextFeatures = null;
@@ -210,20 +213,35 @@ async function loadList(more = false) {
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
   if (view === "runs" && state.component) params.set("component", state.component);
   if (view === "runs" && state.feature) params.set("feature", state.feature);
-  const data = await api(`/api/${view === "runs" ? "runs" : "recovery"}?${params}`);
+  const data = await api(`/api/${view === "runs" ? "runs" : view === "skills" ? "skills" : "recovery"}?${params}`);
   if (request !== listRequest || project !== state.project || view !== state.view) return;
-  state.items = more ? [...new Map([...state.items, ...data.items].map(item => [item.id ?? item.request_id, item])).values()] : data.items;
+  state.items = more ? [...new Map([...state.items, ...data.items].map(item => [item.id ?? item.request_id ?? item.skill_key, item])).values()] : data.items;
   state.nextItems = data.next_offset;
   $("#list-count").textContent = view === "recovery" && data.status !== "available"
     ? "확인 불가" : `${state.items.length}${data.next_offset !== null ? "+" : ""}개`;
   $("#more-tasks").hidden = data.next_offset === null;
-  $("#more-tasks").textContent = view === "runs" ? "작업 더 보기" : "복구 요청 더 보기";
-  if (view === "runs") {
+  $("#more-tasks").textContent = view === "runs" ? "작업 더 보기" : view === "skills" ? "스킬 더 보기" : "복구 요청 더 보기";
+  if (view === "skills") {
+    renderSkillList($("#tasks"), state.items, state.skillKey, key => { void openSkill(key).catch(showError); });
+    if (!state.skillKey && state.items[0]) await openSkill(state.items[0].skill_key);
+    else if (state.skillKey) await openSkill(state.skillKey, state.skillVersion, state.skillOffset);
+  } else if (view === "runs") {
     renderTasks();
     if (!state.run && state.items[0]) {
       state.run = state.items[0].id; renderTasks(); await loadDetail();
     }
   } else renderRecovery(data.status);
+}
+async function openSkill(key, version, installationOffset = 0) {
+  const request = ++detailRequest, project = state.project;
+  state.skillKey = key; state.skillVersion = version; state.skillOffset = installationOffset;
+  renderSkillList($("#tasks"), state.items, key, selected => { void openSkill(selected).catch(showError); });
+  const params = new URLSearchParams({ project, skill: key, offset: String(installationOffset) }); if (version) params.set("version", version);
+  const data = await api(`/api/skill?${params}`);
+  if (request !== detailRequest || state.project !== project || state.view !== "skills") return;
+  state.skillVersion = data.skill.version;
+  const fingerprint = JSON.stringify(data); if (lastSkill === fingerprint) return; lastSkill = fingerprint;
+  renderSkillDetail($("#detail"), data, selected => { void openSkill(key, selected).catch(showError); }, offset => { void openSkill(key, state.skillVersion, offset).catch(showError); });
 }
 function renderTasks() {
   const container = $("#tasks"); container.replaceChildren();
@@ -465,17 +483,19 @@ $("#more-tasks").addEventListener("click", async () => {
 });
 async function changeView(view) {
     state.view = view; listPaged = false; state.items = [];
+    if (view === "skills" || state.skillKey) { state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; detailRequest++;
+      $("#detail").replaceChildren(empty("항목을 선택하세요", "선택한 항목의 상세 내용을 확인하세요.")); }
     listRequest++;
     $("#run-controls").hidden = view !== "runs";
-    $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : "복구 요청";
-    for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"]]) {
+    $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : view === "skills" ? "프로젝트 스킬" : "복구 요청";
+    for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"]]) {
       const node = $(id), selected = view === target;
       node.classList.toggle("selected", selected); node.setAttribute("aria-pressed", String(selected));
     }
     $("#tasks").replaceChildren(element("p", "loading", "기록을 불러오는 중…"));
     await loadList();
 }
-for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"]]) {
+for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"]]) {
   $(id).addEventListener("click", () => { void changeView(view).catch(showError); });
 }
 $("#more-components").addEventListener("click", async () => {

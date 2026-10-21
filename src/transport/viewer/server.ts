@@ -8,6 +8,7 @@ const assets = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/workstream.js", { file: "workstream.js", type: "text/javascript; charset=utf-8" }],
+  ["/skills.js", { file: "skills.js", type: "text/javascript; charset=utf-8" }],
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
@@ -58,12 +59,20 @@ export async function startViewer(options: { db: string; port?: number }) {
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
         json(response, 401, { error: "터미널에 표시된 연결 주소로 다시 열어 주세요." }); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if (url.pathname === "/api/skills") {
+        json(response, 200, reader.skills(project, { offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
+      }
+      if (url.pathname === "/api/skill") {
+        const key = url.searchParams.get("skill");
+        if (!key) throw new ViewerError("invalid_input", "스킬을 선택해 주세요.");
+        json(response, 200, reader.skills(project, { key, offset: offset(url), ...(url.searchParams.has("version") ? { version: url.searchParams.get("version")! } : {}) })); return;
+      }
       if (url.pathname === "/api/overview") { json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url))); return; }
       if (url.pathname === "/api/runs") {
         json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all",
