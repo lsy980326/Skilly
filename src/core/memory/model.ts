@@ -32,6 +32,7 @@ export interface Run {
   state: RunState;
   created_at: string;
   updated_at: string;
+  actor?: string;
 }
 
 export interface MemoryRecord {
@@ -65,6 +66,7 @@ export interface BeginTaskInput {
   environment: string;
   repository: string;
   idempotency_key: string;
+  actor?: string | undefined;
 }
 
 export interface CheckpointInput {

@@ -50,6 +50,7 @@ export class MemoryService {
         id: this.context.id(), project_id: project.id, goal: input.goal, mode: input.mode,
         environment: input.environment, repository: input.repository,
         state: "active", created_at: now, updated_at: now,
+        ...(input.actor ? { actor: input.actor } : {}),
       };
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision, run,

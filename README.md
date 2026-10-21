@@ -22,6 +22,18 @@ npm run demo
 
 MCP 실행 명령은 `node dist/runtime/local/main.js serve`입니다. 기본 DB는 `~/.skilly/memory.sqlite`이며 `--db`로 절대 경로를 지정할 수 있습니다. 연결 설정과 도구 입력은 [개발·사용 안내](docs/development.md)를 참고하세요.
 
+## 기록을 화면으로 보기
+
+```sh
+npm run view -- --db /Users/yeop/project/Skilly/.skilly/memory.sqlite
+```
+
+실제 사용 중인 DB의 절대 경로를 지정하고 터미널에 나온 전체 주소를 여세요.
+프로젝트·작업 검색·상세 타임라인·저장 문제를 읽기 전용으로 볼 수 있습니다.
+작성 주체는 새 작업의 선택 입력이며, 최근 활동은 마지막 기록 기준입니다.
+현재 실행 여부를 감시하거나 과거 작성자를 추측하지 않습니다.
+종료는 `Ctrl+C`입니다. [화면 사용법과 상태 설명](docs/user-guide.md#로컬-화면으로-보기)을 참고하세요.
+
 ## Codex에서 기록 이어가기
 
 **처음 연결할 때**
@@ -83,7 +95,8 @@ flowchart LR
     Core --> Storage["저장소 Interface"]
     Storage --> Local[("로컬 SQLite")]
     Storage -.-> Cloud[("후속: 클라우드 D1")]
-    UI["나중의 조회 화면"] -.-> Runtime
+    UI["로컬 조회 화면"] --> Reader["읽기 전용 조회"]
+    Reader --> Local
 ```
 
 한 프로젝트의 정본은 한 곳입니다. 로컬 DB에 확정된 기록만 저장 완료로 응답합니다.
@@ -96,7 +109,7 @@ flowchart LR
 - 로컬 실행은 **Node.js + 내장 SQLite**, 연결은 **MCP SDK**, 입력 검증은 **Zod**를 사용합니다.
 - **Hono**와 **Cloudflare Workers + D1**은 클라우드 전달 계층을 구현할 때 추가합니다.
 - 기능별 모듈과 **Ports and Adapters**를 조합합니다. 핵심 규칙은 프레임워크·DB 드라이버에 의존하지 않습니다.
-- 초기에는 화면이 없습니다. 나중에 화면이 추가돼도 같은 핵심 모듈을 사용합니다.
+- 조회 화면은 Node 내장 HTTP와 기본 HTML·CSS·JavaScript를 사용합니다. 별도 실행할 때만 로컬 포트를 열고, 기록 경로와 분리된 읽기 전용 조회 모듈을 사용합니다.
 - 음성은 로컬 변환기의 결과를 받는 계약만 준비합니다. 변환 엔진은 후속 선택 기능입니다.
 - 기본 실행은 AI 세션에 연결된 MCP 프로그램입니다. 요청·허용된 이벤트가 있을 때 처리하고, 프로젝트마다 상주 프로그램이나 전체 폴더 감시기를 만들지 않습니다.
 - 요약·기능 분류·검색 후보의 의미 해석은 기존 작업 AI가 맡습니다. Skilly의 대기 중 동작과 응답·큐 크기는 [실행 기준](docs/architecture.md#7-빠르고-가볍게-만드는-기준)으로 제한합니다.
@@ -119,6 +132,7 @@ Skilly/
 │  ├─ skills/            배포할 연동 스킬
 │  └─ collectors/        실행 환경별 이벤트 수집
 ├─ migrations/           DB 구조 변경
+├─ ui/                   로컬 조회 화면 · 외부 폰트/서비스 없음
 └─ tests/
    └─ contracts/         저장소별 동일 동작 검증
 ```

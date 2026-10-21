@@ -4,7 +4,9 @@ Codex 프로젝트 식별·스킬 설치·실제 연결 점검은 [Codex 연동 
 기본 기록 도구 8개에 복구 도구 2개를 제공한다. 프로젝트 연결 모드는
 등록·목록 대신 `memory_resolve_project`를 제공하며, SQLite 스키마는 동일하다.
 
-이 문서는 로컬 MVP 0.1.0의 실행 가능한 범위와 후속 범위를 구분한다. 한 로컬 사용자에게 노출하는 STDIO MCP이며 네트워크 서버·팀 권한 시스템은 없다.
+이 문서는 로컬 MVP 0.1.0의 실행 가능한 범위와 후속 범위를 구분한다.
+기록 연결은 한 로컬 사용자에게 노출하는 STDIO MCP다. 별도로 실행하는 로컬
+조회 화면은 loopback HTTP만 사용하며 팀 서버·팀 권한 시스템은 없다.
 
 ## 구현한 흐름
 
@@ -18,6 +20,12 @@ Codex·Cursor 등의 작업 AI
 ```
 
 CLI도 같은 도구 계약을 사용한다. 프로젝트를 등록하고 작업을 시작한 뒤 기록·정정·마감·검색할 수 있다. 프로세스를 다시 열어도 기록은 유지된다. 같은 DB를 여러 MCP 프로세스에서 사용할 수 있지만 각 프로세스의 메모리는 별도로 든다.
+
+로컬 화면은 `ui/` → `transport/viewer`의 조회 API → `SqliteViewer` 읽기 모델로
+연결된다. 쓰기용 `MemoryService`를 생성하지 않으며 DB 생성·마이그레이션·복구
+재전송을 하지 않는다. 별도 프레임워크 없이 Node HTTP와 브라우저 기본 기능을 쓴다.
+Host·Origin·일회성 실행 토큰으로 접근을 제한하고 실제 DB는 읽기 전용으로 연다.
+본문은 HTML로 해석하지 않는다. 실행과 상태 의미는 [사용 안내](user-guide.md#로컬-화면으로-보기)를 따른다.
 
 도구 입력에는 프로젝트 ID를 명시적으로 전달한다. Codex 연결 모드는 `skilly.project.json`을 읽어 ID를 반환한다. 임의 폴더·worktree 추론과 기능 별칭·코드 연결은 후속 기능이다. `topic`은 프로젝트 안의 일관된 기능 이름으로 사용한다. 검색은 프로젝트·저장소·환경·선택한 주제 범위를 고정하고 FTS 토큰 접두 검색과 범위 안의 부분 문자열 검색을 함께 사용한다. 짧은 한글도 찾을 수 있지만 부분 검색은 해당 범위의 행을 읽을 수 있으므로 매우 큰 프로젝트에서는 추가 최적화가 필요하다.
 
@@ -75,7 +83,7 @@ JSON
 |---|---|---|
 | `memory_register_project` | `key`, `name`, `idempotency_key` | 프로젝트 UUID. 같은 키·이름으로 다시 등록할 수 있음 |
 | `memory_list_projects` | 선택적 `cursor`, `limit` | 프로젝트 목록과 다음 커서 |
-| `memory_begin_task` | `project_id`, `goal`, `mode`, `idempotency_key`, 선택적 `environment`, `repository` | 활성 작업 UUID. 컨텍스트는 다음 조회에서 받음 |
+| `memory_begin_task` | `project_id`, `goal`, `mode`, `idempotency_key`, 선택적 `environment`, `repository`, `actor` | 활성 작업 UUID. 컨텍스트는 다음 조회에서 받음 |
 | `memory_checkpoint` | `project_id`, `run_id`, `topic`, `kind`, `body`, `idempotency_key` | 미확인 기록 ID와 저장 상태 |
 | `memory_finish_task` | `project_id`, `run_id`, `summary`, `outcome`, `idempotency_key` | 마감 상태와 미확인 요약 기록 |
 | `memory_query_context` | `project_id`, 선택적 `query`, `topic`, `environment`, `repository`, `source_fingerprint`, `history`, `limit`, `cursor` | 짧은 발췌·출처·상태·다음 커서 |
@@ -86,6 +94,9 @@ JSON
 - `kind`: `note`, `decision`, `change`, `issue`, `summary`.
 - `outcome`: `completed`, `interrupted`. 완료는 작업 마감이며 내용의 진실성 판정이 아니다.
 - `environment` 기본값은 `development`, `repository` 기본값은 `default`다. 서로 다른 저장소·운영 환경은 명시적으로 구분한다.
+- `actor`는 선택적 1–80자 작성 주체 선언이다. 인증 정보가 아니며 생략한 과거 입력에
+  기본값을 삽입하지 않는다. 작성 주체는 시작 때 확정하고 재시도·진행·종료에서 덮어쓰지 않는다.
+  v3 마이그레이션은 `run_actors`를 별도 테이블로 추가해 기존 작업 행과 영수증을 유지한다.
 - `memory_checkpoint`는 선택적으로 `source_fingerprint`, ISO 8601 `observed_at`, `supersedes`를 받는다. 관측 시각은 UTC로 정규화하며 미래 시각은 거부한다.
 - `memory_checkpoint`와 `memory_finish_task`는 선택적으로 `report_origin`을 받는다.
   생략 시 `unspecified`, 작업 중 작성 선언은 `contemporaneous`, 소급은 `retrospective`다.
@@ -111,7 +122,10 @@ JSON
   새 런타임은 검증된 작업 요청을 별도 로컬 저널에 먼저 보관한다. 실패 응답의
   `recovery.pending_retained`가 true인 경우에만 원래 요청의 보관이 확인된다.
   대기는 100건/1 MiB로 제한되며 자동 재시도 루프는 없다.
-- 폴더 감시, 주기적 조회, AI 호출, 별도 유지보수 워커는 없다. 연결 종료 시 진행 중 저장을 정리하고 프로세스를 종료한다.
+- MCP에는 폴더 감시, 주기적 조회, AI 호출, 별도 유지보수 워커가 없다. 연결 종료 시 진행 중 저장을 정리하고 프로세스를 종료한다.
+- 별도로 실행한 조회 화면만 보이는 탭에서 15초마다 조회한다. 조회는 페이지당 40건,
+  DB 잠금 대기 250ms, 연결당 캐시 2 MiB로 제한하며 숨겨진 탭과 과거 페이지를 읽을 때는
+  자동 갱신을 멈춘다. 작업 상세는 `seq` 커서를 사용해 새 기록이 생겨도 중복 페이지를 피한다.
 
 프로젝트 ID 필터는 자료 혼합 방지용이다. 연결을 가진 로컬 사용자는 DB의 모든 프로젝트를 열 수 있다. 따라서 이 STDIO 서버를 그대로 팀용 네트워크 서비스로 노출하는 방식은 지원하지 않는다.
 

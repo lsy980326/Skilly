@@ -32,13 +32,14 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.listProjects(input.cursor, input.limit),
     ),
     memory_begin_task: define(
-      "Begin a local SQLite task in an explicit project, repository and environment after recalling context. No upload or execution collector.",
+      "Begin a local SQLite task after recalling context. Optionally supply actor (the known assistant/operator label); this is a declaration, not authenticated identity. No upload or execution collector.",
       false,
       z.strictObject({
         ...projectId, ...idempotency, goal: z.string().trim().min(1).max(2000),
         mode: z.enum(["answer", "diagnose", "review", "change"]),
         environment: scope.default(bound?.binding.environment ?? "development"),
         repository: scope.default(bound?.binding.repository ?? "default"),
+        actor: z.string().trim().min(1).max(80).optional(),
       }),
       input => service.beginTask(input),
     ),

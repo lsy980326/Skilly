@@ -21,7 +21,7 @@ export function inspectMemory({ project, db: path, limit = 5, run, attention = f
     db.exec("PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; BEGIN;");
     const version = db.prepare("PRAGMA user_version").get().user_version;
     const application = db.prepare("PRAGMA application_id").get().application_id;
-    if (application !== 1397446988 || ![1, 2].includes(version)) throw new Error("Expected an existing Skilly schema version 1 or 2 database.");
+    if (application !== 1397446988 || ![1, 2, 3].includes(version)) throw new Error("Expected an existing Skilly schema version 1, 2 or 3 database.");
     const identity = db.prepare("SELECT id, name FROM projects WHERE project_key = ?").get(binding.key);
     if (identity && identity.name !== binding.name) throw new Error("Project key/name mismatch.");
     const scope = { key: binding.key, repository: binding.repository, environment: binding.environment };
@@ -37,7 +37,7 @@ export function inspectMemory({ project, db: path, limit = 5, run, attention = f
     const counts = db.prepare(`SELECT kind, count(*) AS count FROM records
       WHERE project_id = ? AND run_id = ? GROUP BY kind`);
     const recent = db.prepare(`SELECT id, topic, kind, recorded_at, superseded_by,
-      ${version === 2 ? "report_origin" : "'unspecified' AS report_origin"},
+      ${version >= 2 ? "report_origin" : "'unspecified' AS report_origin"},
       substr(body, 1, 240) AS excerpt, length(body) > 240 AS excerpt_truncated
       FROM records WHERE project_id = ? AND run_id = ? ORDER BY seq DESC LIMIT 5`);
     return {

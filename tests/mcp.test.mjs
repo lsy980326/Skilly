@@ -36,13 +36,15 @@ test("real MCP client discovers tools and saves/searches data across server rest
   assert.equal(tools.length, 10);
   assert.equal(tools.find(tool => tool.name === "memory_checkpoint").annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === "memory_query_context").annotations.readOnlyHint, true);
+  assert.equal(tools.find(tool => tool.name === "memory_begin_task").inputSchema.properties.actor.type, "string");
   const call = async (client, name, args) => {
     const response = await client.callTool({ name, arguments: args });
     assert.notEqual(response.isError, true, JSON.stringify(response));
     return JSON.parse(response.content[0].text);
   };
   const project = (await call(client, "memory_register_project", { key: "mcp", name: "MCP", idempotency_key: "register" })).project;
-  const run = (await call(client, "memory_begin_task", { project_id: project.id, goal: "기능 수정", mode: "change", idempotency_key: "begin" })).run;
+  const run = (await call(client, "memory_begin_task", { project_id: project.id, goal: "기능 수정", mode: "change", actor: "Codex", idempotency_key: "begin" })).run;
+  assert.equal(run.actor, "Codex");
   await call(client, "memory_checkpoint", { project_id: project.id, run_id: run.id, topic: "comments", kind: "change", body: "댓글 해결 상태 수정", idempotency_key: "record" });
   const bad = await client.callTool({ name: "memory_checkpoint", arguments: { project_id: project.id, verified: true } });
   assert.equal(bad.isError, true);
@@ -51,6 +53,8 @@ test("real MCP client discovers tools and saves/searches data across server rest
   const result = await call(next, "memory_query_context", { project_id: project.id, query: "해결" });
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].knowledge_status, "unknown");
+  const status = await call(next, "memory_get_status", { project_id: project.id, run_id: run.id });
+  assert.equal(status.run.actor, "Codex");
 });
 
 test("stdio EOF and oversized unfinished frames terminate without an idle daemon", { timeout: 10_000 }, async t => {

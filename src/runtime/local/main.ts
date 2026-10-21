@@ -18,7 +18,8 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
 Default DB: ~/.skilly/memory.sqlite
 --project binds this connection to skilly.project.json in that directory.
 serve uses MCP over stdin/stdout. call reads one JSON object from stdin.
-No network server, AI model, file watcher or automatic execution collector.
+This CLI/MCP uses no network server, AI model, file watcher or automatic execution collector.
+The optional local viewer is a separate command: npm run view -- --db /absolute/path/memory.sqlite
 `;
 
 async function main(): Promise<void> {

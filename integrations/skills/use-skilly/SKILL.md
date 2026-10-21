@@ -42,6 +42,10 @@ local, bypass a host approval, or change settings to make a tool available.
    matching fingerprint does not verify it. No match means no recorded context.
 4. Begin with `memory_begin_task`: returned project/scope, the user's actual goal,
    `mode: answer | diagnose | review | change`, and a new unique idempotency key.
+   If the exposed schema supports `actor`, supply the known assistant label
+   (for example `Codex` or `Cursor`), or an operator label explicitly supplied by
+   the user. Never infer a person's identity from a path. This is self-reported
+   attribution, not authentication. Omit it with older tools or unknown identity.
    Keep the returned `run.id` in the current task context. Reuse an existing run
    only when this conversation already owns its ID and `memory_get_status`
    confirms it is active. Never take over another session's run found in search.

@@ -31,8 +31,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 2) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 2) return;
+    if (version > 3) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 3) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -44,6 +44,9 @@ export class SqliteMemoryStore implements MemoryStore {
       }
       if (lockedVersion < 2) {
         this.db.exec(readFileSync(new URL("../../../../migrations/002-recovery.sql", import.meta.url), "utf8"));
+      }
+      if (lockedVersion < 3) {
+        this.db.exec(readFileSync(new URL("../../../../migrations/003-run-actors.sql", import.meta.url), "utf8"));
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -67,14 +70,15 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   async getRun(projectId: string, runId: string): Promise<Run | undefined> {
-    const row = this.db.prepare("SELECT * FROM runs WHERE project_id = ? AND id = ?").get(projectId, runId);
+    const row = this.db.prepare(`SELECT r.*, a.actor FROM runs r LEFT JOIN run_actors a ON a.run_id = r.id
+      WHERE r.project_id = ? AND r.id = ?`).get(projectId, runId);
     return row ? runFrom(row) : undefined;
   }
 
   async unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number): Promise<Run[]> {
-    return this.db.prepare(`SELECT * FROM runs
-      WHERE project_id = ? AND repository = ? AND environment = ? AND state IN ('active', 'interrupted')
-      ORDER BY updated_at ASC, id ASC LIMIT ? OFFSET ?`)
+    return this.db.prepare(`SELECT r.*, a.actor FROM runs r LEFT JOIN run_actors a ON a.run_id = r.id
+      WHERE r.project_id = ? AND r.repository = ? AND r.environment = ? AND r.state IN ('active', 'interrupted')
+      ORDER BY r.updated_at ASC, r.id ASC LIMIT ? OFFSET ?`)
       .all(projectId, repository, environment, limit, offset).map(runFrom);
   }
 
@@ -149,6 +153,9 @@ export class SqliteMemoryStore implements MemoryStore {
         this.db.prepare(`INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
           .run(run.id, run.project_id, run.goal, run.mode, run.environment, run.repository, run.state, run.created_at, run.updated_at);
+        if (run.actor) {
+          this.db.prepare("INSERT INTO run_actors VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING").run(run.id, run.actor);
+        }
       }
       if (change.record) {
         const r = change.record;
@@ -201,6 +208,7 @@ function runFrom(row: Row): Run {
     id: string(row, "id"), project_id: string(row, "project_id"), goal: string(row, "goal"), mode, state,
     environment: string(row, "environment"), repository: string(row, "repository"),
     created_at: string(row, "created_at"), updated_at: string(row, "updated_at"),
+    ...(typeof row["actor"] === "string" ? { actor: row["actor"] } : {}),
   };
 }
 function recordFrom(row: Row): MemoryRecord {
