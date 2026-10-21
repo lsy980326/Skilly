@@ -13,6 +13,10 @@ import { loadProjectBinding } from "../../adapters/project/binding.js";
 const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly serve [--db /absolute/path/memory.sqlite] [--project /absolute/project]
   skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
+  skilly backup --db /absolute/memory.sqlite --output /absolute/new-backup-directory
+  skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
+  skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory
+  skilly import --input /absolute/export-directory --output /absolute/new-db-directory [--db /absolute/base.sqlite]
   skilly --help
 
 Default DB: ~/.skilly/memory.sqlite
@@ -20,15 +24,26 @@ Default DB: ~/.skilly/memory.sqlite
 serve uses MCP over stdin/stdout. call reads one JSON object from stdin.
 This CLI/MCP uses no network server, AI model, file watcher or automatic execution collector.
 The optional local viewer is a separate command: npm run view -- --db /absolute/path/memory.sqlite
+Maintenance never overwrites an existing output directory. Import with --db adds to a NEW COPY of that DB.
+Incomplete outputs are retained without a completion marker; never use them. No transfer switches the live connection.
 `;
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
-    options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" } },
+    options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" },
+      input: { type: "string" }, output: { type: "string" }, "project-id": { type: "string" } },
     allowPositionals: true,
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
   const [command, tool] = positionals;
+  if (command && ["backup", "restore", "export", "import"].includes(command)) {
+    if (positionals.length !== 1) throw new MemoryError("invalid_command", "Maintenance takes one command only.");
+    const { maintenance } = await import("./maintenance.js");
+    const result = await maintenance(command, values);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  if (values.input || values.output || values["project-id"]) throw new MemoryError("invalid_input", "Maintenance options require a maintenance command.");
   if ((command !== "serve" && command !== "call")
     || (command === "serve" && positionals.length !== 1)
     || (command === "call" && (positionals.length !== 2 || !tool))) {

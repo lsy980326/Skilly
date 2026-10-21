@@ -1,3 +1,4 @@
+import { recoverySchemaSql } from "./recovery-schema.js";
 import { closeSync, constants, existsSync, lstatSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { MemoryError, parseJsonObject } from "../../../core/memory/model.js";
@@ -44,14 +45,7 @@ export class SqliteRecoveryJournal implements RecoveryJournal {
         const app = db.prepare("PRAGMA application_id").get()?.["application_id"];
         const version = db.prepare("PRAGMA user_version").get()?.["user_version"];
         if (app === 0 && version === 0 && db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").get()?.["n"] === 0 && create) {
-          db.exec(`CREATE TABLE requests (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, repository TEXT NOT NULL, environment TEXT NOT NULL,
-            tool TEXT NOT NULL, request_key TEXT NOT NULL, payload_hash TEXT NOT NULL, input_json TEXT,
-            received_at TEXT NOT NULL, last_error TEXT, preserve_input INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(project_id, request_key)
-          ) STRICT;
-          CREATE INDEX pending_scope ON requests(project_id, repository, environment, received_at, id) WHERE input_json IS NOT NULL;
-          PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = 1;`);
+          db.exec(recoverySchemaSql);
         } else if (app !== APPLICATION_ID || version !== 1) {
           throw new MemoryError("recovery_unavailable", "Unsupported recovery journal; existing data was preserved.");
         }
