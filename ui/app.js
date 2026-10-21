@@ -1,6 +1,7 @@
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
+import { renderMachineReport } from "./reports.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
@@ -316,6 +317,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
   const priorRecords = new Set([...$("#detail").querySelectorAll(".record")].map(node => node.dataset.record));
   const expanded = new Map([...$("#detail").querySelectorAll("details")].map(node => [node.dataset.record, node.open]));
   const rawExpanded = new Map([...$("#detail").querySelectorAll("details")].filter(node => node.dataset.raw).map(node => [node.dataset.raw, node.open]));
+  const machineExpanded = new Map([...$("#detail").querySelectorAll(".machine-report")].map(node => [node.dataset.machine, node.open]));
   const panel = element("div", "detail-content");
   panel.dataset.run = task.id;
   const top = element("div", "detail-top");
@@ -365,6 +367,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
     if (record.superseded_by) tags.append(badge("정정된 기록", "warning"));
     details.append(summary, tags);
     if (record.report) {
+      details.append(element("p", "report-label", "사람용 요약"));
       details.append(element("p", "report-summary", record.report.summary));
       for (const [label, entries] of [["핵심 변화", record.report.changes], ["제약·확인 필요", record.report.limitations], ["다음 작업", record.report.next_steps]]) {
         if (!entries?.length) continue;
@@ -387,6 +390,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
       details.append(element("p", "catalog-note", "기존 원문 기록 · 구조화 요약 없음"),
         element("p", "legacy-preview", Array.from(record.body).slice(0, 180).join("") + (record.body.length > 180 ? "…" : "")));
     }
+    details.append(renderMachineReport(record, task, element, machineExpanded.get(record.id) ?? false));
     const raw = element("details", "raw-report"); raw.dataset.raw = record.id;
     raw.open = rawExpanded.get(record.id) ?? false;
     raw.append(element("summary", "", "원문 기록 보기"), element("p", "record-body", record.body));

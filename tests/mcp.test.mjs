@@ -69,6 +69,8 @@ test("real MCP client discovers tools and saves/searches data across server rest
   assert.equal(tools.find(tool => tool.name === "memory_checkpoint").annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === "memory_query_context").annotations.readOnlyHint, true);
   assert.equal(tools.find(tool => tool.name === "memory_begin_task").inputSchema.properties.actor.type, "string");
+  const schema = tools.find(tool => tool.name === "memory_checkpoint").inputSchema.properties.report;
+  assert.equal(schema.properties.technical.properties.files.maxItems, 8);
   const call = async (client, name, args) => {
     const response = await client.callTool({ name, arguments: args });
     assert.notEqual(response.isError, true, JSON.stringify(response));
@@ -77,7 +79,8 @@ test("real MCP client discovers tools and saves/searches data across server rest
   const project = (await call(client, "memory_register_project", { key: "mcp", name: "MCP", idempotency_key: "register" })).project;
   const run = (await call(client, "memory_begin_task", { project_id: project.id, goal: "기능 수정", mode: "change", actor: "Codex", idempotency_key: "begin" })).run;
   assert.equal(run.actor, "Codex");
-  await call(client, "memory_checkpoint", { project_id: project.id, run_id: run.id, topic: "comments", kind: "change", body: "댓글 해결 상태 수정", idempotency_key: "record" });
+  const report = { title: "댓글 상태 유지", summary: "댓글을 해결한 뒤 다시 열어도 상태가 유지되도록 수정했습니다.", technical: { files: ["comments.ts"], commands: ["node --test comments.test.mjs"] } };
+  const saved = await call(client, "memory_checkpoint", { project_id: project.id, run_id: run.id, topic: "comments", kind: "change", body: "댓글 해결 상태 수정", report, idempotency_key: "record" });
   const bad = await client.callTool({ name: "memory_checkpoint", arguments: { project_id: project.id, verified: true } });
   assert.equal(bad.isError, true);
   await client.close();
@@ -85,6 +88,10 @@ test("real MCP client discovers tools and saves/searches data across server rest
   const result = await call(next, "memory_query_context", { project_id: project.id, query: "해결" });
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].knowledge_status, "unknown");
+  const evidence = await call(next, "memory_get_evidence", { project_id: project.id, record_id: saved.record_id });
+  assert.deepEqual(evidence.record.report, report);
+  assert.equal(evidence.record.body, "댓글 해결 상태 수정");
+  assert.equal(evidence.verified, false);
   const status = await call(next, "memory_get_status", { project_id: project.id, run_id: run.id });
   assert.equal(status.run.actor, "Codex");
 });

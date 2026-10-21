@@ -55,13 +55,14 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   };
   const record = { id: "record", kind: "summary", topic: "task-summary", body: "변경 없는 기록",
     report_origin: "contemporaneous", observed_at: run.updated_at, recorded_at: run.updated_at,
-    report: structured ? { title: "목록과 상세 시간 수정", summary: "<img src=x onerror=alert(1)>", changes: ["같은 시계 사용"], checks: [{ name: "시간 검사", result: "passed" }], next_steps: ["실제 화면 확인"] } : null };
+    report: structured ? { title: "목록과 상세 시간 수정", summary: "<img src=x onerror=alert(1)>", changes: ["같은 시계 사용"], checks: [{ name: "시간 검사", result: "passed" }], next_steps: ["실제 화면 확인"], technical: { files: ["ui/app.js"], symbols: ["<script>bad()</script>"], commands: ["node --test tests/viewer-ui.test.mjs"] } } : null };
   const sampleSkill = { project_id: "project", skill_key: "sample", name: "샘플 스킬", version: "2.0", source: "local:sample", description: "보관 원문", content_hash: "a".repeat(64), files: [], body: "<img src=x onerror=alert(1)>", install_instructions: "설치 안내" };
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
-  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${app}\n})()`, {
+  const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${app}\n})()`, {
     document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -154,6 +155,16 @@ test("structured report is readable, original is folded, and component filter re
   assert.match(app.node("#detail").textContent, /핵심 변화/);
   assert.match(app.node("#detail").textContent, /확인 결과 · AI 보고/);
   assert.match(app.node("#detail").textContent, /다음 작업/);
+  assert.match(app.node("#detail").textContent, /사람용 요약/);
+  const machine = app.node("#detail").querySelector(".machine-report");
+  assert.equal(machine.open, false);
+  const data = JSON.parse(machine.querySelector("pre").textContent);
+  assert.equal(data.record_id, "record");
+  assert.equal(data.report.technical.files[0], "ui/app.js");
+  assert.equal(data.report.technical.symbols[0], "<script>bad()</script>");
+  assert.equal(machine.querySelector("script"), null);
+  assert.equal(data.verified, false);
+  machine.open = true;
   assert.match(app.node("#detail").textContent, /<img src=x onerror=alert\(1\)>/);
   const raw = app.node("#detail").querySelector(".raw-report");
   assert.equal(raw.open, false);
@@ -161,6 +172,10 @@ test("structured report is readable, original is folded, and component filter re
   await app.tick();
   assert.equal(app.node("#detail").querySelector(".raw-report"), raw);
   assert.equal(raw.open, true);
+  assert.equal(machine.open, true);
+  app.saveRecord("next-record");
+  await app.tick();
+  assert.equal(app.node("#detail").querySelector(".machine-report").open, false);
   app.node("#component-filter").listeners.change({ target: { value: "web" } });
   await new Promise(setImmediate);
   assert.ok(app.requests.some(path => path.includes("component=web")));

@@ -10,6 +10,7 @@ const assets = new Map([
   ["/workstream.js", { file: "workstream.js", type: "text/javascript; charset=utf-8" }],
   ["/skills.js", { file: "skills.js", type: "text/javascript; charset=utf-8" }],
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
+  ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {

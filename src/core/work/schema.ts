@@ -8,6 +8,11 @@ const items = z.array(text(400)).max(8).optional();
 export const reportSchema = z.strictObject({
   title: text(160), summary: text(800), changes: items, limitations: items, next_steps: items,
   checks: z.array(z.strictObject({ name: text(160), result: z.enum(["passed", "failed", "not_run"]), detail: text(400).optional() })).max(8).optional(),
+  technical: z.strictObject({
+    files: items, symbols: items, commands: items,
+    record_ids: z.array(z.uuid()).max(8).optional(),
+    context: text(1200).optional(),
+  }).optional(),
   feature_updates: z.array(z.strictObject({ key: workKey,
     state: z.enum(["planned", "in_progress", "implemented", "blocked", "retired"]), summary: text(400),
   })).max(8).optional(),

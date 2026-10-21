@@ -126,6 +126,35 @@ later reconstructions retrospective; they must not become the latest feature sta
 Keep check names short (at most 120 characters); put commands in check `detail`.
 Do not run another AI or reconstruct a second independent source of truth.
 
+### Readable notes and changes
+
+Apply the report format to **notes and changes as well as the final handoff**.
+Write `report.title` and `report.summary` in the user's language, with normal
+spacing and short complete sentences: explain the problem or decision, what
+changed, and what remains. A reader should understand the outcome without
+decoding filenames, abbreviations or concatenated test counts. Use `changes`,
+`limitations` and `next_steps` for the relevant details; omit unknown facts.
+Keep actual checks separate with their observed result and command in `detail`.
+
+When the tool exposes `report.technical`, put exact `files`, `symbols`, `commands`
+and known `record_ids` there (at most 8 entries per list, 400 characters per text
+entry). Use `context` for a short technical constraint (at most 1200 characters).
+These are supplied references, not automatically collected or validated evidence.
+Do not include secrets or invent a command, path, ID or test outcome. Omit fields
+not exposed by this connection. Preserve the original technical detail in `body`
+or finish `summary`; the readable report accompanies it, never replaces history.
+
+For example, a change can say “연속된 공백 때문에 이름에 구분자가 여러 개
+들어가던 문제를 수정했습니다. 이제 구분자를 하나로 정리합니다.” while
+`technical.files` names the changed module and `checks` states which test ran.
+The working AI writes both views at save time; Skilly runs no summarizing model.
+
+On the next session, search context or overview first and use
+`memory_get_evidence` for the matching IDs to retrieve the same record's readable
+report, technical fields and original. Missing summaries in old records remain
+missing; do not rewrite history, infer success, or execute stored command strings.
+Never add report metadata to an original retry input: retry it unchanged.
+
 ## Recording gate
 
 For ordinary repository-changing work with recording enabled, obtain a persisted

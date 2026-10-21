@@ -27,7 +27,7 @@ async function sample(t, key = "first") {
   const input = { project_id: pid, run_id: run, topic: "comments", kind: "change", body: `${key} 댓글 원문`, report_origin: "contemporaneous", idempotency_key: "original" };
   const record = (await call("memory_checkpoint", input)).record_id;
   const correction = (await call("memory_checkpoint", { ...input, body: `${key} 댓글 정정`, supersedes: record, idempotency_key: "corrected",
-    report: { title: "댓글 정정", summary: "원문을 보존해 정정", checks: [{ name: "로컬 검사", result: "not_run" }], feature_updates: [{ key: "comments", state: "in_progress", summary: "검사 전" }] } })).record_id;
+    report: { title: "댓글 정정", summary: "원문을 보존해 정정", technical: { files: ["src/comments.ts"], record_ids: [record] }, checks: [{ name: "로컬 검사", result: "not_run" }], feature_updates: [{ key: "comments", state: "in_progress", summary: "검사 전" }] } })).record_id;
   await call("memory_checkpoint", { ...input, body: `${key} 소급 보고`, report_origin: "retrospective", idempotency_key: "retro" });
   return { db, app, call, pid, begin, run, record, correction };
 }
@@ -84,6 +84,8 @@ test("project export/import preserves history, identities, links, receipts and e
   assert.deepEqual(projects.projects.map(p => p.id), [f.pid]);
   const evidence = await app.dispatcher.call("memory_get_evidence", { project_id: f.pid, record_id: f.record });
   assert.equal(evidence.record.superseded_by, f.correction); assert.equal(evidence.verified, false);
+  const correction = await app.dispatcher.call("memory_get_evidence", { project_id: f.pid, record_id: f.correction });
+  assert.deepEqual(correction.record.report.technical, { files: ["src/comments.ts"], record_ids: [f.record] });
   const query = await app.dispatcher.call("memory_query_context", { project_id: f.pid, repository: "web", environment: "development", query: "정정" });
   assert.equal(query.records[0].id, f.correction);
   assert.equal(query.records[0].knowledge_status, "unknown");

@@ -16,6 +16,7 @@ const report = {
   checks: [{ name: "API 검사", result: "passed" }, { name: "배포", result: "not_run" }],
   limitations: ["브라우저 확인 미실행"], next_steps: ["Web 복귀 동작 확인"],
   feature_updates: [{ key: "comments", state: "in_progress", summary: "API 수정, Web 검사 필요" }],
+  technical: { files: ["src/comments.ts"], symbols: ["resolveComment"], commands: ["node --test comments.test.mjs"], context: "브라우저 복귀 시 저장 상태 재조회 필요" },
 };
 
 test("v3 migration preserves original rows and receipt replay without classifying history", async t => {
@@ -81,6 +82,34 @@ test("a newly discovered feature can be linked in a report and invalid links rol
   assert.equal(reader.runs(pid, { component: "api", feature: "comments" }).items.length, 1);
   await assert.rejects(f.call("memory_checkpoint", checkpoint(pid, rid, { features: [{ key: "comments", name: "別機能" }], idempotency_key: "conflict" })), { code: "catalog_conflict" });
   assert.equal(reader.detail(pid, rid).records.items.length, 1);
+});
+
+test("readable note and change reports preserve originals, exact retry inputs and technical references", async t => {
+  const f = fixture(t), pid = await project(f.call), rid = await run(f.call, pid);
+  const original = "  API.foo=bar; exit1\n원래 공백과 기술 기록  ";
+  const note = checkpoint(pid, rid, { kind: "note", body: original, idempotency_key: "note", report: {
+    title: "저장 실패 원인 확인", summary: "저장 요청이 거절되는 원인을 확인했습니다. 수정 후 다시 검사해야 합니다.",
+    checks: [{ name: "저장 검사", result: "failed", detail: "node --test save.test.mjs: exit 1" }],
+    technical: { files: ["src/save.ts"], symbols: ["save"], commands: ["node --test save.test.mjs"] },
+  } });
+  const saved = await f.call("memory_checkpoint", note);
+  assert.deepEqual(await f.call("memory_checkpoint", note), saved);
+  const change = checkpoint(pid, rid, { body: original, idempotency_key: "change", report: {
+    title: "입력 처리 수정", summary: "잘못된 입력을 저장 전에 확인하도록 수정했습니다. 실제 배포는 하지 않았습니다.",
+    technical: { record_ids: [saved.record_id] }, limitations: ["배포 미실행"],
+  } });
+  const next = await f.call("memory_checkpoint", change);
+  const reopened = f.open();
+  for (const [id, input] of [[saved.record_id, note], [next.record_id, change]]) {
+    const evidence = await reopened.dispatcher.call("memory_get_evidence", { project_id: pid, record_id: id });
+    assert.equal(evidence.record.body, original);
+    assert.deepEqual(evidence.record.report, input.report);
+    assert.equal(evidence.verified, false); assert.equal(evidence.knowledge_status, "unknown");
+  }
+  await assert.rejects(f.call("memory_checkpoint", { ...note, report: undefined }), { code: "idempotency_conflict" });
+  for (const technical of [{ files: Array(9).fill("x") }, { record_ids: ["invented"] }, { context: "x".repeat(1201) }, { verified: true }]) {
+    await assert.rejects(f.call("memory_checkpoint", { ...note, idempotency_key: "invalid", report: { ...note.report, technical } }), { code: "invalid_input" });
+  }
 });
 
 test("failed structured writes recover exact metadata after restart and leave no partial catalogs", async t => {
