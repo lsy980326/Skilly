@@ -5,6 +5,19 @@ description: Use Skilly project memory during ordinary development, debugging, r
 
 # Use Skilly
 
+## Before running validation
+
+For an authorized test, lint, typecheck or build, use `skilly exec` by default
+when this connection has resolved the project, this task has a persisted start,
+and the local runner and absolute DB/project paths are explicitly known. The
+user need not separately ask to record or use the runner. Before the first
+check, read **Direct execution observations for validation** below and any local
+installation paths. Run the intended check through the runner, not directly.
+Ordinary file reads and Git inspection remain ordinary commands. Do not wrap
+long-running servers or gain permission for a new operation through the runner.
+If prerequisites are missing, disclose the capture gap; never guess paths,
+bypass the recording gate, or claim that an ordinary command was collected.
+
 The host AI does the work. Skilly stores supplied reports locally through MCP; it
 does not observe commands or validate claims. Do not ask the user to operate a DB.
 
@@ -172,10 +185,12 @@ the recording gate and all memory writes, including the final summary.
 
 ## Record meaningful progress
 
-### Optional direct execution observations
+### Direct execution observations for validation
 
-When the local `skilly exec` runner and its DB/project paths are explicitly known,
-use it for authorized local checks with this task's saved `run_id`; an optional
+Use the installed runner for the task's authorized validation commands under the
+conditions above, even when the user only requests normal implementation and
+testing. Choose it before the first validation command; do not first run the
+same check directly. Use this task's saved `run_id`; an optional
 `--record-id` must be a saved record from the same task. The syntax is
 `skilly exec --db /absolute/db --project /absolute/root --run-id UUID [--record-id UUID] -- executable args`.
 Do not guess a DB path, read private config, install hooks, bypass trust, run a new
@@ -189,7 +204,14 @@ normally, not that a feature is verified. Keep the human report's checks as AI
 reports, linking known execution IDs in technical references when supported.
 Arguments and output text are not stored. A missing/unconfirmed result is not
 proof of no execution. Never rerun a command to recover missing result storage.
-This path is opt-in and observes no commands outside explicit runner invocations.
+The installed workflow selects this path for eligible checks; it is not an OS
+hook and observes no commands outside explicit runner invocations. The runner
+returns a receipt, not test output. Report the observed exit status and execution
+ID; do not invent test counts or rerun solely to obtain output. Before finishing,
+read the saved observation with `memory_list_executions` or linked evidence.
+If saving fails, disclose the gap and do not replay the command. In the next
+session, retrieve these observations alongside the original AI report before
+reusing its validation result. Absence of observations never proves no execution.
 
 Call `memory_checkpoint` for decisions, important changes, issues, or next steps:
 `project_id`, `run_id`, concise stable feature `topic`, `kind`, `body`, and a unique
