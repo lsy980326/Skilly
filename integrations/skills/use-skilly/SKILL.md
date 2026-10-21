@@ -18,7 +18,13 @@ local, bypass a host approval, or change settings to make a tool available.
 
 ## Start a task or a new session
 
-1. Discover the `skilly` MCP tools using the host's tool discovery when needed.
+MCP resources and tools are separate capabilities. Skilly exposes memory tools;
+`list_mcp_resources` / `list_mcp_resource_templates` are not tool discovery or
+connection checks. Their failure or empty results do not prove tools are missing.
+
+1. Discover this connection's memory tools using the host's tool discovery when
+   needed. Select the exact MCP server declared by this installed skill, which
+   may have a project-specific name instead of `skilly`.
    A discovery error alone does not prove that MCP is unavailable. If the host
    already exposes a tool catalog, inspect it once for Skilly before giving up.
    In Codex code mode, this is `ALL_TOOLS` inside `functions.exec`; select the
@@ -49,6 +55,14 @@ local, bypass a host approval, or change settings to make a tool available.
    Keep the returned `run.id` in the current task context. Reuse an existing run
    only when this conversation already owns its ID and `memory_get_status`
    confirms it is active. Never take over another session's run found in search.
+
+After a user-confirmed restart, check the current chat's exposed catalog again
+and try the exposed resolver before declaring disconnection. If tools remain
+absent after that bounded check, report which discovery/catalog paths were
+actually available and checked; distinguish absent tools from failed tool calls.
+Do not repeatedly request the same restart without new evidence. A separate
+CLI, server process or chat succeeding does not repair or prove this chat's
+connection. Never invent a callable name or bypass the recording gate.
 
 ## Service, component and feature context
 

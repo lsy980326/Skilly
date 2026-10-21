@@ -164,7 +164,7 @@ Codex app-server 프로세스를 차례로 실행한다. 모델 턴·외부 전�
 |---|---|
 | `effective_mcp_config_matches` | 현재는 null. 원시 설정을 조회하지 않으며 설치된 실제 DB 대상 일치는 미확인 |
 | `sessions[].skill_discovered` | Codex가 설치된 스킬을 발견했는가 |
-| `sessions[].mcp_dependency_declared` | 발견한 스킬이 `skilly` MCP 의존성을 선언했는가 |
+| `sessions[].mcp_dependency_declared` | 발견한 스킬이 지정한 서버의 MCP 의존성을 선언했는가 |
 | `sessions[].mcp_connected` | 해당 실행 모드의 설정에서 실제 Codex MCP 연결이 됐는가 |
 | `requery_verified` | 별도 프로세스에서 합성 기록 재조회가 확인됐는가 |
 | `stored_claims_verified` | 항상 false. 저장한 주장 자체를 검증하지 않음 |
@@ -176,6 +176,16 @@ Codex app-server 프로세스를 차례로 실행한다. 모델 턴·외부 전�
 기록을 쓰는 도구를 호출하지 않는다. MCP 프로세스 시작 자체는 설정된 로컬 DB를
 열거나 초기화할 수 있다. Skilly 서버가 없으면 실패 상태와 종료 코드 1을 반환한다.
 두 모드 모두 Codex 배포본의 내장 서버가 목록에 나타날 수 있지만 호출하지 않는다.
+
+고유한 서버명을 쓰는 프로젝트는 `--configured --server 서버명`으로 정확한 연결을
+선택한다. 생략하면 기존처럼 `skilly`를 검사한다. 다른 서버의 도구로 성공을 대신
+판정하지 않으며 이 옵션은 등록·신뢰·MCP 설정을 변경하지 않는다.
+
+현재 채팅의 연결은 그 채팅에 노출된 실제 도구 카탈로그와
+`memory_resolve_project` 호출로 확인한다. Skilly는 memory 도구를 제공하므로
+`list_mcp_resources` 또는 템플릿 조회의 실패·빈 목록은 연결 실패의 근거가 아니다.
+재시작 후에도 도구가 없다면 확인한 카탈로그 경로와 실제 도구 호출 오류를 구분해
+보고한다. 같은 재시작을 반복하거나 독립 진단의 성공을 기존 채팅 복구로 보고하지 않는다.
 
 프로젝트 설정이 발견되지 않으면 Codex의 프로젝트 신뢰 상태와 프로젝트 경로,
 새 세션에서의 MCP 연결을 확인해야 한다. 설치기가 신뢰 상태를 임의 변경하지 않는다.

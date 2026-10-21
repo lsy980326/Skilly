@@ -12,8 +12,8 @@ export const REQUIRED_TOOLS = [
 ];
 const RECOVERY_TOOLS = ["memory_recovery_status", "memory_retry_write"];
 
-export function inspectInventory(inventory) {
-  const server = inventory.data?.find(entry => entry.name === "skilly");
+export function inspectInventory(inventory, serverName = "skilly") {
+  const server = inventory.data?.find(entry => entry.name === serverName);
   const names = Object.keys(server?.tools ?? {});
   // Codex may qualify names. Accept only an exact name or a namespace boundary.
   const missing = REQUIRED_TOOLS.filter(tool => !names.some(name => name === tool || name.endsWith(`__${tool}`)));

@@ -11,7 +11,9 @@ import { guardedProbeRequest, inspectInventory, probeOverrides } from "./codex-p
 const { values } = parseArgs({ options: {
   project: { type: "string" }, db: { type: "string" }, codex: { type: "string" },
   configured: { type: "boolean" },
+  server: { type: "string", default: "skilly" },
 } });
+if (!values.configured && values.server !== "skilly") throw new Error("--server requires --configured for a non-default server.");
 for (const field of ["project", "db", "codex"]) {
   if (!values[field] || !isAbsolute(values[field])) throw new Error(`--${field} must be absolute.`);
 }
@@ -91,19 +93,19 @@ for (let session = 0; session < 2; session++) {
     const skill = skills.data?.flatMap(entry => entry.skills).find(entry =>
       entry.name === "use-skilly" && entry.path === join(root, ".agents/skills/use-skilly/SKILL.md"));
     assert.ok(skill, "Codex did not discover the installed use-skilly skill.");
-    const dependencyDeclared = skill.dependencies?.tools?.some(tool => tool.type === "mcp" && tool.value === "skilly") ?? false;
+    const dependencyDeclared = skill.dependencies?.tools?.some(tool => tool.type === "mcp" && tool.value === values.server) ?? false;
     const thread = await request("thread/start", { cwd: root, ephemeral: true });
     const threadId = thread.thread.id;
     const inventory = await request("mcpServerStatus/list", { threadId });
     // Some Codex distributions inject built-in servers. Never invoke them.
-    const connection = inspectInventory(inventory);
+    const connection = inspectInventory(inventory, values.server);
     if (!connection.mcp_connected && values.configured) {
       reports.push({ session: session + 1, skill_discovered: true, mcp_dependency_declared: dependencyDeclared, ...connection, other_servers_invoked: 0 });
       break;
     }
     assert.ok(connection.mcp_connected, "Skilly workflow tools are missing from Codex inventory.");
     const call = async (tool, args) => {
-      const result = await request("mcpServer/tool/call", { threadId, server: "skilly", tool, arguments: args });
+      const result = await request("mcpServer/tool/call", { threadId, server: values.server, tool, arguments: args });
       assert.notEqual(result.isError, true, `${tool} failed.`);
       const text = result.content.find(item => item.type === "text")?.text;
       assert.equal(typeof text, "string");
@@ -155,7 +157,7 @@ const connected = reports.length === 2 && reports.every(report => report.mcp_con
   && !projectTrustWarning && approvalRequests === 0;
 if (!connected) process.exitCode = 1;
 process.stdout.write(`${JSON.stringify({
-  codex: version.stdout.trim(), effective_mcp_config_matches: null,
+  codex: version.stdout.trim(), server: values.server, effective_mcp_config_matches: null,
   configuration_inspection: "not requested; no raw config read or comparison",
   verification_scope: "two new app-server processes, not the calling desktop chat",
   installed_database_target_verified: false,

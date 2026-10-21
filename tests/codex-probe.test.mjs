@@ -25,6 +25,20 @@ test("a listed server or resolver alone cannot pass the whole recording workflow
   assert.equal(inspectInventory({ data: [{ name: "other", tools: entry(REQUIRED_TOOLS).data[0].tools }] }).mcp_connected, false);
 });
 
+test("configured diagnostics select the exact server without borrowing tools from another connection", () => {
+  const server = "skilly_project_fixture";
+  const tools = Object.fromEntries(REQUIRED_TOOLS.map(name => [name, {}]));
+  const inventory = { data: [{ name: "skilly", tools }, { name: server, tools: {} }] };
+  assert.equal(inspectInventory(inventory).mcp_connected, true);
+  assert.equal(inspectInventory(inventory, server).mcp_connected, false);
+  inventory.data[1].tools = Object.fromEntries([...REQUIRED_TOOLS, "memory_recovery_status", "memory_retry_write"].map(name => [`mcp__${server}__${name}`, {}]));
+  const selected = inspectInventory(inventory, server);
+  assert.equal(selected.mcp_connected, true);
+  assert.equal(selected.recovery_tools_available, true);
+  assert.equal(inspectInventory(inventory, `${server}_other`).server_listed, false);
+  assert.equal(inspectInventory({ data: [], resources: [{ server, tools }] }, server).mcp_connected, false);
+});
+
 test("a trust warning or rejected approval stops subsequent protocol calls including writes and new sessions", async () => {
   for (const event of ["trust_warning", "approval_request"]) {
     const state = { trustWarning: false, approvalRequests: 0 };

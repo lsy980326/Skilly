@@ -32,6 +32,9 @@ test("real MCP client discovers tools and saves/searches data across server rest
     return client;
   };
   const client = await connect();
+  // Skilly exposes tools, not resources. The unsupported resource route must not
+  // be mistaken for a broken connection: the same client can still save below.
+  await assert.rejects(client.listResources(), /Method not found/);
   const tools = (await client.listTools()).tools;
   assert.equal(tools.length, 11);
   assert.equal(tools.find(tool => tool.name === "memory_checkpoint").annotations.readOnlyHint, false);
