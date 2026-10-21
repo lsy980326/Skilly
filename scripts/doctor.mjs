@@ -3,6 +3,7 @@ import { isAbsolute, join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
+import { diagnoseInstallation, diagnoseExecutionAccess } from './local-installation.mjs';
 
 // No config/auth contents, network, writer connection, automatic repair or model turn.
 function regular(path) {
@@ -17,8 +18,9 @@ function state(path) {
   try { regular(path); return 'present'; }
   catch (error) { return error?.code === 'ENOENT' ? 'missing' : 'unavailable'; }
 }
-export async function diagnoseLocal({ project, db }) {
+export async function diagnoseLocal({ project, db, installation }) {
   if (!isAbsolute(project) || !isAbsolute(db)) throw new Error('Use absolute --project and --db paths.');
+  if (installation && !isAbsolute(installation)) throw new Error('Use an absolute installation data path.');
   const root = realpathSync(project), checks = [];
   const add = (key, status, detail) => checks.push({ key, status, detail });
   const ready = state(fileURLToPath(new URL('../dist/runtime/local/main.js', import.meta.url))) === 'present' && Number(process.versions.node.split('.')[0]) >= 24;
@@ -35,6 +37,15 @@ export async function diagnoseLocal({ project, db }) {
     add(key,status === 'present' ? 'present_unverified' : 'action_required', status === 'present'
       ? `${label}이 있습니다. 내용·호스트 로딩·연결 성공을 확인한 것은 아닙니다.` : `${label}이 없거나 안전하게 확인할 수 없습니다. 기존 파일은 덮어쓰지 마세요.`);
   }
+  const installed = diagnoseInstallation(root, db, installation);
+  add('execution_paths', installed.status === 'paths_match' ? 'ready' : installed.status === 'missing' && !installation ? 'present_unverified' : 'action_required',
+    installed.status === 'paths_match' ? '설치 경로가 현재 경로와 일치합니다. 실제 연결이나 쓰기 성공을 뜻하지 않습니다.'
+    : installed.status === 'missing' ? '실행 경로 안내가 없습니다. 기존 설정을 읽거나 경로를 추측하지 마세요.'
+    : '설치 경로가 이동했거나 실행 파일을 확인할 수 없습니다. 기존 설정을 보존하고 --output으로 새 연결 후보를 만드세요.');
+  const executionAccess = diagnoseExecutionAccess(db);
+  add('execution_access', executionAccess.status === 'appears_writable' ? 'present_unverified' : 'action_required',
+    executionAccess.status === 'appears_writable' ? '현재 프로세스의 DB·폴더 접근 사전 확인만 통과했습니다. Codex 샌드박스 승인과 실제 저장은 별도입니다.'
+    : 'DB·부모 폴더·WAL/SHM 파일 접근이 제한되거나 경로가 올바르지 않습니다. 권한을 자동 확대하지 말고 호스트 승인 절차를 확인하세요.');
   let database = { status: 'not_checked', project_registered: false };
   const dbState = state(db);
   if (dbState === 'missing') { database.status = 'not_initialized'; add('database','not_initialized','DB가 아직 없습니다. 첫 MCP 연결에서 생성할 수 있습니다. 진단은 생성하지 않습니다.'); }
@@ -53,6 +64,7 @@ export async function diagnoseLocal({ project, db }) {
     finally { reader?.close(); }
   }
   return { status:checks.some(c=>c.status === 'action_required') ? 'action_required' : 'local_preflight_ready', checks, database,
+    installation: installed, execution_access: executionAccess,
     connection_status:'not_checked', trust_status:'unknown', current_chat_tools:'unknown', configuration_contents_read:false,
     files_changed:false, next_steps:[
       '처음 설치하지 않았다면 npm run setup:codex 안내를 따르세요. 기존 설정이 있으면 설치를 반복하거나 덮어쓰지 마세요.',
@@ -64,7 +76,7 @@ export async function diagnoseLocal({ project, db }) {
 }
 if(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
  try {
-  const {values}=parseArgs({options:{project:{type:'string'},db:{type:'string'}}});
+  const {values}=parseArgs({options:{project:{type:'string'},db:{type:'string'},installation:{type:'string'}}});
   if(!values.project || !values.db) throw new Error('Usage: npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite');
   const result=await diagnoseLocal(values);process.stdout.write(JSON.stringify(result,null,2)+'\n');
   if(result.status === 'action_required')process.exitCode=1;

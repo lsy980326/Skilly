@@ -111,6 +111,40 @@ tool_timeout_sec = 10
 여러 프로젝트가 같은 DB를 지정해도 각 연결은 자신의 프로젝트·저장소·환경으로 제한된다.
 이 제한은 로컬 실수 방지이며 여러 사용자를 위한 인증·권한 시스템은 아니다.
 
+### 실행 경로·접근 사전 확인과 폴더 이동
+
+새 설치는 스킬 옆의 `.agents/skills/use-skilly/installation.json`에 Node 실행 파일,
+Skilly 런타임, 프로젝트와 DB의 절대 경로를 기록한다. 비밀 설정이 아닌 설치 경로
+데이터이며 다른 컴퓨터로 이동할 때 그대로 재사용하지 않는다. 기존 설치 파일은
+자동 갱신하지 않는다. 파일이 없으면 경로가 확인됐다고 주장하거나 사적 설정을 읽지 않는다.
+
+```sh
+npm run doctor -- --project /absolute/project --db /absolute/local/memory.sqlite
+```
+
+`installation.status`는 경로 일치, 불일치, 실행 파일 부재, 안내 파일 부재·오류를
+구분한다. `execution_access`는 현재 진단 프로세스의 DB·부모 폴더·WAL/SHM 접근만
+사전 확인한다. `appears_writable`이어도 `write_verified: false`이며 Codex 샌드박스
+승인, 실제 쓰기 성공이나 MCP 연결을 증명하지 않는다. 진단은 DB를 만들거나 수정하지 않는다.
+
+이동 후에는 현재 경로와 사용할 DB를 명시해 **별도 새 폴더**에 연결 후보를 만든다.
+
+```sh
+npm run setup:codex -- --project /absolute/moved-project \
+  --db /absolute/local/memory.sqlite --output /absolute/new-connection-candidate
+npm run doctor -- --project /absolute/moved-project \
+  --db /absolute/local/memory.sqlite \
+  --installation /absolute/new-connection-candidate/.agents/skills/use-skilly/installation.json
+```
+
+`candidate_created`는 후보 생성만 뜻하며 기존 MCP 설정·스킬에는 적용하지 않는다.
+설정이 섞여 있는 파일 전체를 후보로 덮어쓰지 말고 Skilly 항목만 검토해 호스트의
+지원되는 설정 방식으로 반영해야 한다. 실제 재연결 후 프로젝트 식별과 기존 기록,
+승인된 검사의 실행 관측을 별도로 확인한다. 신뢰나 쓰기 권한은 자동으로 바꾸지 않는다.
+실행기가 검사 시작 전에 거부됐는지 알 수 없거나 이미 실행됐다면 저장 복구 목적으로
+검사를 다시 실행하지 않는다. 기존 DB를 옮길 때는 연결을 닫고 정식 백업·복원 절차를
+사용한다. 설치 후보 생성은 DB를 복사하거나 이동하는 명령이 아니다.
+
 다른 저장소에서 일관된 자동 사용을 원하면 그 저장소의 기존 `AGENTS.md`에
 “일반 프로젝트 작업의 시작과 종료에 use-skilly를 사용한다”는 지침을 합의해 추가한다.
 설치기는 다른 프로젝트의 지침 파일을 수정하지 않는다.

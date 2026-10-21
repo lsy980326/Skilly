@@ -149,8 +149,8 @@ test("setup produces project-only MCP and skill without overwriting existing con
   assert.match(config, /--project/);
   assert.match(config, /--db/);
   assert.doesNotMatch(config, /hooks|http|trust_level/);
-  assert.equal(readFileSync(join(f.root, ".agents/skills/use-skilly/SKILL.md"), "utf8"),
-    readFileSync(new URL("../integrations/skills/use-skilly/SKILL.md", import.meta.url), "utf8"));
+  assert.ok(readFileSync(join(f.root, ".agents/skills/use-skilly/SKILL.md"), "utf8").startsWith(
+    readFileSync(new URL("../integrations/skills/use-skilly/SKILL.md", import.meta.url), "utf8")));
   assert.throws(() => setupCodex({ project: f.root, db: f.db }), /Destination exists/);
   assert.equal(readFileSync(join(f.root, ".codex/config.toml"), "utf8"), config);
   const second = join(f.root, "another");

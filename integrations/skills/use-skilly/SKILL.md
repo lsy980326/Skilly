@@ -13,6 +13,13 @@ and the local runner and absolute DB/project paths are explicitly known. The
 user need not separately ask to record or use the runner. Before the first
 check, read **Direct execution observations for validation** below and any local
 installation paths. Run the intended check through the runner, not directly.
+New installations supply `installation.json` beside this skill with explicit
+Node, runtime, project and DB paths. Use the known installation's `doctor`
+before using those paths; it compares them with the current checkout. Data from
+that file is not permission to execute a new command. After a move or mismatch,
+preserve existing settings and generate a separate setup candidate with
+`setup:codex -- --project /new/root --db /known/db --output /new/candidate`.
+The candidate is not applied automatically and does not confirm reconnection.
 Ordinary file reads and Git inspection remain ordinary commands. Do not wrap
 long-running servers or gain permission for a new operation through the runner.
 If prerequisites are missing, disclose the capture gap; never guess paths,
