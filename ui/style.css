@@ -285,3 +285,80 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 @keyframes skill-enter { from { opacity: .3; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media(prefers-reduced-motion:reduce) { .skill-detail { animation: none; } }
 @media(max-width:650px) { .view-tabs { gap: 16px; } .skill-version-card { padding: 14px; } }
+
+/* Two handles: service navigation width and the saved-work dashboard height. */
+.splitter { display: none; }
+@media (min-width: 851px) {
+  .workspace { --sidebar-default: 226px; --work-default: 380px; grid-template-columns: var(--sidebar-size, var(--sidebar-default)) 8px minmax(280px, var(--work-default)) minmax(320px, 1fr); grid-template-rows: var(--dashboard-size, auto) 8px minmax(0, 1fr); }
+  .projects-panel { grid-column: 1; grid-row: 1 / 4; border-right: 0; }
+  .service-panel { grid-column: 3 / -1; grid-row: 1; border-bottom: 0; min-height: 0; }
+  .workspace.custom-dashboard .service-panel { max-height: none; }
+  .work-panel { grid-column: 3; grid-row: 3; }
+  .detail-panel { grid-column: 4; grid-row: 3; }
+  .splitter { display: grid; place-items: center; position: relative; touch-action: none; background: var(--canvas); z-index: 2; outline-offset: -2px; }
+  .splitter:before { content: ""; position: absolute; background: var(--line); transition: background .15s; }
+  .splitter span { z-index: 1; background: var(--muted); opacity: .45; border-radius: 6px; transition: background .15s, opacity .15s; }
+  .splitter:hover:before, .splitter:focus-visible:before { background: var(--accent); }
+  .splitter:hover span, .splitter:focus-visible span { background: var(--accent); opacity: 1; }
+  .splitter-sidebar { grid-column: 2; grid-row: 1 / 4; cursor: col-resize; }
+  .splitter-sidebar:before { width: 1px; height: 100%; }
+  .splitter-sidebar span { width: 3px; height: 32px; }
+  .splitter-dashboard { grid-column: 3 / -1; grid-row: 2; cursor: row-resize; }
+  .splitter-dashboard:before { height: 1px; width: 100%; }
+  .splitter-dashboard span { height: 3px; width: 40px; }
+  .splitter[aria-disabled="true"] { cursor: default; }
+  .splitter[aria-disabled="true"] span { opacity: .15; }
+  .resizing-sidebar, .resizing-dashboard { user-select: none; }
+  .resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; }
+  .resizing-dashboard, .resizing-dashboard * { cursor: row-resize !important; }
+}
+@media (min-width: 1600px) { .workspace { --sidebar-default: 248px; --work-default: 420px; } }
+@media (min-width: 851px) and (max-width: 1100px) { .workspace { --sidebar-default: 185px; --work-default: 310px; } }
+@media (max-width: 600px) { .top-actions { gap: 5px; } #reset-layout { font-size: 10px; padding: 8px 5px; } }
+
+/* Finite arrivals and saved-data changes, never an execution heartbeat. */
+.component-lane.lane-enter { animation: lane-enter .4s ease-out both; }
+.component-lane.lane-enter:nth-child(2) { animation-delay: .04s; }
+.component-lane.lane-enter:nth-child(3) { animation-delay: .08s; }
+.component-lane.lane-enter:nth-child(4) { animation-delay: .12s; }
+.component-lane.lane-enter:nth-child(5) { animation-delay: .16s; }
+.component-lane.lane-enter:nth-child(6) { animation-delay: .2s; }
+.component-lane.lane-updated .lane-port { animation: saved-port .9s ease-out; }
+.component-lane.lane-updated:before, .component-lane.lane-updated .lane-task:before { animation: saved-line .9s ease-out; }
+@keyframes lane-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@keyframes saved-port { 20% { background: var(--accent); box-shadow: 0 0 0 5px var(--wash); } to { box-shadow: 0 0 0 0 transparent; } }
+@keyframes saved-line { 20% { border-color: var(--accent); } }
+
+/* An attention cue for unfinished records, not proof of a running agent. */
+.component-lane.has-unfinished .component-tile, .lane-task {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: var(--wash);
+}
+.component-lane.has-unfinished .lane-port { background: var(--accent); }
+.component-lane.has-unfinished .component-tile:after, .lane-task:after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit;
+  border: 1px solid var(--accent); pointer-events: none; opacity: .5;
+  box-shadow: 0 0 0 1px #3d5afe18, 0 0 12px #3d5afe38;
+  animation: unfinished-glow 3s ease-in-out infinite;
+}
+@keyframes unfinished-glow { 0%, 100% { opacity: .22; } 50% { opacity: .95; } }
+
+/* A taller board spends its space on readable cards rather than blank padding. */
+.lane-last { display: block; font-size: 9px; color: var(--muted); margin-top: 7px; }
+.lane-summary, .lane-branch, .lane-task-extra, .lane-more-expanded { display: none; }
+.service-panel[data-density="compact"] .lane-task strong { -webkit-line-clamp: 1; }
+.service-panel[data-density="compact"] .lane-actor,
+.service-panel[data-density="compact"] .lane-last { display: none; }
+.service-panel[data-density="expanded"] .component-strip { grid-auto-columns: minmax(220px, 1fr); padding-bottom: 14px; }
+.service-panel[data-density="expanded"] .component-tile { padding-top: 12px; padding-bottom: 12px; }
+.service-panel[data-density="expanded"] .component-tile strong { font-size: 16px; }
+.service-panel[data-density="expanded"] .lane-port { top: 21px; }
+.service-panel[data-density="expanded"] .lane-task { padding: 12px; }
+.service-panel[data-density="expanded"] .lane-task strong { font-size: 14px; line-height: 1.6; -webkit-line-clamp: 3; }
+.service-panel[data-density="expanded"] .lane-actor { white-space: normal; font-size: 11px; }
+.service-panel[data-density="expanded"] .lane-last { font-size: 10px; }
+.service-panel[data-density="expanded"] .lane-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 12px; line-height: 1.7; margin-top: 10px; color: var(--ink); }
+.service-panel[data-density="expanded"] .lane-branch { display: block; font: 10px var(--mono); margin-top: 8px; color: var(--muted); overflow-wrap: anywhere; }
+.service-panel[data-density="expanded"] .lane-task-extra,
+.service-panel[data-density="expanded"] .lane-more-expanded { display: block; }
+.service-panel[data-density="expanded"] .lane-more-compact { display: none; }

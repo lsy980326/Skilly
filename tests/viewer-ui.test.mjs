@@ -30,7 +30,7 @@ class Element {
 }
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
-  hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "" } = {}) {
+  hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0 } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0;
   let recordAvailable = !initialEmpty;
@@ -52,6 +52,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     activity: "completed", repository: "main", environment: "test",
     created_at: new Date(initial).toISOString(), updated_at: new Date(initial).toISOString(),
     title: "시간 표시", components: [{ key: "web", name: "Web" }], features: [{ key: "clock", name: "상대 시간" }],
+    branch: "test/board", latest_report: structured ? { summary: "저장된 작업 요약 <img src=x>" } : null,
   };
   const record = { id: "record", kind: "summary", topic: "task-summary", body: "변경 없는 기록",
     report_origin: "contemporaneous", observed_at: run.updated_at, recorded_at: run.updated_at,
@@ -67,7 +68,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
     setTimeout(callback) { scheduled = callback; return 1; }, clearTimeout() {},
-    matchMedia() { return { matches: false }; },
+    matchMedia() { return { matches: reducedMotion }; },
     async fetch(path, options) {
       calls++; requests.push(path);
       authorizations.push(options.headers.Authorization);
@@ -84,9 +85,9 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
               : Array.from({ length: 40 }, (_, n) => ({ key: `feature-${n}`, name: `기능 ${n}`, total: 1, unfinished: 0 })))
             : [{ key: "clock", name: "상대 시간", total: 1, unfinished: 0 }],
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
-        : path.includes("state=active") ? { items: active ? [run] : [], next_offset: partial ? 20 : null }
-        : path.startsWith("/api/runs/run?")
-          ? { run, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
+        : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
+        : path.startsWith("/api/runs/run")
+          ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
           : { items: [run], next_offset: null };
       return { ok: httpStatus === 200, status: httpStatus, async json() {
         if (requestFailure === "json") throw new SyntaxError("잘못된 응답");
@@ -98,6 +99,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     node, document, calls: () => calls, requests, authorizations,
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
+    updateTask(patch) { Object.assign(run, patch); },
     async tick() { await scheduled(); },
     labels() {
       return [node("#tasks").querySelector(".card-time").textContent,
@@ -221,6 +223,50 @@ test("workstream shows saved unfinished work and opens its original detail", asy
   await new Promise(setImmediate);
   assert.match(app.node("#detail").textContent, /시간 표시/);
   assert.ok(app.requests.some(path => path.startsWith("/api/runs/run?")));
+});
+
+test("workstream preserves unchanged nodes and scroll; only saved changes animate", async () => {
+  const app = await viewer({ active: true });
+  const board = app.node("#components"), original = board.children[0];
+  assert.match(original.className, /lane-enter/);
+  board.scrollLeft = 120;
+  await app.tick();
+  assert.equal(board.children[0], original);
+  assert.equal(board.scrollLeft, 120);
+  app.updateTask({ activity: "unfinished" });
+  await app.tick();
+  assert.equal(board.children[0], original, "A clock-derived activity change is not a new saved record.");
+  app.updateTask({ updated_at: "2026-10-21T01:01:00Z" });
+  await app.tick();
+  const updated = board.children[0];
+  assert.match(updated.className, /lane-updated/);
+  assert.equal(board.scrollLeft, 120);
+  await app.tick();
+  assert.equal(board.children[0], updated);
+  const reduced = await viewer({ active: true, reducedMotion: true });
+  assert.doesNotMatch(reduced.node("#components").children[0].className, /lane-enter|lane-updated/);
+  reduced.updateTask({ updated_at: "2026-10-21T01:01:00Z" });
+  await reduced.tick();
+  assert.doesNotMatch(reduced.node("#components").children[0].className, /lane-enter|lane-updated/);
+});
+
+test("expanded board prepares up to three linked tasks with safe saved details and refreshes summaries", async () => {
+  const app = await viewer({ active: true, structured: true, extraActiveTasks: 4 });
+  const board = app.node("#components"), cards = board.querySelectorAll(".lane-task");
+  assert.equal(cards.length, 3);
+  assert.match(cards[0].textContent, /마지막 기록/);
+  assert.match(cards[0].textContent, /저장된 작업 요약 <img src=x>/);
+  assert.equal(cards[0].querySelector("img"), null);
+  assert.match(cards[0].textContent, /브랜치 test\/board/);
+  assert.match(board.textContent, /5개 중 3개 표시/);
+  await cards[1].listeners.click();
+  await new Promise(setImmediate);
+  assert.ok(app.requests.some(path => path.startsWith("/api/runs/run-extra1?")));
+  assert.match(app.node("#detail").textContent, /추가 작업 1/);
+  app.updateTask({ latest_report: { summary: "새 요약" }, updated_at: null });
+  await app.tick();
+  assert.match(board.querySelector(".lane-summary").textContent, /새 요약/);
+  assert.match(board.querySelector(".lane-last").textContent, /기록 시각 미수집/);
 });
 
 test("workstream discloses paging and timeline separates stored reports from start receipt", async () => {

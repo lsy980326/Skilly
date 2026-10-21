@@ -168,6 +168,9 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   assert.match(viewer.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
   const shell = await request(viewer.origin, "/");
   assert.equal(shell.status, 200);
+  const layout = await request(viewer.origin, "/layout.js");
+  assert.equal(layout.status, 200);
+  assert.match(layout.headers["content-type"], /javascript/);
   assert.match(shell.headers["content-security-policy"], /frame-ancestors 'none'/);
   assert.equal(shell.headers["cache-control"], "no-store");
   assert.equal(shell.headers["referrer-policy"], "no-referrer");

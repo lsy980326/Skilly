@@ -2,6 +2,7 @@ import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
 import { renderMachineReport } from "./reports.js";
+import "./layout.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
@@ -170,7 +171,8 @@ function renderCatalog() {
   for (const [label, value] of [["작업", state.summary.total], ["미완료", state.summary.unfinished], ["미분류", state.summary.unclassified]]) {
     const item = element("span"); item.append(element("strong", "", value ?? 0), document.createTextNode(` ${label}`)); summary.append(item);
   }
-  renderWorkstream($("#components"), { components: state.components, tasks: state.overviewTasks,
+  renderWorkstream($("#components"), { project: state.project, components: state.components, tasks: state.overviewTasks,
+    animate: !document.hidden && !matchMedia("(prefers-reduced-motion: reduce)").matches,
     selected: state.component, summary: state.summary, partial: state.overviewPartial },
   key => { void applyScope("component", key).catch(showError); },
   task => { void openRun(task.id).catch(showError); });
