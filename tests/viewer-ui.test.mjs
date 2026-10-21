@@ -30,7 +30,8 @@ class Element {
 }
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
-  hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0 } = {}) {
+  hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
+  recovery = { status: "available", items: [], next_offset: null } } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0;
   let recordAvailable = !initialEmpty;
@@ -77,6 +78,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
       const data = path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
+        : path.startsWith("/api/recovery?") ? recovery
         : path.startsWith("/api/skills?") ? { items: [{ skill_key: "sample", name: "샘플 스킬", versions: 2, installations: [{ repository: "web", version: "1.0", state: "modified" }], installations_total: 1 }], next_offset: null }
         : path.startsWith("/api/skill?") ? { skill: { ...sampleSkill, ...(path.includes("version=1.0") ? { version: "1.0", body: "이전 버전 전문" } : {}) }, versions: [{ version: "2.0" }, { version: "1.0" }], installations: [], installation_offset: 0, next_installation_offset: null }
         : path.startsWith("/api/overview") ? { summary: { total: 1, unfinished: 0, unclassified: 0 },
@@ -116,6 +118,30 @@ test("a new UI page without a token link restores the authorized connection", as
   assert.ok(reopened.authorizations.every(value => value === `Bearer ${"a".repeat(64)}`));
   assert.match(reopened.node("#detail").textContent, /시간 표시/);
   assert.equal(reopened.node("#connection-error").hidden, true);
+});
+
+test("recovery UI separates saved, pending and blocked requests and never calls an empty list complete", async () => {
+  const rows = [
+    { state: "saved", delivery_status: "saved", original_input_retained: true },
+    { state: "retry_required", delivery_status: "recovery_pending", original_input_retained: true },
+    { state: "conflict", delivery_status: "recovery_blocked", original_input_retained: true },
+    { state: "rejected", delivery_status: "not_retained", original_input_retained: false },
+  ].map((row, n) => ({ ...row, request_id: `request-${n}`, goal: "<img src=x>", received_at: "2026-10-21T01:00:00Z", environment: "test" }));
+  const app = await viewer({ recovery: { status: "available", items: rows, next_offset: null } });
+  app.node("#show-recovery").listeners.click(); await new Promise(setImmediate);
+  const cards = app.node("#tasks").querySelectorAll(".recovery-card");
+  assert.equal(cards.length, 4);
+  assert.match(cards[0].textContent, /저장 확인/);
+  assert.match(cards[1].textContent, /복구 대기.*아직 저장 완료는 아닙니다/);
+  assert.match(cards[2].textContent, /복구 차단.*자동 재시도하지 마세요/);
+  assert.match(cards[3].textContent, /원래 입력 없음/);
+  assert.equal(app.node("#tasks").querySelector("img"), null);
+  for (const status of ["available", "missing", "unavailable"]) {
+    const emptyApp = await viewer({ recovery: { status, items: [], next_offset: null } });
+    emptyApp.node("#show-recovery").listeners.click(); await new Promise(setImmediate);
+    assert.match(emptyApp.node("#tasks").textContent, /누락 0건을 뜻하지 않습니다/);
+    if (status !== "available") assert.equal(emptyApp.node("#list-count").textContent, "확인 불가");
+  }
 });
 
 test("401 clears a rejected stored credential, but transient failures preserve it", async () => {

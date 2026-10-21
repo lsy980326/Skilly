@@ -420,6 +420,12 @@ function renderDetail(task, counts = {}, animateNew = true) {
 }
 function renderRecovery(status) {
   const container = $("#tasks"); container.replaceChildren();
+  const coverage = element("div", "recovery-note");
+  coverage.append(element("strong", "", "기록 확인 범위"),
+    element("p", "", "저장 확인: 본 DB 영수증이 있는 요청입니다. 복구 대기: 원래 입력을 보관했지만 저장은 확인되지 않은 요청입니다."),
+    element("p", "", "감지 못 하는 누락: AI가 호출하지 않았거나 서버에 도달하지 못한 요청입니다. 누락 개수는 알 수 없으며, 목록이 비어도 누락 0건을 뜻하지 않습니다."),
+    element("p", "", "작업이 미완료여도 실제 실행 중이거나 중단됐다고 단정할 수 없습니다. 이 화면은 실행 이벤트를 수집하지 않습니다."));
+  container.append(coverage);
   if (status === "unavailable") {
     container.append(empty("복구 보관함을 읽지 못했습니다", "저장 실패가 없다는 뜻은 아닙니다. DB 파일 상태와 접근 권한을 확인한 뒤 새로고침해 주세요.")); return;
   }
@@ -430,9 +436,10 @@ function renderRecovery(status) {
   if (!state.items.length) container.append(empty("확인할 보관 요청이 없습니다", "서버에 도달하지 못한 요청은 여기에도 남지 않을 수 있습니다."));
   for (const request of state.items) {
     const card = element("article", "recovery-card");
-    card.append(badge(recoveryLabels[request.state], request.state === "saved" ? "completed" : "warning"),
+    const delivery = { saved: "저장 확인", recovery_pending: "복구 대기", recovery_blocked: "복구 차단", not_retained: "원래 입력 없음" };
+    card.append(badge(delivery[request.delivery_status] || recoveryLabels[request.state] || "상태 확인 필요", request.state === "saved" ? "completed" : "warning"),
       element("p", "", request.goal || `${request.tool.replace("memory_", "")} · ${request.repository}`),
-      element("p", "", request.state === "saved" ? "본 DB의 저장 영수증이 있습니다. 보관함 상태가 정리되지 않은 요청입니다." : request.original_input_retained ? "원래 요청이 보관돼 있습니다. 연결된 AI가 같은 요청으로 복구할 수 있습니다." : "원래 요청은 보관돼 있지 않습니다. 자동 복구를 보장할 수 없습니다."),
+      element("p", "", request.state === "saved" ? "본 DB의 저장 영수증이 있습니다. 보관함 상태가 정리되지 않은 요청입니다." : ["conflict", "blocked"].includes(request.state) ? "자동 재시도하지 마세요. 연결된 AI가 충돌·거절 사유를 확인해야 합니다. 원래 입력이나 키를 바꾸어 우회하지 않습니다." : request.original_input_retained ? "원래 요청이 보관돼 있습니다. 연결된 AI가 영수증부터 확인하고 허용된 같은 요청으로 복구할 수 있습니다. 아직 저장 완료는 아닙니다." : "원래 요청은 보관돼 있지 않습니다. 자동 복구를 보장할 수 없습니다."),
       element("p", "card-time", `${date(request.received_at)} · ${request.environment}`));
     if (request.last_error) card.append(element("code", "", `오류: ${request.last_error}`));
     card.append(element("code", "", `요청 ${request.request_id}`));

@@ -1,5 +1,6 @@
 import { MemoryError, type Context, type JsonObject } from "./model.js";
 import type { MemoryStore } from "./ports.js";
+import { recordingCoverage, recordingDelivery } from "./recording-health.js";
 
 export const RECOVERABLE_WRITES = ["memory_begin_task", "memory_checkpoint", "memory_finish_task"] as const;
 export type RecoverableWrite = typeof RECOVERABLE_WRITES[number];
@@ -104,14 +105,16 @@ export class WriteRecovery {
         if (!(error instanceof MemoryError) || error.code !== "idempotency_conflict") throw error;
         conflict = true;
       }
+      const recoveryState = receipt ? "saved" : conflict ? "conflict"
+        : request.input === null ? (request.last_error ? "rejected" : "payload_unavailable")
+        : request.last_error ? (["busy", "storage_error", "conflict"].includes(request.last_error) ? "retry_required" : "blocked")
+        : "unconfirmed";
       items.push({
         request_id: request.id, tool: request.tool, first_received_at: request.received_at,
         run_id: request.input?.["run_id"] ?? (receipt ? receiptSummary(receipt)["run_id"] : null) ?? null,
         persistence: receipt ? "persisted" : "not_found",
-        recovery_state: receipt ? "saved" : conflict ? "conflict"
-          : request.input === null ? (request.last_error ? "rejected" : "payload_unavailable")
-          : request.last_error ? (["busy", "storage_error", "conflict"].includes(request.last_error) ? "retry_required" : "blocked")
-          : "unconfirmed",
+        recovery_state: recoveryState,
+        delivery_status: recordingDelivery(!!receipt, request.input !== null, recoveryState),
         last_error: request.last_error, original_input_retained: request.input !== null,
         receipt: receipt ? receiptSummary(receipt) : null,
       });
@@ -126,6 +129,7 @@ export class WriteRecovery {
       })),
       next_offset: more ? input.offset + input.limit : null,
       capture: "agent_reports_only", claims_verified: false, automatic_replay: false,
+      recording_coverage: recordingCoverage(),
       limitation: "Active does not prove a crash. Absence of a receipt is a point-in-time observation. Requests that never reached this server are not captured. Pagination is live, not a snapshot.",
     };
   }

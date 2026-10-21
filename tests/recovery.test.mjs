@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SqliteRecoveryJournal } from "../dist/adapters/storage/sqlite/recovery-journal.js";
 import { SqliteMemoryStore } from "../dist/adapters/storage/sqlite/store.js";
+import { SqliteViewer } from "../dist/adapters/storage/sqlite/viewer.js";
 import { openLocal } from "../dist/runtime/local/app.js";
 import { WriteRecovery } from "../dist/core/memory/recovery.js";
 import { MemoryError } from "../dist/core/memory/model.js";
@@ -21,6 +22,103 @@ const canonical = value => value !== null && typeof value === "object"
     : `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`
   : JSON.stringify(value);
 const hash = value => createHash("sha256").update(canonical(value)).digest("hex");
+
+test("bound test project distinguishes a saved start, pending write and unobserved omission after abrupt server loss", { timeout: 20_000 }, async t => {
+  const f = fixture(t), p = await project(f.call);
+  writeFileSync(join(f.directory, "skilly.project.json"), JSON.stringify({ version: 1, key: "example", name: "example", repository: "default", environment: "development" }));
+  await f.app.close();
+  const clients = [];
+  t.after(async () => { for (const client of clients) await client.close(); });
+  async function connect() {
+    const client = new Client({ name: "recording-health-cycle", version: "1" });
+    const transport = new StdioClientTransport({ command: process.execPath,
+      args: ["dist/runtime/local/main.js", "serve", "--db", f.path, "--project", f.directory], stderr: "pipe" });
+    transport.stderr?.on("data", () => {});
+    clients.push(client);
+    await client.connect(transport);
+    return { client, transport };
+  }
+  async function call(connection, name, args) {
+    const response = await connection.client.callTool({ name, arguments: args });
+    return { isError: response.isError === true, ...JSON.parse(response.content[0].text) };
+  }
+  let connection = await connect();
+  assert.equal((await call(connection, "memory_resolve_project", {})).project.id, p);
+  const begin = await call(connection, "memory_begin_task", { project_id: p, goal: "테스트 전용 복구 사이클", mode: "change", idempotency_key: "health-begin" });
+  assert.equal(begin.status, "persisted");
+  const r = begin.run.id;
+  const lock = new DatabaseSync(f.path);
+  lock.exec("BEGIN IMMEDIATE");
+  let failure;
+  try {
+    failure = await call(connection, "memory_checkpoint", checkpoint(p, r, { report_origin: "contemporaneous" }));
+    assert.equal(failure.error.code, "busy");
+    assert.equal(failure.recovery.pending_retained, true);
+  } finally { lock.exec("ROLLBACK"); lock.close(); }
+  const view = new SqliteViewer(f.path);
+  assert.equal(view.recovery(p).items[0].delivery_status, "recovery_pending");
+  view.close();
+  // Only the server we just created is terminated; no real project process is touched.
+  process.kill(connection.transport.pid, "SIGKILL");
+  await connection.client.close();
+  connection = await connect();
+  const status = await call(connection, "memory_recovery_status", scope(p));
+  assert.equal(status.requests[0].delivery_status, "recovery_pending");
+  assert.equal(status.unfinished_runs[0].state, "active");
+  assert.equal(status.unfinished_runs[0].attention, "unfinished_or_still_running");
+  assert.equal(status.recording_coverage.missing_record_count, null);
+  assert.equal(status.recording_coverage.unreceived_writes, "not_observable");
+  assert.equal(status.recording_coverage.execution_events, "not_collected");
+  // A write never sent to MCP leaves no request to retry; do not manufacture it.
+  const absent = await call(connection, "memory_recovery_status", { ...scope(p), request_id: "f".repeat(64) });
+  assert.equal(absent.error.code, "not_found");
+  const args = { ...scope(p), request_id: failure.recovery.request_id };
+  const recovered = await call(connection, "memory_retry_write", args);
+  assert.equal(recovered.status, "persisted");
+  assert.equal((await call(connection, "memory_retry_write", args)).record_id, recovered.record_id);
+  const saved = await call(connection, "memory_recovery_status", args);
+  assert.equal(saved.requests[0].delivery_status, "saved");
+  assert.equal(saved.requests[0].original_input_retained, false);
+  const secondLock = new DatabaseSync(f.path);
+  secondLock.exec("BEGIN IMMEDIATE");
+  const noResponse = call(connection, "memory_checkpoint", checkpoint(p, r, { idempotency_key: "no-response", body: "응답 전 중단 테스트", report_origin: "contemporaneous" }))
+    .catch(() => ({ transport_error: true }));
+  const rawJournal = new DatabaseSync(`${f.path}.recovery.sqlite`, { readOnly: true });
+  let retained;
+  try {
+    const deadline = Date.now() + 800;
+    while (Date.now() < deadline) {
+      retained = rawJournal.prepare("SELECT id, last_error FROM requests WHERE request_key = ? AND input_json IS NOT NULL").get("no-response");
+      if (retained) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.ok(retained, "Wait for durable prepare before terminating the test child.");
+    assert.equal(retained.last_error, null);
+    process.kill(connection.transport.pid, "SIGKILL");
+    await connection.client.close();
+  } finally { rawJournal.close(); secondLock.exec("ROLLBACK"); secondLock.close(); }
+  assert.equal((await noResponse).transport_error, true);
+  connection = await connect();
+  const crashedArgs = { ...scope(p), request_id: retained.id };
+  const crashed = await call(connection, "memory_recovery_status", crashedArgs);
+  assert.equal(crashed.requests[0].recovery_state, "unconfirmed");
+  assert.equal(crashed.requests[0].delivery_status, "recovery_pending");
+  assert.equal(crashed.requests[0].receipt, null);
+  const crashRecovered = await call(connection, "memory_retry_write", crashedArgs);
+  assert.equal(crashRecovered.status, "persisted");
+  assert.equal((await call(connection, "memory_retry_write", crashedArgs)).record_id, crashRecovered.record_id);
+  const finish = await call(connection, "memory_finish_task", { project_id: p, run_id: r, outcome: "interrupted",
+    summary: "테스트 서버 강제 종료 후 복구 확인. 작업 결과의 정확성은 미검증.", report_origin: "retrospective", idempotency_key: "health-finish" });
+  assert.equal(finish.status, "persisted");
+  const history = await call(connection, "memory_query_context", { project_id: p, history: true });
+  assert.equal(history.records.length, 3);
+  assert.ok(history.records.every(row => row.knowledge_status === "unknown"));
+  assert.deepEqual(new Set(history.records.map(row => row.report_origin)), new Set(["contemporaneous", "retrospective"]));
+  const after = await call(connection, "memory_recovery_status", scope(p));
+  assert.equal(after.requests.length, 0);
+  assert.equal(after.recording_coverage.completeness, "unknown");
+  assert.equal(after.unfinished_runs[0].attention, "reported_interruption");
+});
 
 async function failWrite(f, input, tool = "memory_checkpoint") {
   const lock = new DatabaseSync(f.path);

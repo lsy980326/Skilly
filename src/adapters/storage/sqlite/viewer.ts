@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { activityFor, ViewerError } from "../../../core/viewer/model.js";
 import type { RunState } from "../../../core/memory/model.js";
 import { SqliteWorkReader } from "./work.js";
+import { recordingCoverage, recordingDelivery } from "../../../core/memory/recording-health.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -197,12 +198,13 @@ export class SqliteViewer {
           request_id: text(row, "id"), tool: text(row, "tool"), run_id: row["run_id"], goal: row["goal"],
           repository: text(row, "repository"), environment: text(row, "environment"),
           received_at: text(row, "received_at"), last_error: error, state, original_input_retained: retained,
+          delivery_status: recordingDelivery(saved, retained, state),
         };
       });
-      return { status: "available", ...page(items, offset) };
+      return { status: "available", recording_coverage: recordingCoverage(), ...page(items, offset) };
     } catch (error) {
       const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-      return { status: missing ? "missing" : "unavailable", items: [], next_offset: null };
+      return { status: missing ? "missing" : "unavailable", recording_coverage: recordingCoverage(), items: [], next_offset: null };
     } finally { journal?.close(); }
   }
 }

@@ -121,14 +121,19 @@ test("recovery view checks receipts first and distinguishes missing from unreada
   raw.exec("CREATE TRIGGER test_report_failure BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT, 'test'); END;");
   await assert.rejects(f.call("memory_checkpoint", checkpoint(pid, rid)), { code: "storage_error" });
   assert.equal(reader.recovery(pid).items[0].state, "retry_required");
+  assert.equal(reader.recovery(pid).items[0].delivery_status, "recovery_pending");
   raw.exec("DROP TRIGGER test_report_failure;");
   const beforeRetry = journal.prepare("SELECT * FROM requests WHERE input_json IS NOT NULL").get();
   await f.call("memory_retry_write", { project_id: pid, request_id: beforeRetry.id });
   // Simulate a saved receipt whose journal acknowledgement was not cleared.
   journal.prepare("UPDATE requests SET input_json = ?, last_error = 'busy' WHERE id = ?").run(beforeRetry.input_json, beforeRetry.id);
   assert.equal(reader.recovery(pid).items[0].state, "saved");
+  assert.equal(reader.recovery(pid).items[0].delivery_status, "saved");
   assert.equal(reader.recovery(pid).items[0].original_input_retained, true);
   assert.equal("input_json" in reader.recovery(pid).items[0], false);
+  journal.prepare("UPDATE requests SET payload_hash = ? WHERE id = ?").run("f".repeat(64), beforeRetry.id);
+  assert.equal(reader.recovery(pid).items[0].delivery_status, "recovery_blocked");
+  assert.equal(reader.recovery(pid).items[0].state, "conflict");
 
   const separate = join(f.directory, "separate.sqlite");
   const copy = new DatabaseSync(separate);
@@ -138,8 +143,10 @@ test("recovery view checks receipts first and distinguishes missing from unreada
   const missing = new SqliteViewer(separate);
   t.after(() => missing.close());
   assert.equal(missing.recovery(pid).status, "missing");
+  assert.equal(missing.recovery(pid).recording_coverage.missing_record_count, null);
   new DatabaseSync(`${separate}.recovery.sqlite`).close();
   assert.equal(missing.recovery(pid).status, "unavailable");
+  assert.equal(missing.recovery(pid).recording_coverage.completeness, "unknown");
 });
 
 function request(origin, path, headers = {}, method = "GET") {
