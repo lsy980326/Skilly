@@ -1,3 +1,46 @@
+// Classify available evidence, never the correctness of a test or feature.
+export function validationEvidence({ checks = [], executions, aggregate, partial = false }) {
+  const reports = checks.filter(check => ["passed", "failed", "not_run"].includes(check.result)).length;
+  let known = Array.isArray(executions?.items), observed = 0, pending = 0;
+  if (known) {
+    for (const item of executions.items) {
+      if (["exited", "launch_failed", "timed_out", "interrupted"].includes(item.outcome)) observed++;
+      else pending++;
+    }
+    partial ||= executions.next_offset != null;
+  } else if (aggregate && ["observations_available", "not_collected"].includes(aggregate.status)
+    && Number.isInteger(aggregate.total) && Number.isInteger(aggregate.unconfirmed)
+    && aggregate.unconfirmed >= 0 && aggregate.total >= aggregate.unconfirmed) {
+    known = true; pending = aggregate.unconfirmed; observed = aggregate.total - pending;
+  }
+  const state = observed ? "observed" : !known || pending || partial || !reports ? "unknown" : "reported";
+  const title = { observed: "직접 실행 관측 있음", reported: "AI 보고만 있음", unknown: "확인 불가" }[state];
+  const detail = state === "observed"
+    ? "프로세스 종료 결과가 저장됐습니다. 개별 검사 보고와의 대응이나 기능 검증 완료를 뜻하지 않습니다."
+    : !known ? "실행 관측 조회 정보가 없습니다. AI 보고가 있어도 직접 수집 여부를 판단할 수 없습니다."
+    : pending ? "시작은 저장됐지만 종료 결과를 확인하지 못한 관측이 있습니다. 실행 중·실패로 단정하지 않습니다."
+    : partial ? "아직 읽지 않은 기록이 있습니다. 더 보기로 근거를 확인하세요."
+    : reports ? "검사 내용은 AI가 작성한 보고입니다. 조회한 범위에 직접 실행 관측은 없으며, 미실행을 뜻하지 않습니다."
+    : "조회한 범위에 구조화된 검사 보고나 종료 관측이 없습니다. 검사를 하지 않았다는 뜻은 아닙니다.";
+  return { state, title, detail, reports, observed, pending, partial, known };
+}
+
+export function renderValidationEvidence(input, element) {
+  const info = validationEvidence(input);
+  const section = element("section", `validation-evidence ${info.state}`);
+  section.setAttribute("aria-label", "검사 근거");
+  const top = element("div", "validation-heading");
+  top.append(element("h3", "", "검사 근거"), element("strong", "validation-label", info.title));
+  const counts = element("div", "validation-counts");
+  counts.append(element("span", "", `AI 검사 보고 ${info.reports}건`),
+    element("span", "", info.known ? `종료 관측 ${info.observed}건` : "관측 조회 정보 없음"),
+    element("span", "", info.known ? `종료 미확인 ${info.pending}건` : "종료 여부 미조회"));
+  section.append(top, element("p", "", info.detail), counts);
+  if (info.observed && info.pending) section.append(element("p", "validation-caution", "종료 결과가 없는 관측도 있습니다. 아래 항목을 각각 확인하세요."));
+  section.append(element("small", "", "AI 보고와 실행 관측은 별도 근거입니다. 종료 코드 0도 기능 검증 완료를 보장하지 않습니다."));
+  return section;
+}
+
 // This is another view of the saved record, not a generated second report.
 export function renderMachineReport(record, task, element, open = false) {
   const panel = element("details", "machine-report");
@@ -22,7 +65,9 @@ export function renderExecutions(data, { element, date, more }) {
   const heading = element("div", "timeline-heading");
   heading.append(element("h3", "", "직접 실행 관측"), element("span", "", "로컬 실행기 · AI 보고와 분리"));
   section.append(heading, element("p", "catalog-note", "Skilly 실행기를 거친 명령만 수집합니다. 종료 코드 0은 기능 검증 완료를 뜻하지 않습니다. 인자·출력 원문은 저장하지 않습니다."));
-  if (!data?.items?.length) section.append(element("p", "execution-empty", "수집된 실행 결과 없음 · 명령을 실행하지 않았다는 뜻은 아닙니다."));
+  if (!data?.items?.length) section.append(element("p", "execution-empty", Array.isArray(data?.items)
+    ? "수집된 실행 결과 없음 · 명령을 실행하지 않았다는 뜻은 아닙니다."
+    : "실행 관측 조회 정보 없음 · 수집 유무와 실행 여부를 판단할 수 없습니다."));
   for (const item of data?.items ?? []) {
     const card = element("article", `execution-card ${item.outcome === "unconfirmed" ? "unconfirmed" : "observed"}`);
     const label = item.outcome === "unconfirmed" ? "종료 관측 없음" : item.outcome === "launch_failed" ? "시작 실패"

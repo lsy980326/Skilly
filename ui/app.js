@@ -1,7 +1,7 @@
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
-import { renderMachineReport, renderExecutions } from "./reports.js";
+import { renderMachineReport, renderExecutions, renderValidationEvidence } from "./reports.js";
 import { renderFeatureList, renderFeatureDetail } from "./features.js";
 import "./layout.js";
 
@@ -318,7 +318,7 @@ async function loadDetail(more = false) {
   if (request !== detailRequest || project !== state.project || run !== state.run) return;
   state.records = more ? [...state.records, ...data.records.items] : data.records.items;
   state.nextRecords = data.records.next_before;
-  executionData = data.executions ?? { items: [], next_offset: null };
+  executionData = data.executions ?? null;
   const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData]);
   if (fingerprint === lastDetail) return;
   lastDetail = fingerprint;
@@ -365,6 +365,8 @@ function renderDetail(task, counts = {}, animateNew = true) {
   panel.append(flow, element("p", "activity-note", task.state === "active"
     ? "최근 활동은 5분 이내 기록이 저장됐다는 뜻입니다. 실시간 실행 여부는 수집하지 않으므로, 오래 갱신되지 않은 작업은 AI 채팅에서 확인하세요."
     : "마감은 작업 상태를 뜻합니다. 기록 내용의 정확성이나 테스트 성공을 자동 검증한 것은 아닙니다."));
+  panel.append(renderValidationEvidence({ checks: state.records.flatMap(record => record.report?.checks ?? []),
+    executions: executionData, partial: state.nextRecords !== null }, element));
   panel.append(renderExecutions(executionData, { element, date, more: async () => {
     const project = state.project, run = state.run, request = detailRequest;
     try {

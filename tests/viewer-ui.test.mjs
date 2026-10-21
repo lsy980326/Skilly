@@ -65,7 +65,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
-  const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${app}\n})()`, {
     document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
@@ -135,16 +135,19 @@ test("process observations and AI reports stay separate and a newly collected re
   const executions = { items: [], next_offset: null };
   const app = await viewer({ structured: true, executions });
   assert.match(app.node("#detail").textContent, /수집된 실행 결과 없음/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /AI 보고만 있음/);
   executions.items.push({ id: "execution", executable: "<img src=x>", started_at: "2026-10-21T01:00:00Z", duration_ms: 150,
     outcome: "exited", exit_code: 0, stdout_bytes: 14, stderr_bytes: 0, record_id: "record" });
   await app.tick();
   const section = app.node("#detail").querySelector(".execution-observations");
   assert.match(section.textContent, /직접 실행 관측.*정상 종료 · 코드 0/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /직접 실행 관측 있음/);
   assert.match(section.textContent, /종료 코드 0은 기능 검증 완료를 뜻하지 않습니다/);
   assert.equal(section.querySelector("img"), null);
   assert.match(app.node("#detail").textContent, /확인 결과 · AI 보고.*통과 보고/);
   executions.items[0].outcome = "unconfirmed"; executions.items[0].duration_ms = null;
   await app.tick(); assert.match(app.node("#detail").textContent, /종료 관측 없음/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /확인 불가/);
 });
 
 test("recovery UI separates saved, pending and blocked requests and never calls an empty list complete", async () => {
@@ -278,7 +281,7 @@ test("feature brief separates declared status, latest work and uncollected evide
   assert.match(detail.textContent, /개발 중으로 보고/);
   assert.match(detail.textContent, /최근 무엇이 바뀌었나요/);
   assert.match(detail.textContent, /브라우저 재접속 확인/);
-  assert.match(detail.textContent, /미수집.*통과 보고/);
+  assert.match(detail.textContent, /관측 조회 정보 없음.*통과 보고/);
   assert.match(detail.textContent, /기록 source/);
   assert.equal(detail.querySelector("img"), null);
   await app.tick();
@@ -425,4 +428,26 @@ test("skill tab renders versioned plain-text content and keeps unchanged detail 
   const select = app.node("#detail").querySelector("select"); select.value = "1.0"; select.listeners.change(); await new Promise(setImmediate);
   assert.match(app.node("#detail").textContent, /이전 버전 전문/);
   assert.ok(app.requests.some(path => path.startsWith("/api/skill?") && path.includes("version=1.0")));
+});
+
+test('missing execution data is not rendered as a confirmed empty query', async () => {
+  const app = await viewer({ structured: true, executions: null });
+  const detail = app.node('#detail');
+  assert.match(detail.querySelector('.validation-evidence').textContent, /확인 불가/);
+  assert.match(detail.querySelector('.execution-observations').textContent, /조회 정보 없음/);
+  assert.doesNotMatch(detail.querySelector('.execution-observations').textContent, /수집된 실행 결과 없음/);
+});
+
+test('feature evidence summary follows aggregate observations without promoting its AI check', async () => {
+  const app = await viewer({ featureDetail: {
+    latest_activity: { report: { summary: '검사 보고', checks: [{ name: '테스트', result: 'passed' }] } },
+    execution_evidence: { status: 'observations_available', total: 2, unconfirmed: 1 }
+  } });
+  app.node('#show-features').listeners.click(); await new Promise(setImmediate);
+  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /직접 실행 관측 있음/);
+  assert.match(app.node('#detail').textContent, /연결 작업 전체 기준/);
+  assert.match(app.node('#detail').textContent, /통과 보고/);
+  app.updateFeature({ execution_evidence: { status: 'observations_available', total: 2, unconfirmed: 2 } });
+  await app.tick();
+  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /확인 불가/);
 });

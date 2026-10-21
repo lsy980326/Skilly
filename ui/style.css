@@ -393,3 +393,16 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .feature-evidence { border-top: 2px solid var(--line); }
 .feature-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0; }
 @media(max-width:650px) { .feature-detail { padding: 24px 20px; } .feature-detail h2 { font-size: 22px; } }
+
+/* Evidence source is a label, not a success/failure verdict. */
+.validation-evidence { --evidence-tone: #67788e; margin: 24px 0 18px; padding: 18px 20px; border: 1px solid var(--line); border-left: 4px solid var(--evidence-tone); border-radius: 12px; background: var(--paper); overflow-wrap: anywhere; }
+.validation-evidence.observed { --evidence-tone: #6952b6; }
+.validation-evidence.reported { --evidence-tone: #315f9e; }
+.validation-evidence.unknown { --evidence-tone: #95633f; }
+.validation-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.validation-heading h3 { margin: 0; font: 650 15px var(--display); }
+.validation-label { color: var(--evidence-tone); background: color-mix(in srgb, var(--evidence-tone) 9%, white); border-radius: 5px; padding: 5px 9px; font-size: 12px; }
+.validation-evidence p { margin: 12px 0; font-size: 13px; line-height: 1.8; }
+.validation-counts { display: flex; gap: 7px 18px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line); font: 11px var(--body); color: var(--muted); }
+.validation-evidence small { display: block; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.validation-evidence .validation-caution { color: var(--attention); }

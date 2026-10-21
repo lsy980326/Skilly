@@ -1,3 +1,5 @@
+import { renderValidationEvidence } from "./reports.js";
+
 // Present saved reports without inferring a feature's completion or verification.
 export function renderFeatureList(container, features, selected, { element, badge, labels, onSelect }) {
   container.replaceChildren();
@@ -31,6 +33,9 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   panel.append(state);
   if (feature.projection_truncated) panel.append(element("p", "recovery-note", "응답 크기 제한으로 상세 정보가 생략됐습니다. 연결 작업에서 원문을 확인하세요."));
   const latest = feature.latest_activity, report = latest?.report;
+  panel.append(renderValidationEvidence({ checks: report?.checks ?? [], aggregate: feature.execution_evidence,
+    partial: Boolean(feature.projection_truncated) }, element),
+    element("p", "catalog-note", "기능의 관측 수는 연결 작업 전체 기준이며, AI 검사 보고 수는 현재 표시한 최근 보고 기준입니다."));
   function section(title, content, fallback) {
     const box = element("section", "feature-section");
     box.append(element("h3", "", title));
@@ -55,7 +60,9 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   evidence.append(element("h3", "", "실제로 확인된 실행 근거"),
     element("p", "", feature.execution_evidence?.status === "observations_available"
       ? `직접 실행 관측 ${feature.execution_evidence.total}건 · 종료 미확인 ${feature.execution_evidence.unconfirmed}건. 연결 작업에서 확인하세요. 기능 검증 완료를 뜻하지 않습니다.`
-      : "미수집 · 연결 작업에 수집된 실행 결과가 없습니다. Skilly 실행기를 거치지 않은 명령은 관측하지 않습니다. 아래 AI 보고와 구분합니다."),
+      : feature.execution_evidence?.status === "not_collected"
+        ? "미수집 · 연결 작업에 수집된 실행 결과가 없습니다. 명령 미실행을 뜻하지 않습니다. 아래 AI 보고와 구분합니다."
+        : "실행 관측 조회 정보 없음 · 수집 여부를 판단할 수 없습니다. 아래 AI 보고와 구분합니다."),
     element("h4", "", "AI가 보고한 검사 결과 · 미검증"));
   if (report?.checks?.length) {
     const list = element("ul");
