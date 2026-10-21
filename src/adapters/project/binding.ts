@@ -15,6 +15,12 @@ const schema = z.strictObject({
   component: componentSchema.optional(),
 });
 
+export function parseProjectBinding(value: unknown): ProjectBinding {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new MemoryError("invalid_binding", "Invalid skilly.project.json fields.");
+  return parsed.data;
+}
+
 export function loadProjectBinding(root: string): ProjectBinding {
   if (!isAbsolute(root)) throw new MemoryError("invalid_path", "--project must be an absolute directory.");
   // Never inspect remotes, environment files or parent directories to guess identity.
@@ -37,8 +43,6 @@ export function loadProjectBinding(root: string): ProjectBinding {
     let value: unknown;
     try { value = JSON.parse(buffer.subarray(0, length).toString("utf8")); }
     catch { throw new MemoryError("invalid_binding", "Invalid project binding JSON."); }
-    const parsed = schema.safeParse(value);
-    if (!parsed.success) throw new MemoryError("invalid_binding", "Invalid skilly.project.json fields.");
-    return parsed.data;
+    return parseProjectBinding(value);
   } finally { closeSync(descriptor); }
 }

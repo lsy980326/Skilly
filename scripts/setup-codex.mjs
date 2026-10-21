@@ -2,18 +2,26 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadProjectBinding } from "../dist/adapters/project/binding.js";
+import { loadProjectBinding, parseProjectBinding } from "../dist/adapters/project/binding.js";
 
 // Do not merge or read existing Codex config: it may contain credentials.
-export function setupCodex({ project, db }) {
+export function setupCodex({ project, db, identity }) {
   if (!isAbsolute(project) || !isAbsolute(db)) throw new Error("--project and --db must be absolute paths.");
   const root = realpathSync(project);
-  loadProjectBinding(root);
+  const bindingPath = join(root, "skilly.project.json");
+  let newBinding;
+  if (identity) {
+    newBinding = parseProjectBinding({ version: 1, ...identity });
+    // Explicit identity is for a first install only; never replace an existing binding.
+    try { lstatSync(bindingPath); throw new Error("Project identity already exists; omit identity options and preserve it."); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  } else loadProjectBinding(root);
   const packageRoot = fileURLToPath(new URL("../", import.meta.url));
   const main = join(packageRoot, "dist/runtime/local/main.js");
   if (!existsSync(main)) throw new Error("Run npm run build before setup.");
   const skill = join(packageRoot, "integrations/skills/use-skilly");
   const files = [
+    ...(newBinding ? [{ path: bindingPath, body: JSON.stringify(newBinding, null, 2) + "\n" }] : []),
     {
       path: join(root, ".codex/config.toml"),
       body: [
@@ -55,14 +63,20 @@ export function setupCodex({ project, db }) {
     mkdirSync(dirname(file.path), { recursive: true, mode: 0o700 });
     writeFileSync(file.path, file.body, { flag: "wx", mode: 0o600 });
   }
-  return { status: "configured", files: files.map(file => file.path), connection_verified: false };
+  return { status: "configured", files: files.map(file => file.path), connection_verified: false,
+    next_steps: ["Run npm run doctor -- --project <project> --db <db> for a local preflight.", "Open and trust this project in Codex if prompted, then use a new chat.", "Ask that chat to identify the project and retrieve its context; file presence alone does not verify its MCP connection."] };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({ options: { project: { type: "string" }, db: { type: "string" } } });
+    const { values } = parseArgs({ options: { project: { type: "string" }, db: { type: "string" },
+      key: { type: "string" }, name: { type: "string" }, repository: { type: "string" }, environment: { type: "string" } } });
     if (!values.project || !values.db) throw new Error("Usage: node scripts/setup-codex.mjs --project /absolute/project --db /absolute/memory.sqlite");
-    process.stdout.write(`${JSON.stringify(setupCodex({ project: values.project, db: values.db }), null, 2)}\n`);
+    const fields = ["key", "name", "repository", "environment"];
+    const initializing = fields.some(field => values[field] !== undefined);
+    if (initializing && fields.some(field => !values[field])) throw new Error("First install requires --key, --name, --repository and --environment together.");
+    const identity = initializing ? Object.fromEntries(fields.map(field => [field, values[field]])) : undefined;
+    process.stdout.write(`${JSON.stringify(setupCodex({ project: values.project, db: values.db, identity }), null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : "Setup failed."}\n`);
     process.exitCode = 1;

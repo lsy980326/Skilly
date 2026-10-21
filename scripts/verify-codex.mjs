@@ -88,6 +88,7 @@ for (let session = 0; session < 2; session++) {
       clientInfo: { name: "skilly_local_connection_check", version: "0.1.0" },
       capabilities: { experimentalApi: true, requestAttestation: false },
     });
+    if (projectTrustWarning || approvalRequests > 0) throw new Error("Probe stopped by host protection during initialization.");
     child.stdin.write(`${JSON.stringify({ method: "initialized" })}\n`);
     const skills = await request("skills/list", { cwds: [root], forceReload: true });
     const skill = skills.data?.flatMap(entry => entry.skills).find(entry =>
@@ -144,6 +145,13 @@ for (let session = 0; session < 2; session++) {
       session: session + 1, skill_discovered: true, mcp_dependency_declared: dependencyDeclared, ...connection,
       other_servers_invoked: 0,
     });
+  } catch (error) {
+    if (!projectTrustWarning && approvalRequests === 0) throw error;
+    // Preserve the protection result for the operator; do not turn this expected
+    // stop into a stack trace or attempt another protocol request.
+    reports.push({ session: session + 1, mcp_connected: false,
+      blocked_reason: projectTrustWarning ? "project_trust_required" : "interactive_approval_required",
+      other_servers_invoked: 0 });
   } finally {
     child.stdin.end();
     const timer = setTimeout(() => child.kill("SIGTERM"), 2000);
@@ -159,7 +167,8 @@ if (!connected) process.exitCode = 1;
 process.stdout.write(`${JSON.stringify({
   codex: version.stdout.trim(), server: values.server, effective_mcp_config_matches: null,
   configuration_inspection: "not requested; no raw config read or comparison",
-  verification_scope: "two new app-server processes, not the calling desktop chat",
+  verification_scope: "separate app-server process checks, not the calling desktop chat",
+  processes_checked: reports.length,
   installed_database_target_verified: false,
   host_hooks_and_plugins_preserved: true, approval_requests_declined: approvalRequests,
   connection_check_passed: connected,
@@ -168,6 +177,7 @@ process.stdout.write(`${JSON.stringify({
     : "explicit CLI override; no trust setting changed",
   network: "denied by macOS sandbox", model_turns: 0,
   project_config_trust_warning: projectTrustWarning,
+  status: projectTrustWarning ? "project_trust_required" : approvalRequests > 0 ? "interactive_approval_required" : connected ? "connected_in_separate_processes" : "connection_not_confirmed",
   sessions: reports, requery_verified: connected && !values.configured, stored_claims_verified: false,
   implicit_skill_execution_verified: false, desktop_current_session_verified: false,
 }, null, 2)}\n`);

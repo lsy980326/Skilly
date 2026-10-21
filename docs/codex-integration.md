@@ -424,3 +424,66 @@ acceptance_criteria:
 verification: [TypeScript, 임시 DB 계약 테스트, MCP 통합 테스트, 독립 읽기 전용 리뷰, 네트워크 차단 Codex 연결 점검, 사용자 승인 후 기존 모델의 두 세션 실제 작업 시험]
 required_user_decisions: []
 ```
+
+## 첫 설치와 연결 문제 진단
+
+기존 연결이 있으면 설치를 반복하지 않는다. 먼저 아래 진단으로 로컬 준비 상태를 확인한다.
+이 진단은 설정·인증 파일 내용을 읽거나, DB를 만들거나, 신뢰 설정을 바꾸거나, 모델을 호출하지 않는다.
+
+```sh
+npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite
+```
+
+`local_preflight_ready`는 로컬 파일과 실행 환경의 준비 상태다. `present_unverified`는 파일이
+있다는 뜻이며, Codex가 해당 설정·스킬을 로딩했거나 현재 대화에서 MCP 호출이 성공했다는 뜻은 아니다.
+첫 설치 전 DB가 없는 `not_initialized`는 정상이며 첫 MCP 실행에서 생성된다.
+`action_required`이면 각 항목의 안내를 따른다. 기존 DB를 초기화하거나 기존 설정을 덮어쓰지 않는다.
+
+식별 파일도 없는 새 프로젝트는 이름·키·저장소·환경을 명시해 한 번에 준비할 수 있다.
+폴더 이름으로 프로젝트 ID를 추정하지 않으며 식별 파일과 모든 설치 목적지를 먼저 검사한다.
+하나라도 이미 있거나 안전하지 않으면 새 식별 파일도 쓰기 전에 중단한다.
+
+```sh
+npm run setup:codex -- --project /absolute/project --db /absolute/memory.sqlite --key my-service --name "My Service" --repository web --environment development
+```
+
+식별 파일이 이미 있다면 위 네 식별 옵션을 생략한다. 설치는 새 파일만 생성하고
+Codex의 전역 설정·프로젝트 신뢰·기존 스킬을 바꾸지 않는다. 일부 쓰기 중 오류가 난 경우
+남은 파일을 확인하며 자동 삭제나 덮어쓰기로 재설치하지 않는다.
+
+### 연결 확인 순서
+
+1. 설치한 정확한 프로젝트 폴더를 Codex에서 열고 실제 신뢰 확인이 나오면 사용자가 확인한다.
+   새 채팅의 작업 폴더가 같은지 확인한다. 비슷한 이름의 빈 폴더에 연결하면 설치된 설정을 사용하지 못한다.
+2. 새 채팅에서 프로젝트 식별과 이전 기록 조회를 요청한다. 실제 도구 응답으로 연결을 확인한다.
+3. 도구가 없다면 현재 대화의 도구 목록을 먼저 확인한다. 리소스 목록이나 별도 진단의 성공으로
+   현재 채팅 연결을 단정하지 않는다. 설치·진단·현재 대화 연결은 서로 다른 확인 단계다.
+4. 실제로 도구가 노출되지 않았을 때 지원되는 서버 Restart 후 한 번 확인한다.
+   같은 재시작을 반복 요구하지 않으며, 신뢰/승인 차단이면 그 이유를 먼저 해결한다.
+
+프로젝트 설정은 신뢰된 프로젝트에서만 로딩된다. MCP 서버 Restart와 Codex 앱 전체 재실행은
+다른 동작이다. [공식 MCP 안내](https://learn.chatgpt.com/docs/extend/mcp)와
+[설정 신뢰 경계](https://learn.chatgpt.com/docs/config-file/config-basic)를 따른다.
+
+macOS의 기존 `scripts/verify-codex.mjs --configured` 진단은 네트워크와 모델 호출을 차단한
+별도 Codex 프로세스 검사다. `project_trust_required` 또는 `interactive_approval_required`이면
+보호 결정을 우회하지 않고 즉시 멈추며 실패 상태를 구조화해 출력한다.
+성공해도 현재 앱 채팅의 실제 연결·암묵적인 스킬 사용·앱 전체 재실행을 확인한 것은 아니다.
+
+### 재실행과 화면 연결
+
+stdio MCP는 Codex가 연결할 때 시작하므로 별도 상시 MCP 데몬은 필요 없다.
+화면 서버는 MCP와 별개다. `npm run view -- --db /absolute/memory.sqlite --port 50916`으로
+기존 DB를 읽기 전용으로 연다. 화면을 열어 둔 동안 서버 프로세스도 실행 중이어야 한다.
+브라우저 인증은 기존 보관 정책을 따르며, 서버를 새로 실행하면 새 연결 주소로 인증해야 한다.
+화면 새로고침·새 채팅·MCP 프로세스 교체·화면 서버 재시작·앱 전체 재실행은 각각 별도로 검증한다.
+자동 로그인 항목이나 OS 서비스 설치는 이 흐름에 포함하지 않는다.
+
+### CLI 버전이 오래된 경우
+
+`codex --version`의 실행 파일과 앱에 포함된 CLI가 서로 다른 버전일 수 있다.
+MCP 도구 진단이 성공해도 실제 모델 요청이 “requires a newer version of Codex”로 거부되면
+Skilly 저장 실패나 서버 장애로 판정하지 않는다. 설치된 앱 포함 CLI가 있다면 그 버전을
+확인하고, 해당 실행 파일을 명시해 진단·테스트할 수 있다. PATH·기존 CLI·모델·인증 설정은
+자동 변경하지 않는다. 앱 포함 실행 파일 경로는 설치 위치/배포에 따라 다를 수 있다.
+사용자가 선택한 모델을 임의로 다른 모델로 바꿔 통과 처리하지 않는다.

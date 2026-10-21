@@ -159,3 +159,5 @@ Skilly/
 첫 실행 흐름은 “작업 AI의 도구 호출 → 기록 저장 → 다음 작업에서 재조회”입니다. Codex 연동은 MCP와 스킬 지침으로 연결하며, AI 자동 호출의 실제 수행과 실행 근거 자동 수집은 별도로 구분해 확인합니다.
 
 프로젝트별 스킬 전문·버전·설치 안내와 마지막 파일 관측은 [스킬 라이브러리 안내](docs/skill-library.md)를 참고하세요.
+
+첫 설치·연결 문제는 `npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite`로 로컬 준비 상태부터 확인하세요. 설정 파일 내용을 읽거나 기존 파일을 고치지 않으며, 현재 채팅의 연결 성공을 대신 판정하지 않습니다. [설치·재연결 안내](docs/codex-integration.md#첫-설치와-연결-문제-진단)
