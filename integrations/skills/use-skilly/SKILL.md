@@ -8,6 +8,26 @@ description: Use Skilly project memory during ordinary development, debugging, r
 The host AI does the work. Skilly stores supplied reports locally through MCP; it
 does not observe commands or validate claims. Do not ask the user to operate a DB.
 
+## Where work records belong
+
+Persist ordinary task plans, progress, decisions, test results, handoffs, and
+retrospective work reports only in Skilly's DB through the configured MCP.
+Do not create Markdown work journals or append these reports to existing files;
+do not substitute another file format or a diary section in README/AGENTS.
+Keep the task contract and user-facing summary in the conversation.
+
+Maintain fixed guidance such as README, AGENTS, SKILL, API and architecture docs
+when the requested change needs it. Create or edit a document when the user
+explicitly asks for that document, including a Markdown report or export.
+These exceptions do not authorize an extra per-task journal.
+Preserve existing documents; reading historical logs does not authorize deleting,
+migrating, or extending them. Route routine workflow requests for a work log or
+handoff to Skilly unless the user explicitly requests a file.
+
+Failed or unavailable storage is not permission to write a fallback journal.
+Apply the recording gate below and disclose the missing receipt in chat.
+A recording opt-out disables DB writes without creating a replacement file.
+
 ## Local permissions
 
 This integration uses the installed local stdio server and SQLite. Its tool calls

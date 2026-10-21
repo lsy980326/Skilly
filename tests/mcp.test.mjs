@@ -9,11 +9,39 @@ import { PassThrough, Writable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { BoundedTransport } from "../dist/transport/mcp/bounded-transport.js";
 import { createMcpServer } from "../dist/transport/mcp/server.js";
 import { fixture, project, run, checkpoint } from "./helpers.mjs";
 
 const main = fileURLToPath(new URL("../dist/runtime/local/main.js", import.meta.url));
+
+function assertJournalPolicy(client) {
+  const instructions = client.getInstructions();
+  assert.equal(typeof instructions, "string");
+  for (const clause of [
+    /ordinary work journals only in Skilly's DB via MCP/,
+    /do not create or append Markdown or other file journals/,
+    /Maintain fixed guidance when the requested change needs it/,
+    /honor explicitly requested documents/,
+    /preserve existing files/,
+    /Storage failure or recording opt-out does not authorize a fallback journal/,
+    /Keep user-facing summaries in chat/,
+  ]) assert.match(instructions, clause);
+}
+
+test("MCP initialization delivers journal boundaries before discovery or a memory write", async () => {
+  let calls = 0;
+  const server = createMcpServer({ tools: {}, async call() { calls++; throw new Error("Unexpected memory call"); } });
+  const client = new Client({ name: "journal-policy-contract", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    assertJournalPolicy(client);
+    assert.equal(calls, 0, "Receiving guidance must not require calling a memory tool.");
+  } finally { await client.close(); await server.close(); }
+});
 
 test("real MCP client discovers tools and saves/searches data across server restarts", { timeout: 15_000 }, async t => {
   const directory = mkdtempSync(join(tmpdir(), "skilly-mcp-"));
@@ -29,6 +57,7 @@ test("real MCP client discovers tools and saves/searches data across server rest
     const transport = new StdioClientTransport({ command: process.execPath, args: [main, "serve", "--db", path], stderr: "pipe" });
     transport.stderr?.on("data", () => {});
     await client.connect(transport);
+    assertJournalPolicy(client);
     return client;
   };
   const client = await connect();

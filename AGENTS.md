@@ -10,6 +10,14 @@ For ordinary development, diagnosis, review, or a question needing earlier proje
 context, use the `use-skilly` skill at `integrations/skills/use-skilly/SKILL.md`.
 The Codex installation exposes the same skill through `.agents/skills`.
 
+Ordinary work journals belong only in Skilly's DB: do not create or append
+Markdown task logs, progress reports, or handoffs, or move them to another file
+format. Keep the task contract and final explanation in chat. Fixed guidance
+(README, AGENTS, SKILL, API/architecture docs) may be maintained when needed for
+the requested change; documents explicitly requested by the user are also allowed.
+Preserve existing files. A storage failure or recording opt-out is not permission
+to create a fallback journal. See the skill's document boundaries.
+
 At the start of each new task or session, resolve this project's identity through
 Skilly MCP, retrieve relevant prior reports, then begin a task. Record meaningful
 decisions and changes, and finish with work done, validation actually performed,
