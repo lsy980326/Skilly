@@ -1,3 +1,5 @@
+import type { StructuredReport, WorkLinks, WorkMutation } from "../work/model.js";
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -59,7 +61,7 @@ export interface RegisterProjectInput {
   idempotency_key: string;
 }
 
-export interface BeginTaskInput {
+export interface BeginTaskInput extends WorkLinks {
   project_id: string;
   goal: string;
   mode: Run["mode"];
@@ -67,9 +69,11 @@ export interface BeginTaskInput {
   repository: string;
   idempotency_key: string;
   actor?: string | undefined;
+  title?: string | undefined;
+  branch?: string | undefined;
 }
 
-export interface CheckpointInput {
+export interface CheckpointInput extends WorkLinks {
   project_id: string;
   run_id: string;
   topic: string;
@@ -80,15 +84,17 @@ export interface CheckpointInput {
   supersedes?: string | undefined;
   idempotency_key: string;
   report_origin?: MemoryRecord["report_origin"] | undefined;
+  report?: StructuredReport | undefined;
 }
 
-export interface FinishTaskInput {
+export interface FinishTaskInput extends WorkLinks {
   project_id: string;
   run_id: string;
   summary: string;
   outcome: "completed" | "interrupted";
   idempotency_key: string;
   report_origin?: MemoryRecord["report_origin"] | undefined;
+  report?: StructuredReport | undefined;
 }
 
 export interface QueryInput {
@@ -122,6 +128,7 @@ export interface Mutation {
   expected_revision: number | null;
   run?: Run;
   record?: Omit<MemoryRecord, "seq">;
+  work?: WorkMutation;
 }
 
 export interface Context {

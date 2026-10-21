@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { MemoryError } from "../../core/memory/model.js";
 import type { ProjectBinding } from "../../core/memory/binding.js";
+import { componentSchema } from "../../core/work/schema.js";
 
 const scope = z.string().trim().min(1).max(100);
 const schema = z.strictObject({
@@ -11,6 +12,7 @@ const schema = z.strictObject({
   name: scope,
   repository: scope,
   environment: scope,
+  component: componentSchema.optional(),
 });
 
 export function loadProjectBinding(root: string): ProjectBinding {

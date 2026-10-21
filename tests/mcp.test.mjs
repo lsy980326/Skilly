@@ -33,7 +33,7 @@ test("real MCP client discovers tools and saves/searches data across server rest
   };
   const client = await connect();
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 10);
+  assert.equal(tools.length, 11);
   assert.equal(tools.find(tool => tool.name === "memory_checkpoint").annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === "memory_query_context").annotations.readOnlyHint, true);
   assert.equal(tools.find(tool => tool.name === "memory_begin_task").inputSchema.properties.actor.type, "string");

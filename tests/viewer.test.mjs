@@ -71,7 +71,7 @@ test("reader supports legacy schemas without migration; writer upgrade preserves
   }
   const oldRows = db.prepare("SELECT * FROM runs").all();
   const app = openLocal(path);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
   assert.deepEqual(db.prepare("SELECT * FROM runs").all(), oldRows);
   db.prepare("INSERT INTO runs VALUES (?, ?, '구형 실행 SQL', 'change', 'test', 'main', 'active', ?, ?)").run(randomUUID(), pid, date, date);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -155,7 +155,9 @@ function request(origin, path, headers = {}, method = "GET") {
 }
 
 test("local HTTP is authenticated, read-only, origin-bound and preserves existing DB bytes", async t => {
-  const f = fixture(t), pid = await project(f.call), rid = await run(f.call, pid);
+  const f = fixture(t), pid = await project(f.call), rid = await run(f.call, pid, {
+    components: [{ key: "web", name: "Web" }], features: [{ key: "comments", name: "댓글" }], title: "댓글 수정",
+  });
   await f.call("memory_checkpoint", checkpoint(pid, rid));
   await f.app.close();
   const before = readFileSync(f.path), journalBefore = readFileSync(`${f.path}.recovery.sqlite`);
@@ -179,8 +181,18 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   assert.equal((await request(viewer.origin, "/../../package.json", auth)).status, 404);
   assert.equal((await request(viewer.origin, "/api/projects", auth)).status, 200);
   assert.equal((await request(viewer.origin, `/api/runs/${rid}?project=${pid}`, auth)).status, 200);
+  const components = await request(viewer.origin, `/api/overview?project=${pid}&view=components`, auth);
+  assert.equal(components.status, 200); assert.equal(JSON.parse(components.body).items[0].key, "web");
+  const filtered = await request(viewer.origin, `/api/runs?project=${pid}&component=web&feature=comments`, auth);
+  assert.equal(filtered.status, 200); assert.equal(JSON.parse(filtered.body).items[0].id, rid);
+  assert.equal((await request(viewer.origin, `/api/overview?project=${pid}&view=invalid`, auth)).status, 400);
+  assert.equal((await request(viewer.origin, `/api/runs?project=${pid}&component=../web`, auth)).status, 400);
   assert.equal((await request(viewer.origin, `/api/recovery?project=${pid}`, auth)).status, 200);
   assert.equal((await request(viewer.origin, "/app.js")).status, 200);
+  const workstream = await request(viewer.origin, "/workstream.js");
+  assert.equal(workstream.status, 200);
+  assert.match(workstream.headers["content-type"], /javascript/);
+  assert.match(workstream.body, /export function renderWorkstream/);
   await viewer.close();
   assert.deepEqual(readFileSync(f.path), before);
   assert.deepEqual(readFileSync(`${f.path}.recovery.sqlite`), journalBefore);
@@ -196,7 +208,7 @@ test("viewer never creates, migrates or follows a linked database", async t => {
   assert.throws(() => new SqliteViewer("relative.sqlite"), { code: "invalid_input" });
   const path = join(f.directory, "future.sqlite");
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version=4; PRAGMA application_id=1397446988;"); db.close();
+  db.exec("PRAGMA user_version=5; PRAGMA application_id=1397446988;"); db.close();
   const before = readFileSync(path);
   assert.throws(() => new SqliteViewer(path), { code: "unavailable" });
   assert.deepEqual(readFileSync(path), before);

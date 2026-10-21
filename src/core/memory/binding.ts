@@ -1,5 +1,6 @@
 import { MemoryError, type JsonObject } from "./model.js";
 import type { MemoryService } from "./service.js";
+import type { Component } from "../work/model.js";
 
 export interface ProjectBinding {
   version: 1;
@@ -7,6 +8,7 @@ export interface ProjectBinding {
   name: string;
   repository: string;
   environment: string;
+  component?: Component | undefined;
 }
 
 /** A configured MCP connection has one scope, even when the DB holds many projects. */
@@ -21,9 +23,11 @@ export class BoundMemory {
     const project = object(result["project"]);
     const id = project["id"];
     if (typeof id !== "string") throw new MemoryError("invalid_data", "Project identity is missing.");
+    if (this.binding.component) await this.service.registerComponent(id, this.binding.component);
     return {
       project: { id, key: this.binding.key, name: this.binding.name },
       scope: { repository: this.binding.repository, environment: this.binding.environment },
+      ...(this.binding.component ? { component: this.binding.component } : {}),
       capture: "agent_reports_only", currentness: "unverified",
       next_tool: "memory_query_context",
     };

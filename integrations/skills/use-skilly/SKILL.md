@@ -50,6 +50,48 @@ local, bypass a host approval, or change settings to make a tool available.
    only when this conversation already owns its ID and `memory_get_status`
    confirms it is active. Never take over another session's run found in search.
 
+## Service, component and feature context
+
+With the new schema, `memory_resolve_project` can return a `component` declaration
+such as `{key: "web", name: "Web"}`. On a new task, include it in `components`
+when that input is exposed, and provide a short human-readable `title` and a
+known `branch` separately from repository scope. Do not change repository or
+environment to imitate a component. Preserve them exactly as resolved.
+
+Use `memory_query_overview` when available: `view: "components" | "features" |
+"tasks"` returns bounded structured context. The default stays in the connection's
+repository/environment; `coverage: "service"` explicitly reads repositories within
+this same project. Reuse existing feature keys and definitions when the work
+matches them. Use stable keys for a new feature only when its purpose is known.
+A run may explicitly link several components and features; do not infer past
+links from a folder, old prose or another session's goal.
+
+For a new implementation with a known purpose, query the feature catalog and
+include `features: [{key, name, description?}]` on begin. Reuse a matching key;
+otherwise name a small feature from the requested behavior. Test-only work still
+has a purpose: label its feature as test-only instead of implying a shipped product
+capability. Do not attach unrelated catalog features merely to fill the field.
+If the purpose is genuinely unknown or the input is not exposed, leave it unknown
+and disclose the classification gap. Links may also be added at checkpoint or
+finish. Never change an original retry input to add metadata.
+
+When exposed, include the known assistant label in `actor` (for example `Codex`)
+and `report_origin: "contemporaneous"` for reports written during the task.
+Before editing, check the persisted start's component/feature links against the
+known task context. A missing link is not a reason to rewrite a prior receipt or
+silently claim that classification succeeded.
+
+For checkpoints and handoffs, provide `report` alongside the preserved original
+`body`/`summary` when exposed: short `title`, `summary`, `changes`, `checks`
+(`name`, `result: passed | failed | not_run`, optional `detail`), `limitations`,
+and `next_steps`. Add `feature_updates: [{key, state, summary}]` only for linked
+features with an explicit supported state (`planned`, `in_progress`, `implemented`,
+`blocked`, `retired`). These are agent declarations, not verified current facts.
+Do not infer implementation, testing or deployment from task completion. Mark
+later reconstructions retrospective; they must not become the latest feature state.
+Keep check names short (at most 120 characters); put commands in check `detail`.
+Do not run another AI or reconstruct a second independent source of truth.
+
 ## Recording gate
 
 For ordinary repository-changing work with recording enabled, obtain a persisted

@@ -66,7 +66,7 @@ export class WriteRecovery {
     } catch (error) {
       const code = error instanceof MemoryError ? error.code : "storage_error";
       const domainRejection = error instanceof MemoryError && !error.retryable
-        && ["run_closed", "not_found", "invalid_time", "scope_mismatch", "older_observation", "invalid_input", "idempotency_conflict", "conflict"].includes(code);
+        && ["run_closed", "not_found", "invalid_time", "scope_mismatch", "older_observation", "invalid_input", "idempotency_conflict", "conflict", "catalog_conflict"].includes(code);
       // Do not let newly invalid requests exhaust the bounded retry queue.
       // Previously retained originals stay available even if their run later closes.
       const retainInput = prepared === "existing" || !domainRejection;

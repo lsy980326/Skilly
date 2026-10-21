@@ -1,7 +1,7 @@
 # 로컬 첫 구현
 
 Codex 프로젝트 식별·스킬 설치·실제 연결 점검은 [Codex 연동 안내](codex-integration.md)를 참고한다.
-기본 기록 도구 8개에 복구 도구 2개를 제공한다. 프로젝트 연결 모드는
+기본 기록 도구 8개, 서비스 현황 조회 도구 1개, 복구 도구 2개를 제공한다. 프로젝트 연결 모드는
 등록·목록 대신 `memory_resolve_project`를 제공하며, SQLite 스키마는 동일하다.
 
 이 문서는 로컬 MVP 0.1.0의 실행 가능한 범위와 후속 범위를 구분한다.
@@ -87,6 +87,7 @@ JSON
 | `memory_checkpoint` | `project_id`, `run_id`, `topic`, `kind`, `body`, `idempotency_key` | 미확인 기록 ID와 저장 상태 |
 | `memory_finish_task` | `project_id`, `run_id`, `summary`, `outcome`, `idempotency_key` | 마감 상태와 미확인 요약 기록 |
 | `memory_query_context` | `project_id`, 선택적 `query`, `topic`, `environment`, `repository`, `source_fingerprint`, `history`, `limit`, `cursor` | 짧은 발췌·출처·상태·다음 커서 |
+| `memory_query_overview` | `project_id`, 선택적 `view`, `coverage`, `component`, `feature`, `repository`, `environment`, `offset`, `limit` | 구성요소·기능·작업과 공통 요약. 서비스 범위는 명시적으로 선택, 미검증 보고 |
 | `memory_get_evidence` | `project_id`, `record_id` | 원문과 이력 연결. 이름과 무관하게 현재 반환 자료는 `verified: false` |
 | `memory_get_status` | `project_id`, `run_id` | 작업 상태와 수집 제한 |
 
@@ -164,6 +165,13 @@ npm run bench
 | SQLite 주파일 크기 | 50,040,832바이트, 약 47.72 MiB. 이력·영수증·색인 포함, WAL·SHM 제외 |
 
 이는 한 장비의 초기 확인값이며 CPU를 전혀 사용하지 않거나 다른 환경에서 같은 성능을 보장한다는 뜻은 아니다. DB는 검색·이력·영수증을 함께 보관하므로 원문 텍스트의 총량보다 커졌다. 측정 과정에서 제한된 실행 환경의 `ps` 호출이 차단되어, 같은 합성 자료 벤치마크를 해당 자식 프로세스의 정보 조회가 허용된 환경에서 다시 실행했다.
+
+서비스 현황 v4는 구성요소·기능·작업 연결과 구조화 보고를 원문과 함께 저장한다.
+`memory_query_overview`의 기본 카탈로그·작업·최근 보고는 저장소/환경 범위를 따른다.
+`coverage: service`는 같은 프로젝트 내 저장소를 함께 읽지만 원문·쓰기 권한을
+넓히지 않는다. 다른 저장소의 보고 ID는 해당 저장소 연결로 원문을 읽는다.
+목록 연결은 종류별 12개와 총수/잘림 표시를 제공하고 상세 분류 검색은 전체 연결을
+사용한다. 극단적으로 긴 JSON 입력도 작은 목록 표현으로 줄여 페이지가 진행된다.
 
 ## 후속 범위
 

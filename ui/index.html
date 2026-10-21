@@ -17,16 +17,26 @@
   <div id="connection-error" class="connection-error" role="alert" hidden></div>
   <div class="workspace">
     <aside class="projects-panel" aria-label="프로젝트">
-      <div class="panel-heading"><h1>프로젝트</h1><span id="project-count" class="count">—</span></div>
+      <div class="panel-heading"><h1>서비스</h1><span id="project-count" class="count">—</span></div>
       <nav id="projects" aria-label="프로젝트 선택"><p class="loading">기록을 불러오는 중…</p></nav>
       <button id="more-projects" class="button more" hidden>프로젝트 더 보기</button>
       <div class="sidebar-note"><span class="note-symbol" aria-hidden="true">◈</span><p>흩어진 작업을<br>하나의 흐름으로.</p><small>원본 기록은 그대로 두고<br>지금 필요한 맥락을 살펴보세요.</small></div>
       <div class="refresh-status"><span id="sync-dot" class="sync-dot"></span><span id="sync-status" role="status">연결 확인 중</span></div>
     </aside>
-    <main class="work-panel" id="work-list" tabindex="-1">
+    <section class="service-panel" aria-label="서비스 작업 흐름">
       <div class="project-header"><p id="project-key" class="eyebrow">PROJECT MEMORY</p><h2 id="project-name">작업을 이어볼 곳</h2><p id="project-description">프로젝트를 선택하면 저장된 작업이 나타납니다.</p></div>
-      <div class="view-tabs" aria-label="조회 종류"><button id="show-runs" class="view-tab selected" aria-pressed="true">작업</button><button id="show-recovery" class="view-tab" aria-pressed="false">저장 문제</button></div>
+      <div id="service-summary" class="service-summary" aria-label="서비스 작업 현황"></div>
+      <details class="workstream" open>
+        <summary class="workstream-heading"><span>구성요소별 작업 흐름</span><small>저장된 기록 기준 · 실행 감지 아님</small></summary>
+        <div id="components" class="component-strip" aria-label="구성요소별 작업"></div>
+        <p id="workstream-note" class="catalog-note"></p>
+        <button id="more-components" class="button more" hidden>구성요소 더 보기</button>
+      </details>
+    </section>
+    <main class="work-panel" id="work-list" tabindex="-1">
+      <div class="view-tabs" aria-label="조회 종류"><button id="show-runs" class="view-tab selected" aria-pressed="true">작업</button><button id="show-features" class="view-tab" aria-pressed="false">기능</button><button id="show-recovery" class="view-tab" aria-pressed="false">저장 문제</button></div>
       <div id="run-controls">
+        <div class="scope-filters"><label>구성요소<select id="component-filter" aria-label="구성요소 선택"><option value="">전체 구성요소</option></select></label><label>기능<select id="feature-filter" aria-label="기능 선택"><option value="">전체 기능</option></select></label></div>
         <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="200" placeholder="작업이나 저장소 찾기" aria-label="작업이나 저장소 검색"><kbd>/</kbd></label>
         <div id="filters" class="filters" aria-label="작업 상태 필터">
           <button data-state="all" class="selected" aria-pressed="true">전체</button>
@@ -38,7 +48,7 @@
       <div class="list-heading"><span id="list-label">저장된 작업</span><span id="list-count"></span></div>
       <div id="tasks" class="task-list"></div>
       <button id="more-tasks" class="button more" hidden>작업 더 보기</button>
-      <p class="list-footnote">미완료는 종료 기록이 없는 상태입니다.<br>실행 중인지, 멈췄는지는 마지막 기록과 함께 확인하세요.</p>
+      <p class="list-footnote">미완료는 종료 기록이 없는 상태입니다.<br>기능 상태와 검사 결과는 AI의 보고이며, 배포·실행 여부와 구분됩니다.</p>
     </main>
     <section class="detail-panel" aria-label="작업 상세">
       <div id="detail"><div class="empty detail-empty"><span class="empty-flow" aria-hidden="true">● ── ◇ ── ○</span><h2>기록을 따라가 보세요</h2><p>작업을 선택하면 시작부터 변경, 종료까지<br>어떤 일이 있었는지 볼 수 있습니다.</p></div></div>

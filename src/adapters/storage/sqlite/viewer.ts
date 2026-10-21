@@ -1,8 +1,9 @@
 import { lstatSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { DatabaseSync, type SQLOutputValue, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { activityFor, ViewerError } from "../../../core/viewer/model.js";
 import type { RunState } from "../../../core/memory/model.js";
+import { SqliteWorkReader } from "./work.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -43,17 +44,19 @@ function page<T>(rows: T[], offset: number) {
 /** Dedicated read model: never opens a writer, migrates, registers or retries. */
 export class SqliteViewer {
   private readonly db: DatabaseSync;
+  private readonly work: SqliteWorkReader;
   constructor(private readonly path: string, private readonly now: () => number = Date.now) {
     this.db = readOnly(path);
     try { this.version(); } catch (error) { this.db.close(); throw error; }
+    this.work = new SqliteWorkReader(this.db, now);
   }
   close(): void { this.db.close(); }
 
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v3)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v4)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -80,6 +83,7 @@ export class SqliteViewer {
       actor: typeof row["actor"] === "string" ? row["actor"] : null,
       actor_source: row["actor"] ? "self_reported" : "not_collected",
       activity: activityFor(state as RunState, text(row, "updated_at"), this.now()),
+      ...this.work.identity(text(row, "project_id"), text(row, "id")),
     };
   }
 
@@ -98,7 +102,7 @@ export class SqliteViewer {
     })), offset);
   }
 
-  runs(projectId: string, options: { offset?: number; query?: string; state?: string } = {}) {
+  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string } = {}) {
     this.requireProject(projectId);
     const offset = pageOffset(options.offset ?? 0);
     const query = options.query ?? "";
@@ -106,15 +110,21 @@ export class SqliteViewer {
     if (query.length > 200 || !["all", "active", "completed", "interrupted"].includes(state)) {
       throw new ViewerError("invalid_input", "검색어나 상태 필터를 확인해 주세요.");
     }
-    const actor = this.actorQuery();
-    const params: SQLInputValue[] = [projectId, query, query, query];
-    if (state !== "all") params.push(state);
-    params.push(PAGE_SIZE + 1, offset);
-    const rows = this.db.prepare(`SELECT r.*, ${actor.field} FROM runs r ${actor.join}
-      WHERE r.project_id = ? AND (? = '' OR instr(lower(r.goal), lower(?)) > 0 OR instr(lower(r.repository), lower(?)) > 0)
-      ${state === "all" ? "" : "AND r.state = ?"}
-      ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`).all(...params);
-    return { ...page(rows.map(row => this.task(row)), offset), observed_at: new Date(this.now()).toISOString() };
+    this.requireFilters(options);
+    return this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
+      ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) });
+  }
+
+  overview(projectId: string, view: string, offset = 0) {
+    this.requireProject(projectId); pageOffset(offset);
+    if (view !== "components" && view !== "features") throw new ViewerError("invalid_input", "조회 종류를 확인해 주세요.");
+    return this.work.overview({ project_id: projectId, view, offset, limit: PAGE_SIZE });
+  }
+
+  private requireFilters(options: { component?: string; feature?: string }) {
+    for (const value of [options.component, options.feature]) {
+      if (value !== undefined && !/^[a-z0-9][a-z0-9-]{0,79}$/.test(value)) throw new ViewerError("invalid_input", "구성요소나 기능을 확인해 주세요.");
+    }
   }
 
   detail(projectId: string, runId: string, before = Number.MAX_SAFE_INTEGER) {
@@ -129,7 +139,8 @@ export class SqliteViewer {
       ${this.version() >= 2 ? "report_origin" : "'unspecified' AS report_origin"}
       FROM records WHERE project_id = ? AND run_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?`)
       .all(projectId, runId, before, PAGE_SIZE + 1)
-      .map(record => ({ ...record, seq: number(record, "seq"), provenance: "agent_report", verified: false }));
+      .map(record => ({ ...record, seq: number(record, "seq"), provenance: "agent_report", verified: false,
+        report: this.work.report(projectId, text(record, "id")) ?? null }));
     const counts = this.db.prepare("SELECT kind, count(*) AS total FROM records WHERE project_id = ? AND run_id = ? GROUP BY kind")
       .all(projectId, runId);
     return {

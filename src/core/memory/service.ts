@@ -5,6 +5,7 @@ import {
   type RegisterProjectInput, type Run,
 } from "./model.js";
 import type { MemoryStore } from "./ports.js";
+import type { Component, OverviewQuery, WorkLinks } from "../work/model.js";
 
 const encoder = new TextEncoder();
 const CONTEXT_BYTES = 32 * 1024;
@@ -42,6 +43,19 @@ export class MemoryService {
     return this.store.findProject(key);
   }
 
+  async registerComponent(projectId: string, component: Component): Promise<JsonObject> {
+    return this.mutate(projectId, `component-binding:v1:${component.key}:${component.name}`, { operation: "component", component }, async () => {
+      const project = await this.requireProject(projectId);
+      return { project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
+        work: { components: [component] }, result: { status: "persisted", component } };
+    });
+  }
+
+  async queryOverview(input: OverviewQuery): Promise<JsonObject> {
+    await this.requireProject(input.project_id);
+    return this.store.work.overview(input);
+  }
+
   async beginTask(input: BeginTaskInput): Promise<JsonObject> {
     return this.mutate(input.project_id, input.idempotency_key, { operation: "begin", ...input }, async () => {
       const project = await this.requireProject(input.project_id);
@@ -54,8 +68,10 @@ export class MemoryService {
       };
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision, run,
+        work: { run_id: run.id, ...links(input), ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}) },
         result: {
-          status: "persisted", run: { ...run },
+          status: "persisted", run: parseJsonObject(JSON.stringify({ ...run,
+            ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}), ...links(input) })),
           capture: "agent_reports_only", current_knowledge: [],
           next_tool: "memory_query_context",
         },
@@ -92,6 +108,7 @@ export class MemoryService {
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
         run: { ...run, updated_at: now }, record,
+        work: { run_id: run.id, record_id: record.id, ...links(input), ...(input.report ? { report: input.report } : {}) },
         result: {
           status: "persisted", record_id: record.id, knowledge_status: "unknown",
           provenance: "agent_report", project_revision: project.revision + 1,
@@ -116,6 +133,7 @@ export class MemoryService {
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
         run: { ...run, state: input.outcome, updated_at: now }, record,
+        work: { run_id: run.id, record_id: record.id, ...links(input), ...(input.report ? { report: input.report } : {}) },
         result: {
           status: "persisted", run_id: run.id, state: input.outcome, record_id: record.id,
           knowledge_status: "unknown", provenance: "agent_report",
@@ -192,7 +210,7 @@ export class MemoryService {
     const record = await this.store.getRecord(projectId, recordId);
     if (!record) throw new MemoryError("not_found", "Record not found in this project.");
     return {
-      record: { ...record }, provenance: "agent_report",
+      record: parseJsonObject(JSON.stringify({ ...record, report: this.store.work.report(projectId, recordId) ?? null })), provenance: "agent_report",
       knowledge_status: recordStatus(record), verified: false,
     };
   }
@@ -201,7 +219,7 @@ export class MemoryService {
     const project = await this.requireProject(projectId);
     const run = await this.store.getRun(projectId, runId);
     if (!run) throw new MemoryError("not_found", "Run not found in this project.");
-    return { run: { ...run }, project_revision: project.revision, capture: "agent_reports_only", pending_queue_supported: false };
+    return { run: parseJsonObject(JSON.stringify({ ...run, ...this.store.work.identity(projectId, runId) })), project_revision: project.revision, capture: "agent_reports_only", pending_queue_supported: false };
   }
 
   private async requireProject(id: string): Promise<Project> {
@@ -243,4 +261,8 @@ export class MemoryService {
     }
     throw new MemoryError("conflict", "Concurrent changes prevented this write. Retry with the same idempotency key.", true);
   }
+}
+
+function links(input: WorkLinks): WorkLinks {
+  return { ...(input.components ? { components: input.components } : {}), ...(input.features ? { features: input.features } : {}) };
 }

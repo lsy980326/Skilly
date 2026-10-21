@@ -5,11 +5,13 @@ import {
   type Receipt, type RecordQuery, type Run,
 } from "../../../core/memory/model.js";
 import type { MemoryStore } from "../../../core/memory/ports.js";
+import { SqliteWorkReader, writeWork } from "./work.js";
 
 type Row = Record<string, SQLOutputValue>;
 
 export class SqliteMemoryStore implements MemoryStore {
   private readonly db: DatabaseSync;
+  readonly work: SqliteWorkReader;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
@@ -17,6 +19,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec("PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL; PRAGMA cache_size = -8192;");
       this.migrate();
       this.db.exec("PRAGMA journal_mode = WAL;");
+      this.work = new SqliteWorkReader(this.db);
     } catch (error) {
       this.db.close();
       throw storageError(error);
@@ -31,8 +34,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 3) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 3) return;
+    if (version > 4) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 4) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -47,6 +50,9 @@ export class SqliteMemoryStore implements MemoryStore {
       }
       if (lockedVersion < 3) {
         this.db.exec(readFileSync(new URL("../../../../migrations/003-run-actors.sql", import.meta.url), "utf8"));
+      }
+      if (lockedVersion < 4) {
+        this.db.exec(readFileSync(new URL("../../../../migrations/004-work-structure.sql", import.meta.url), "utf8"));
       }
       this.db.exec("COMMIT");
     } catch (error) {
@@ -173,6 +179,7 @@ export class SqliteMemoryStore implements MemoryStore {
           }
         }
       }
+      if (change.work) writeWork(this.db, project.id, change.work);
       this.db.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?)").run(receipt.scope, receipt.key, receipt.hash, JSON.stringify(receipt.result));
       this.db.exec("COMMIT");
       return "committed";

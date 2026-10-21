@@ -243,6 +243,32 @@ DB의 원문·이력은 자원 상한을 이유로 자동 삭제하지 않는다
 
 Cloudflare Free 한도는 요청 횟수뿐 아니라 CPU와 DB 행 처리량·용량에도 적용된다. 한도 도달 시 `quota_exceeded`와 재시도 가능 여부를 반환하고 로컬 큐에 보존한다. 자동 유료 전환은 하지 않는다. 요금과 한도는 배포 직전에 다시 확인한다. [Workers 요금](https://developers.cloudflare.com/workers/platform/pricing/), [D1 요금](https://developers.cloudflare.com/d1/platform/pricing/), [D1 한도](https://developers.cloudflare.com/d1/platform/limits/)
 
+## 서비스 현황 조회 경계
+
+`core/work`는 구성요소·기능·구조화 보고 계약을 정의한다. 기록 원문과 저장 성공
+판정은 기존 memory 모듈에 남긴다. `sqlite/work`의 읽기 모델을 MCP의 서비스 조회와
+HTTP 화면이 함께 사용하며, 화면은 쓰기 서비스를 생성하지 않는다.
+
+```mermaid
+flowchart LR
+  Agent[작업 AI] --> MCP[MCP 계약]
+  MCP --> Memory[원문·작업·영수증]
+  Memory --> Store[(SQLite 정본)]
+  MCP --> Work[구성요소·기능 조회]
+  UI[사람용 현황 화면] --> HTTP[읽기 전용 HTTP]
+  HTTP --> Work
+  Work --> Store
+```
+
+v4 확장은 sidecar 테이블을 사용해 이전 runs/records/receipts 열과 원문을 유지한다.
+연결과 요약도 기록·영수증과 같은 트랜잭션에 포함한다. 선택 필드의 기본값 주입이나
+과거 기록의 추정 분류를 하지 않는다. 기존 프로세스의 원래 요청 재생은 보존하지만
+v3까지만 아는 이전 실행 파일을 새로 시작하면 v4를 거부하므로 연결을 최신 코드로 갱신한다.
+
+`component`는 연결 선언, `repository`는 기존 기록 범위, `branch`는 소스 브랜치다.
+서비스 전체 조회는 별도의 읽기 도구에서 명시적으로 요청하고 기존 기록 쓰기·복구의
+저장소/환경 경계를 완화하지 않는다. 기능의 최근 보고는 현재 사실 자동 판정이 아니다.
+
 ## 8. 구현할 때의 검증 경계
 
 | 검증 대상 | 확인할 결과 |
