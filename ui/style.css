@@ -362,3 +362,26 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .service-panel[data-density="expanded"] .lane-task-extra,
 .service-panel[data-density="expanded"] .lane-more-expanded { display: block; }
 .service-panel[data-density="expanded"] .lane-more-compact { display: none; }
+
+/* A feature brief separates the declared state from its supporting work reports. */
+.feature-select { display: block; width: 100%; text-align: left; margin-bottom: 12px; }
+.feature-select.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); background: var(--wash); }
+.feature-name { display: block; font: 600 16px var(--display); margin-bottom: 9px; }
+.feature-card .feature-description { color: var(--muted); margin: 10px 0; }
+.feature-preview, .feature-next { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.feature-next { padding-top: 9px; border-top: 1px solid var(--line); color: var(--accent); }
+.feature-detail { padding: 40px 44px; max-width: 1000px; overflow-wrap: anywhere; }
+.feature-detail h2 { font: 650 26px/1.4 var(--display); margin: 8px 0 14px; }
+.feature-purpose { color: var(--muted); white-space: pre-wrap; }
+.feature-status { padding: 18px; background: var(--wash); border-left: 3px solid var(--accent); margin: 24px 0; }
+.feature-status p { margin: 12px 0; white-space: pre-wrap; }
+.feature-source { display: block; font: 10px var(--mono); color: var(--muted); margin-top: 9px; }
+.feature-section { padding: 22px 0; border-bottom: 1px solid var(--line); }
+.feature-section h3 { font: 650 15px var(--body); margin: 0 0 14px; }
+.feature-section h4 { font: 600 13px var(--body); margin: 22px 0 10px; }
+.feature-section p, .feature-section li { font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
+.feature-section ul { margin: 0; padding-left: 20px; }
+.feature-section li + li { margin-top: 10px; }
+.feature-evidence { border-top: 2px solid var(--line); }
+.feature-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0; }
+@media(max-width:650px) { .feature-detail { padding: 24px 20px; } .feature-detail h2 { font-size: 22px; } }

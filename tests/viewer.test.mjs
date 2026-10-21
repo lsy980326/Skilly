@@ -165,7 +165,8 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   const f = fixture(t), pid = await project(f.call), rid = await run(f.call, pid, {
     components: [{ key: "web", name: "Web" }], features: [{ key: "comments", name: "댓글" }], title: "댓글 수정",
   });
-  await f.call("memory_checkpoint", checkpoint(pid, rid));
+  await f.call("memory_checkpoint", checkpoint(pid, rid, { report_origin: "contemporaneous",
+    report: { title: "댓글 변경 보고", summary: "댓글 저장 처리 변경", next_steps: ["실제 화면 확인"], checks: [{ name: "검사", result: "passed" }] } }));
   await f.app.close();
   const before = readFileSync(f.path), journalBefore = readFileSync(`${f.path}.recovery.sqlite`);
   const viewer = await startViewer({ db: f.path });
@@ -178,6 +179,9 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   const layout = await request(viewer.origin, "/layout.js");
   assert.equal(layout.status, 200);
   assert.match(layout.headers["content-type"], /javascript/);
+  const featureAsset = await request(viewer.origin, "/features.js");
+  assert.equal(featureAsset.status, 200);
+  assert.match(featureAsset.headers["content-type"], /javascript/);
   assert.match(shell.headers["content-security-policy"], /frame-ancestors 'none'/);
   assert.equal(shell.headers["cache-control"], "no-store");
   assert.equal(shell.headers["referrer-policy"], "no-referrer");
@@ -195,6 +199,10 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   assert.equal(components.status, 200); assert.equal(JSON.parse(components.body).items[0].key, "web");
   const filtered = await request(viewer.origin, `/api/runs?project=${pid}&component=web&feature=comments`, auth);
   assert.equal(filtered.status, 200); assert.equal(JSON.parse(filtered.body).items[0].id, rid);
+  const featureOverview = JSON.parse((await request(viewer.origin, `/api/overview?project=${pid}&view=features`, auth)).body);
+  assert.equal(featureOverview.items[0].latest_activity.report.next_steps[0], "실제 화면 확인");
+  assert.equal(featureOverview.items[0].latest_activity.verified, false);
+  assert.equal(featureOverview.items[0].execution_evidence.status, "not_collected");
   assert.equal((await request(viewer.origin, `/api/overview?project=${pid}&view=invalid`, auth)).status, 400);
   assert.equal((await request(viewer.origin, `/api/runs?project=${pid}&component=../web`, auth)).status, 400);
   assert.equal((await request(viewer.origin, `/api/recovery?project=${pid}`, auth)).status, 200);

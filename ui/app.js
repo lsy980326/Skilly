@@ -2,6 +2,7 @@ import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
 import { renderMachineReport } from "./reports.js";
+import { renderFeatureList, renderFeatureDetail } from "./features.js";
 import "./layout.js";
 
 const $ = selector => document.querySelector(selector);
@@ -10,6 +11,8 @@ const state = { projects: [], project: null, run: null, view: "runs", filter: "a
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
 state.skillKey = null; state.skillVersion = null; state.skillOffset = 0;
 let lastSkill = "";
+let featureKey = null, lastFeature = "";
+let navigationEpoch = 0;
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
 let projectsPaged = false, listPaged = false, detailPaged = false, lastDetail = "";
 const paged = () => projectsPaged || listPaged || detailPaged;
@@ -122,8 +125,10 @@ async function loadProjects(more = false) {
 }
 async function selectProject(id) {
   if (state.project === id) return;
+  navigationEpoch++;
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all";
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
+  featureKey = null; lastFeature = "";
   state.overviewTasks = []; state.overviewPartial = false;
   state.summary = {}; state.nextComponents = null; state.nextFeatures = null;
   state.selectedNames = {};
@@ -190,6 +195,7 @@ function renderCatalog() {
   }
 }
 async function applyScope(field, value) {
+  navigationEpoch++;
   state.selectedNames[field] = state[field === "component" ? "components" : "features"].find(item => item.key === value)?.name || value;
   state[field] = value; state.run = null; listPaged = false; detailPaged = false; lastDetail = "";
   listRequest++; detailRequest++;
@@ -210,7 +216,7 @@ async function loadList(more = false) {
   const request = ++listRequest;
   const project = state.project, view = state.view;
   if (view === "features") {
-    renderFeatures(); return;
+    showFeature(featureKey || state.features[0]?.key); renderFeatures(); return;
   }
   const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0) });
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
@@ -266,6 +272,7 @@ function renderTasks() {
   }
 }
 async function openRun(id) {
+  navigationEpoch++;
   state.run = id; detailPaged = false; lastDetail = "";
   if (state.view === "runs") renderTasks();
   $("#detail").replaceChildren(element("p", "loading", "상세 기록을 불러오는 중…"));
@@ -274,26 +281,34 @@ async function openRun(id) {
   if (matchMedia("(max-width: 600px)").matches) $(".detail-panel").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 }
 function renderFeatures() {
-  const container = $("#tasks"); container.replaceChildren();
+  const container = $("#tasks");
   $("#list-count").textContent = `${state.features.length}${state.nextFeatures !== null ? "+" : ""}개`;
   $("#more-tasks").hidden = state.nextFeatures === null;
   $("#more-tasks").textContent = "기능 더 보기";
-  if (!state.features.length) container.append(empty("연결된 기능이 없습니다", "다음 작업에서 AI가 기능을 연결하면 설명과 최근 보고를 여기에서 볼 수 있습니다. 과거 기록을 추정해 분류하지 않습니다."));
-  for (const feature of state.features) {
-    const card = element("article", "feature-card");
-    card.append(element("h3", "", feature.name), element("p", "", feature.description || "기능 설명 미수집"));
-    card.append(element("p", "catalog-note", `연결 작업 ${feature.total} · 미완료 ${feature.unfinished}`));
-    if (feature.latest_report) {
-      const latest = feature.latest_report;
-      card.append(badge(featureStates[latest.update.state] ?? "상태 미수집", "feature"), element("p", "", latest.update.summary),
-        element("small", "catalog-note", `당시 보고 · 미검증 · ${latest.repository} / ${latest.environment} · ${date(latest.observed_at)}`));
-    } else card.append(element("p", "catalog-note", "현재 상태 보고 없음 · 작업 종료를 기능 완료로 간주하지 않습니다."));
-    const button = element("button", "button", "연결 작업 보기");
-    button.addEventListener("click", async () => {
-      try { await applyScope("feature", feature.key); } catch (error) { showError(error); }
-    });
-    card.append(button); container.append(card);
+  renderFeatureList(container, state.features, featureKey, { element, badge, labels: featureStates,
+    onSelect: key => {
+      showFeature(key); renderFeatures();
+      if (matchMedia("(max-width: 600px)").matches) $(".detail-panel").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    } });
+}
+function showFeature(key) {
+  const feature = state.features.find(item => item.key === key);
+  if (!feature) {
+    lastFeature = "";
+    $("#detail").replaceChildren(empty("기능을 선택하세요", "목록에서 기능을 선택하거나 기능 더 보기로 찾아보세요.")); return;
   }
+  const fingerprint = JSON.stringify(feature);
+  if (key === featureKey && fingerprint === lastFeature) return;
+  if (key !== featureKey) { navigationEpoch++; $(".detail-panel").scrollTop = 0; }
+  featureKey = key; lastFeature = fingerprint;
+  $("#detail").replaceChildren(renderFeatureDetail(feature, { element, badge, date, labels: featureStates,
+    onTasks: () => { void applyScope("feature", key).catch(showError); },
+    onReport: id => { void (async () => {
+      const project = state.project, loading = applyScope("feature", key), epoch = navigationEpoch;
+      await loading;
+      if (epoch !== navigationEpoch || state.project !== project || state.view !== "runs" || state.feature !== key) return;
+      await openRun(id);
+    })().catch(showError); } }));
 }
 async function loadDetail(more = false) {
   if (!state.project || !state.run) return;
@@ -489,13 +504,20 @@ $("#more-projects").addEventListener("click", async () => {
 $("#more-tasks").addEventListener("click", async () => {
   listPaged = true;
   try {
-    if (state.view === "features") { await loadCatalog("features"); renderFeatures(); }
+    if (state.view === "features") {
+      const project = state.project, epoch = navigationEpoch;
+      await loadCatalog("features");
+      if (state.project !== project || state.view !== "features" || navigationEpoch !== epoch) return;
+      showFeature(featureKey || state.features[0]?.key); renderFeatures();
+    }
     else await loadList(true);
     showSynced();
   } catch (error) { showError(error); }
 });
 async function changeView(view) {
+    navigationEpoch++;
     state.view = view; listPaged = false; state.items = [];
+    if (view === "features") { state.run = null; detailRequest++; lastFeature = ""; }
     if (view === "skills" || state.skillKey) { state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; detailRequest++;
       $("#detail").replaceChildren(empty("항목을 선택하세요", "선택한 항목의 상세 내용을 확인하세요.")); }
     listRequest++;

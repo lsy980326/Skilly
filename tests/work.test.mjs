@@ -65,9 +65,33 @@ test("one task links multiple components and features; people and AI share struc
   assert.equal(evidence.record.body, "댓글 해결 상태 저장 처리 추가"); assert.deepEqual(evidence.record.report, report);
   const feature = await f.call("memory_query_overview", { project_id: pid, view: "features" });
   assert.equal(feature.items[0].latest_report.update.state, "in_progress");
+  assert.equal(feature.items[0].latest_activity.record_id, saved.record_id);
+  assert.deepEqual(feature.items[0].latest_activity.report.next_steps, report.next_steps);
+  assert.equal(feature.items[0].latest_activity.verified, false);
+  assert.equal(feature.items[0].execution_evidence.status, "not_collected");
   await f.call("memory_finish_task", { project_id: pid, run_id: rid, summary: "작업 마감, 기능 구현 미완료", outcome: "completed", idempotency_key: "finish" });
   const after = await f.call("memory_query_overview", { project_id: pid, view: "features" });
   assert.equal(after.items[0].unfinished, 0); assert.equal(after.items[0].latest_report.update.state, "in_progress");
+});
+
+test("feature activity respects scope and never promotes retrospective or superseded task reports", async t => {
+  const f = fixture(t), pid = await project(f.call);
+  const web = await run(f.call, pid, { features, components: [{ key: "web", name: "Web" }] });
+  const saved = await f.call("memory_checkpoint", checkpoint(pid, web, { report_origin: "contemporaneous", observed_at: "2026-01-01T00:00:00Z", report }));
+  const api = await run(f.call, pid, { features, components: [{ key: "api", name: "API" }], idempotency_key: "api-begin" });
+  await f.call("memory_checkpoint", checkpoint(pid, api, { report_origin: "contemporaneous", observed_at: "2026-01-02T00:00:00Z", report: { title: "API 보고", summary: "API 변경", next_steps: ["API 후속"] }, idempotency_key: "api-report" }));
+  const other = await run(f.call, pid, { features, repository: "another", idempotency_key: "another-begin" });
+  await f.call("memory_checkpoint", checkpoint(pid, other, { report_origin: "contemporaneous", observed_at: "2026-01-03T00:00:00Z", report: { title: "다른 저장소", summary: "섞이면 안 됨" }, idempotency_key: "another-report" }));
+  const query = extra => f.call("memory_query_overview", { project_id: pid, view: "features", ...extra });
+  let result = await query({ component: "web" });
+  assert.equal(result.items[0].latest_activity.record_id, saved.record_id);
+  assert.equal((await query({})).items[0].latest_activity.report.summary, "API 변경");
+  await f.call("memory_checkpoint", checkpoint(pid, web, { report_origin: "retrospective", observed_at: "2026-01-04T00:00:00Z", report: { title: "소급 완료 주장", summary: "현재 보고로 쓰지 않음" }, idempotency_key: "retro-web" }));
+  assert.equal((await query({ component: "web" })).items[0].latest_activity.record_id, saved.record_id);
+  await f.call("memory_checkpoint", checkpoint(pid, web, { supersedes: saved.record_id, report_origin: "retrospective", observed_at: "2026-01-05T00:00:00Z", report: { title: "소급 정정", summary: "과거 보고 정정" }, idempotency_key: "correct-web" }));
+  result = await query({ component: "web" });
+  assert.equal(result.items[0].latest_activity, null);
+  assert.equal(result.items[0].latest_report, null);
 });
 
 test("a newly discovered feature can be linked in a report and invalid links roll back the whole write", async t => {
@@ -82,6 +106,22 @@ test("a newly discovered feature can be linked in a report and invalid links rol
   assert.equal(reader.runs(pid, { component: "api", feature: "comments" }).items.length, 1);
   await assert.rejects(f.call("memory_checkpoint", checkpoint(pid, rid, { features: [{ key: "comments", name: "別機能" }], idempotency_key: "conflict" })), { code: "catalog_conflict" });
   assert.equal(reader.detail(pid, rid).records.items.length, 1);
+});
+
+test("feature-filtered briefs do not borrow newer status or activity from unshared tasks", async t => {
+  const f = fixture(t), pid = await project(f.call);
+  const both = [{ key: "a", name: "기능 A" }, { key: "b", name: "기능 B" }];
+  const shared = await run(f.call, pid, { features: both });
+  const first = await f.call("memory_checkpoint", checkpoint(pid, shared, { report_origin: "contemporaneous", observed_at: "2026-01-01T00:00:00Z",
+    report: { title: "공동 작업", summary: "A와 B의 공통 보고", feature_updates: [{ key: "b", state: "in_progress", summary: "공동 확인 필요" }] } }));
+  const onlyB = await run(f.call, pid, { features: [both[1]], idempotency_key: "only-b" });
+  await f.call("memory_checkpoint", checkpoint(pid, onlyB, { report_origin: "contemporaneous", observed_at: "2026-01-02T00:00:00Z", idempotency_key: "b-report",
+    report: { title: "B 단독 작업", summary: "A 범위에 섞이면 안 됨", feature_updates: [{ key: "b", state: "implemented", summary: "B 단독 구현" }] } }));
+  const scoped = await f.call("memory_query_overview", { project_id: pid, view: "features", feature: "a" });
+  const b = scoped.items.find(item => item.key === "b");
+  assert.equal(b.latest_report.record_id, first.record_id);
+  assert.equal(b.latest_activity.record_id, first.record_id);
+  assert.equal(b.latest_report.update.state, "in_progress");
 });
 
 test("readable note and change reports preserve originals, exact retry inputs and technical references", async t => {
@@ -206,4 +246,26 @@ test("JSON escape expansion returns an explicit compact item and advances the pa
   assert.equal(result.items[0].projection_truncated, true);
   assert.equal(result.items[0].id, rid); assert.equal(result.items[0].components_total, 12);
   assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 32 * 1024);
+});
+
+test("large feature briefs remain byte-bounded and paginate without losing features", async t => {
+  const f = fixture(t), pid = await project(f.call);
+  const catalog = Array.from({ length: 12 }, (_, n) => ({ key: `brief-${n}`, name: `기능 ${n}` }));
+  const rid = await run(f.call, pid, { features: catalog });
+  const lines = Array.from({ length: 8 }, () => "x".repeat(400));
+  await f.call("memory_checkpoint", checkpoint(pid, rid, { report_origin: "contemporaneous", report: {
+    title: "긴 보고", summary: "s".repeat(800), changes: lines, next_steps: lines, limitations: lines,
+  } }));
+  const found = [];
+  let offset = 0;
+  for (let page = 0; page < 12; page++) {
+    const result = await f.call("memory_query_overview", { project_id: pid, view: "features", limit: 40, offset });
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 32 * 1024);
+    assert.ok(result.items.length > 0);
+    found.push(...result.items.map(item => item.key));
+    if (result.next_offset === null) break;
+    assert.ok(result.next_offset > offset); offset = result.next_offset;
+  }
+  assert.deepEqual(new Set(found), new Set(catalog.map(item => item.key)));
+  assert.equal(found.length, 12);
 });

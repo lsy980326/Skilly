@@ -31,11 +31,12 @@ class Element {
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
-  recovery = { status: "available", items: [], next_offset: null } } = {}) {
+  recovery = { status: "available", items: [], next_offset: null }, featureDetail = null, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0;
   let recordAvailable = !initialEmpty;
   const requests = [], authorizations = [];
+  let releaseScoped, releaseMore;
   const nodes = new Map();
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, new Element("div"));
@@ -64,7 +65,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${app}\n})()`, {
+  const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${app}\n})()`, {
     document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -75,6 +77,12 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
       authorizations.push(options.headers.Authorization);
       assert.equal(options.credentials, "omit");
       if (requestFailure === "network") throw new Error("연결 실패");
+      if (holdScopedRuns && path.startsWith("/api/runs?") && path.includes("feature=")) {
+        holdScopedRuns = false; await new Promise(resolve => { releaseScoped = resolve; });
+      }
+      if (holdMoreFeatures && path.startsWith("/api/overview?") && path.includes("view=features") && path.includes("offset=40")) {
+        holdMoreFeatures = false; await new Promise(resolve => { releaseMore = resolve; });
+      }
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
       const data = path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
@@ -85,7 +93,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
           items: path.includes("view=components") ? [{ key: "web", name: "Web", total: 1, unfinished: 0 }]
             : manyFeatures ? (path.includes("offset=40") ? [{ key: lateFeatureKey, name: "마지막 기능", total: 1, unfinished: 0 }]
               : Array.from({ length: 40 }, (_, n) => ({ key: `feature-${n}`, name: `기능 ${n}`, total: 1, unfinished: 0 })))
-            : [{ key: "clock", name: "상대 시간", total: 1, unfinished: 0 }],
+            : [{ key: "clock", name: "상대 시간", total: 1, unfinished: 0, ...featureDetail }],
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
         : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
         : path.startsWith("/api/runs/run")
@@ -102,6 +110,9 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
     updateTask(patch) { Object.assign(run, patch); },
+    updateFeature(patch) { Object.assign(featureDetail, patch); },
+    releaseScoped() { releaseScoped?.(); },
+    releaseMore() { releaseMore?.(); },
     async tick() { await scheduled(); },
     labels() {
       return [node("#tasks").querySelector(".card-time").textContent,
@@ -215,7 +226,8 @@ test("a selected feature from a later catalog page remains visible after polling
   app.node("#show-features").listeners.click(); await new Promise(setImmediate);
   await app.node("#more-tasks").listeners.click();
   const feature = app.node("#tasks").children.find(node => node.textContent.includes("마지막 기능"));
-  await feature.children.find(node => node.tagName === "BUTTON").listeners.click();
+  feature.listeners.click();
+  app.node("#detail").querySelector(".button").listeners.click(); await new Promise(setImmediate);
   await app.tick();
   assert.equal(app.node("#feature-filter").value, lateFeatureKey);
   assert.equal(app.node("#feature-filter").children.find(node => node.value === lateFeatureKey).textContent, "마지막 기능");
@@ -238,6 +250,50 @@ test("search focus pauses fetching but not elapsed time; returning to the tab re
   app.document.listeners.visibilitychange();
   assert.deepEqual(app.labels(), ["3분 전", "3분 전"]);
   assert.equal(app.calls(), calls);
+});
+
+test("feature brief separates declared status, latest work and uncollected evidence; polling refreshes only changes", async () => {
+  const activity = { record_id: "source", run_id: "run-extra1", actor: "Codex", repository: "web", environment: "test", observed_at: "2026-10-21T00:00:00Z",
+    report: { summary: "<img src=x>", changes: ["저장 처리 변경"], next_steps: ["브라우저 재접속 확인"], checks: [{ name: "단위 검사", result: "passed" }] } };
+  const app = await viewer({ featureDetail: { description: "경과 시간을 표시합니다.", latest_activity: activity,
+    latest_report: { record_id: "status", repository: "web", environment: "test", observed_at: activity.observed_at, update: { state: "in_progress", summary: "재접속 확인 남음" } } } });
+  app.node("#show-features").listeners.click(); await new Promise(setImmediate);
+  const detail = app.node("#detail").children[0];
+  assert.match(detail.textContent, /개발 중으로 보고/);
+  assert.match(detail.textContent, /최근 무엇이 바뀌었나요/);
+  assert.match(detail.textContent, /브라우저 재접속 확인/);
+  assert.match(detail.textContent, /미수집.*통과 보고/);
+  assert.match(detail.textContent, /기록 source/);
+  assert.equal(detail.querySelector("img"), null);
+  await app.tick();
+  assert.equal(app.node("#detail").children[0], detail);
+  app.updateFeature({ latest_activity: { ...activity, report: { summary: "새 보고", next_steps: ["다음 검사"] } } });
+  await app.tick(); assert.match(app.node("#detail").textContent, /다음 검사/);
+  app.node("#detail").querySelector(".feature-actions").children[1].listeners.click(); await new Promise(setImmediate);
+  assert.ok(app.requests.some(path => path.startsWith("/api/runs/run-extra1?")));
+  const missing = await viewer();
+  missing.node("#show-features").listeners.click(); await new Promise(setImmediate);
+  assert.match(missing.node("#detail").textContent, /할 일이 없거나 기능이 완료됐다는 뜻은 아닙니다/);
+});
+
+test("leaving a feature while its original-report navigation awaits cannot overwrite the new view", async () => {
+  const app = await viewer({ holdScopedRuns: true, featureDetail: { latest_activity: { run_id: "run-extra1", record_id: "source", report: { summary: "이전 기능 보고" } } } });
+  app.node("#show-features").listeners.click(); await new Promise(setImmediate);
+  app.node("#detail").querySelector(".feature-actions").children[1].listeners.click();
+  app.node("#show-skills").listeners.click(); await new Promise(setImmediate);
+  app.releaseScoped(); await new Promise(setImmediate);
+  assert.match(app.node("#detail").textContent, /샘플 스킬/);
+  assert.ok(!app.requests.some(path => path.startsWith("/api/runs/run-extra1?")));
+});
+
+test("a late feature catalog page cannot overwrite a newly selected skill view", async () => {
+  const app = await viewer({ manyFeatures: true, holdMoreFeatures: true });
+  app.node("#show-features").listeners.click(); await new Promise(setImmediate);
+  const pending = app.node("#more-tasks").listeners.click();
+  app.node("#show-skills").listeners.click(); await new Promise(setImmediate);
+  app.releaseMore(); await pending;
+  assert.match(app.node("#tasks").textContent, /샘플 스킬/);
+  assert.match(app.node("#detail").textContent, /샘플 스킬/);
 });
 
 test("workstream shows saved unfinished work and opens its original detail", async () => {

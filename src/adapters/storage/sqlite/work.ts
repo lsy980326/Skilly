@@ -3,6 +3,7 @@ import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/mem
 import type { OverviewQuery, StructuredReport, WorkIdentity, WorkMutation, WorkReader } from "../../../core/work/model.js";
 import { reportSchema } from "../../../core/work/schema.js";
 import { activityFor } from "../../../core/viewer/model.js";
+import { featureActivity } from "./feature-status.js";
 
 type Row = Record<string, SQLOutputValue>;
 function text(row: Row, key: string): string {
@@ -120,11 +121,13 @@ export class SqliteWorkReader implements WorkReader {
           WHERE r.project_id = ? AND x.feature_key = ? AND json_extract(j.value,'$.key') = x.feature_key
           AND r.superseded_by IS NULL AND r.report_origin = 'contemporaneous'
           ${input.repository ? "AND r.repository = ?" : ""} ${input.environment ? "AND r.environment = ?" : ""}
+          ${input.feature ? "AND EXISTS (SELECT 1 FROM run_features selected WHERE selected.project_id=r.project_id AND selected.run_id=r.run_id AND selected.feature_key=?)" : ""}
           ${input.component === "unclassified" ? "AND NOT EXISTS (SELECT 1 FROM run_components rc WHERE rc.project_id=r.project_id AND rc.run_id=r.run_id)"
             : input.component ? "AND EXISTS (SELECT 1 FROM run_components rc WHERE rc.project_id=r.project_id AND rc.run_id=r.run_id AND rc.component_key=?)" : ""}
           ORDER BY r.observed_at DESC, r.seq DESC LIMIT 1`).get(pid, text(row, "key"),
-            ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
-        item = json({ ...row, latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null });
+            ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.feature ? [input.feature] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
+        item = json({ ...row, latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
+          latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: { status: "not_collected", verified: false } });
       } else item = json(row);
       items.push(item);
       if (new TextEncoder().encode(JSON.stringify(response)).byteLength > 30 * 1024) {
