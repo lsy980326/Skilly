@@ -24,6 +24,22 @@ MCP 실행 명령은 `node dist/runtime/local/main.js serve`입니다. 기본 DB
 
 ## 기록을 화면으로 보기
 
+Skilly 저장소의 `.skilly/memory.sqlite`를 계속 조회하려면 관리 명령을 사용할 수 있습니다.
+처음 실행하거나 서버 소스를 업데이트한 뒤에는 `npm run build`를 한 번 실행하세요.
+
+```sh
+npm run viewer -- start
+npm run viewer -- status
+npm run viewer -- restart
+```
+
+`start`가 출력한 전체 주소를 여세요. 서버는 터미널과 분리되어 실행되며,
+`restart`는 인증을 유지하면서 화면 파일·DB 연결을 다시 엽니다. 자동 시작 등록은 하지 않습니다.
+서버 코드 업데이트·PC 재부팅·강제 종료 이후 연결과 `stop`은
+[서버 관리 안내](docs/user-guide.md#로컬-화면-서버-관리)를 참고하세요.
+
+한 번만 전경 실행하려면 기존 명령을 사용합니다.
+
 ```sh
 npm run view -- --db /Users/yeop/project/Skilly/.skilly/memory.sqlite
 ```

@@ -12,6 +12,7 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "start": "node dist/runtime/local/main.js serve",
     "view": "npm run build && node dist/runtime/local/viewer.js",
+    "viewer": "node dist/runtime/local/viewer-manager.js",
     "demo": "npm run build && node scripts/demo.mjs",
     "bench": "npm run build && node scripts/bench.mjs",
     "setup:codex": "npm run build && node scripts/setup-codex.mjs",

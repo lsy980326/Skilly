@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, lstatSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { ViewerError } from "../../core/viewer/model.js";
 import { SqliteViewer } from "../../adapters/storage/sqlite/viewer.js";
@@ -30,10 +30,11 @@ export async function startViewer(options: { db: string; port?: number }) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ViewerError("invalid_input", "포트는 0–65535여야 합니다.");
   const token = randomBytes(32).toString("hex");
   const expected = Buffer.from(`Bearer ${token}`);
-  const contents = new Map([...assets].map(([route, asset]) => [route, {
+  const loadContents = () => new Map([...assets].map(([route, asset]) => [route, {
     ...asset, body: readFileSync(new URL(`../../../ui/${asset.file}`, import.meta.url)),
   }]));
-  const reader = new SqliteViewer(options.db);
+  let contents = loadContents();
+  let reader = new SqliteViewer(options.db);
   let origin = "";
   const server = createServer((request, response) => {
     response.setHeader("Cache-Control", "no-store");
@@ -113,6 +114,22 @@ export async function startViewer(options: { db: string; port?: number }) {
   let closing: Promise<void> | undefined;
   return {
     origin, url: `${origin}/#token=${token}`,
+    health(): void {
+      if (!server.listening || closing) throw new Error("화면 서버가 요청을 받을 수 없습니다.");
+      const file = lstatSync(options.db);
+      if (!file.isFile() || file.isSymbolicLink()) throw new Error("기록 DB 경로를 확인할 수 없습니다.");
+      reader.projects(0);
+    },
+    reload(): void {
+      if (closing) throw new Error("종료 중인 화면은 다시 열 수 없습니다.");
+      // Stage both resources first so a failed reload leaves the authorized server usable.
+      const nextContents = loadContents();
+      const nextReader = new SqliteViewer(options.db);
+      try { nextReader.projects(0); } catch (error) { nextReader.close(); throw error; }
+      const previous = reader;
+      reader = nextReader; contents = nextContents;
+      previous.close();
+    },
     close(): Promise<void> {
       closing ??= new Promise<void>((resolve, reject) => {
         server.close(error => { reader.close(); error ? reject(error) : resolve(); });
