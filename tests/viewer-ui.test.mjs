@@ -29,11 +29,12 @@ class Element {
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 }
 
-async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false } = {}) {
+async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
+  hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "" } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0;
   let recordAvailable = !initialEmpty;
-  const requests = [];
+  const requests = [], authorizations = [];
   const nodes = new Map();
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, new Element("div"));
@@ -56,14 +57,19 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     report_origin: "contemporaneous", observed_at: run.updated_at, recorded_at: run.updated_at,
     report: structured ? { title: "목록과 상세 시간 수정", summary: "<img src=x onerror=alert(1)>", changes: ["같은 시계 사용"], checks: [{ name: "시간 검사", result: "passed" }], next_steps: ["실제 화면 확인"] } : null };
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
-  const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/, "");
-  await runInNewContext(`(async () => {${board}\n${app}\n})()`, {
-    document, URLSearchParams, location: { hash: "#token=test", pathname: "/" }, history: { replaceState() {} },
+  const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
+  const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
+  await runInNewContext(`(async () => {${board}\n${session}\n${app}\n})()`, {
+    document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
     setTimeout(callback) { scheduled = callback; return 1; }, clearTimeout() {},
     matchMedia() { return { matches: false }; },
-    async fetch(path) {
+    async fetch(path, options) {
       calls++; requests.push(path);
+      authorizations.push(options.headers.Authorization);
+      assert.equal(options.credentials, "omit");
+      if (requestFailure === "network") throw new Error("연결 실패");
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
       const data = path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
@@ -77,11 +83,14 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
         : path.startsWith("/api/runs/run?")
           ? { run, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
           : { items: [run], next_offset: null };
-      return { ok: true, async json() { return structuredClone(data); } };
+      return { ok: httpStatus === 200, status: httpStatus, async json() {
+        if (requestFailure === "json") throw new SyntaxError("잘못된 응답");
+        return structuredClone(data);
+      } };
     },
   });
   return {
-    node, document, calls: () => calls, requests,
+    node, document, calls: () => calls, requests, authorizations,
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
     async tick() { await scheduled(); },
@@ -91,6 +100,32 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     },
   };
 }
+
+test("a new UI page without a token link restores the authorized connection", async () => {
+  const storage = new Map();
+  await viewer({ storage });
+  const reopened = await viewer({ storage, hash: "" });
+  assert.ok(reopened.calls() > 0);
+  assert.ok(reopened.authorizations.every(value => value === `Bearer ${"a".repeat(64)}`));
+  assert.match(reopened.node("#detail").textContent, /시간 표시/);
+  assert.equal(reopened.node("#connection-error").hidden, true);
+});
+
+test("401 clears a rejected stored credential, but transient failures preserve it", async () => {
+  for (const options of [{ httpStatus: 503 }, { requestFailure: "network" }, { requestFailure: "json" }]) {
+    const storage = new Map();
+    await viewer({ storage });
+    const before = [...storage.entries()];
+    await viewer({ storage, hash: "", ...options });
+    assert.deepEqual([...storage.entries()], before);
+  }
+  const storage = new Map();
+  await viewer({ storage });
+  const rejected = await viewer({ storage, hash: "", httpStatus: 401 });
+  assert.equal(storage.size, 0);
+  assert.equal(rejected.calls(), 1);
+  assert.equal(rejected.node("#connection-error").hidden, false);
+});
 
 test("unchanged reports keep list and detail time in sync without rebuilding detail", async () => {
   const app = await viewer();

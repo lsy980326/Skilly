@@ -1,8 +1,8 @@
 import { renderWorkstream } from "./workstream.js";
+import { createViewerSession } from "./session.js";
 
 const $ = selector => document.querySelector(selector);
-const token = new URLSearchParams(location.hash.slice(1)).get("token");
-history.replaceState(null, "", location.pathname);
+const session = createViewerSession({ location, history, getStorage: () => localStorage });
 const state = { projects: [], project: null, run: null, view: "runs", filter: "all", query: "", items: [], records: [], nextProjects: null, nextItems: null, nextRecords: null,
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
@@ -70,10 +70,11 @@ function badge(label, style, dot = false) {
   return node;
 }
 async function api(path) {
-  if (!token) throw new Error("연결 주소가 필요합니다. Skilly를 실행한 터미널의 전체 주소로 다시 열어 주세요.");
-  const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = await fetch(path, { headers: session.headers(), credentials: "omit", cache: "no-store" });
+  if (response.status === 401) session.reject();
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? "기록을 읽지 못했습니다.");
+  session.confirm();
   return result;
 }
 function showError(error) {
@@ -84,6 +85,7 @@ function showError(error) {
 function showSynced() {
   $("#connection-error").hidden = true;
   $("#sync-status").textContent = `${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })} 확인 · ${paged() ? "이전 목록 조회 중" : "15초마다 갱신"}`;
+  if (session.persistenceLimited) $("#sync-status").textContent += " · 브라우저 저장 제한: 새로고침 시 다시 연결해 주세요";
 }
 function renderProjects() {
   const container = $("#projects");

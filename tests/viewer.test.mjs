@@ -144,7 +144,7 @@ test("recovery view checks receipts first and distinguishes missing from unreada
 
 function request(origin, path, headers = {}, method = "GET") {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(`${origin}${path}`, { method, headers }, response => {
+    const req = httpRequest(`${origin}${path}`, { method, headers, agent: false }, response => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", chunk => { body += chunk; });
@@ -193,9 +193,19 @@ test("local HTTP is authenticated, read-only, origin-bound and preserves existin
   assert.equal(workstream.status, 200);
   assert.match(workstream.headers["content-type"], /javascript/);
   assert.match(workstream.body, /export function renderWorkstream/);
+  const session = await request(viewer.origin, "/session.js");
+  assert.equal(session.status, 200);
+  assert.match(session.body, /export function createViewerSession/);
   await viewer.close();
   assert.deepEqual(readFileSync(f.path), before);
   assert.deepEqual(readFileSync(`${f.path}.recovery.sqlite`), journalBefore);
+  const restarted = await startViewer({ db: f.path, port: Number(new URL(viewer.origin).port) });
+  t.after(() => restarted.close());
+  assert.equal((await request(restarted.origin, "/api/projects", auth)).status, 401);
+  const newToken = new URLSearchParams(new URL(restarted.url).hash.slice(1)).get("token");
+  assert.equal((await request(restarted.origin, "/api/projects", { Authorization: `Bearer ${newToken}` })).status, 200);
+  await restarted.close();
+  assert.deepEqual(readFileSync(f.path), before);
 });
 
 test("viewer never creates, migrates or follows a linked database", async t => {
