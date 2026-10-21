@@ -423,7 +423,7 @@ test("version 1 migration preserves records and receipt retries without relabeli
   assert.equal(retry.recovery.request_id, null);
   assert.equal(retry.recovery.journal_acknowledged, false);
   const migrated = new DatabaseSync(path);
-  assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(migrated.prepare("PRAGMA user_version").get().user_version, 6);
   assert.equal(migrated.prepare("SELECT count(*) AS n FROM records").get().n, 1);
   assert.deepEqual(migrated.prepare("PRAGMA foreign_key_check").all(), []);
   migrated.close();
@@ -434,11 +434,11 @@ test("newer and foreign databases are preserved rather than migrated", () => {
   try {
     const path = join(directory, "future.sqlite");
     const db = new DatabaseSync(path);
-    db.exec("PRAGMA application_id = 1397446988; PRAGMA user_version = 6;");
+    db.exec("PRAGMA application_id = 1397446988; PRAGMA user_version = 7;");
     db.close();
     assert.throws(() => new SqliteMemoryStore(path), { code: "schema_too_new" });
     const after = new DatabaseSync(path, { readOnly: true });
-    assert.equal(after.prepare("PRAGMA user_version").get().user_version, 6);
+    assert.equal(after.prepare("PRAGMA user_version").get().user_version, 7);
     after.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

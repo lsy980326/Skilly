@@ -33,6 +33,7 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
   let closing: Promise<void> | undefined;
   return {
     dispatcher,
+    executions: store.executions,
     close() {
       closing ??= dispatcher.drain().then(() => { journal.close(); store.close(); });
       return closing;

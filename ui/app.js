@@ -1,7 +1,7 @@
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
-import { renderMachineReport } from "./reports.js";
+import { renderMachineReport, renderExecutions } from "./reports.js";
 import { renderFeatureList, renderFeatureDetail } from "./features.js";
 import "./layout.js";
 
@@ -11,6 +11,7 @@ const state = { projects: [], project: null, run: null, view: "runs", filter: "a
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
 state.skillKey = null; state.skillVersion = null; state.skillOffset = 0;
 let lastSkill = "";
+let executionData = { items: [], next_offset: null };
 let featureKey = null, lastFeature = "";
 let navigationEpoch = 0;
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
@@ -317,7 +318,8 @@ async function loadDetail(more = false) {
   if (request !== detailRequest || project !== state.project || run !== state.run) return;
   state.records = more ? [...state.records, ...data.records.items] : data.records.items;
   state.nextRecords = data.records.next_before;
-  const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords]);
+  executionData = data.executions ?? { items: [], next_offset: null };
+  const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData]);
   if (fingerprint === lastDetail) return;
   lastDetail = fingerprint;
   renderDetail(data.run, data.record_counts, !more);
@@ -363,6 +365,15 @@ function renderDetail(task, counts = {}, animateNew = true) {
   panel.append(flow, element("p", "activity-note", task.state === "active"
     ? "최근 활동은 5분 이내 기록이 저장됐다는 뜻입니다. 실시간 실행 여부는 수집하지 않으므로, 오래 갱신되지 않은 작업은 AI 채팅에서 확인하세요."
     : "마감은 작업 상태를 뜻합니다. 기록 내용의 정확성이나 테스트 성공을 자동 검증한 것은 아닙니다."));
+  panel.append(renderExecutions(executionData, { element, date, more: async () => {
+    const project = state.project, run = state.run, request = detailRequest;
+    try {
+      const page = await api(`/api/runs/${run}/executions?project=${project}&offset=${executionData.next_offset}`);
+      if (project !== state.project || run !== state.run || request !== detailRequest) return;
+      executionData = { ...page, items: [...executionData.items, ...page.items] };
+      detailPaged = true; renderDetail(task, counts, false);
+    } catch (error) { showError(error); }
+  } }));
   const heading = element("div", "timeline-heading");
   heading.append(element("h3", "", "기록 타임라인"), element("span", "", "최근 저장 순 · AI가 작성한 보고"));
   panel.append(heading);

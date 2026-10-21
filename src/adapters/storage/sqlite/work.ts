@@ -3,7 +3,7 @@ import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/mem
 import type { OverviewQuery, StructuredReport, WorkIdentity, WorkMutation, WorkReader } from "../../../core/work/model.js";
 import { reportSchema } from "../../../core/work/schema.js";
 import { activityFor } from "../../../core/viewer/model.js";
-import { featureActivity } from "./feature-status.js";
+import { featureActivity, featureExecutions } from "./feature-status.js";
 
 type Row = Record<string, SQLOutputValue>;
 function text(row: Row, key: string): string {
@@ -127,7 +127,7 @@ export class SqliteWorkReader implements WorkReader {
           ORDER BY r.observed_at DESC, r.seq DESC LIMIT 1`).get(pid, text(row, "key"),
             ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.feature ? [input.feature] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
         item = json({ ...row, latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
-          latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: { status: "not_collected", verified: false } });
+          latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: featureExecutions(this.db, input, text(row, "key")) });
       } else item = json(row);
       items.push(item);
       if (new TextEncoder().encode(JSON.stringify(response)).byteLength > 30 * 1024) {

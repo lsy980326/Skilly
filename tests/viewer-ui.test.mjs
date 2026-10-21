@@ -31,7 +31,7 @@ class Element {
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
-  recovery = { status: "available", items: [], next_offset: null }, featureDetail = null, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
+  recovery = { status: "available", items: [], next_offset: null }, featureDetail = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0;
   let recordAvailable = !initialEmpty;
@@ -97,7 +97,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
         : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
         : path.startsWith("/api/runs/run")
-          ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
+          ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, executions, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
           : { items: [run], next_offset: null };
       return { ok: httpStatus === 200, status: httpStatus, async json() {
         if (requestFailure === "json") throw new SyntaxError("잘못된 응답");
@@ -129,6 +129,22 @@ test("a new UI page without a token link restores the authorized connection", as
   assert.ok(reopened.authorizations.every(value => value === `Bearer ${"a".repeat(64)}`));
   assert.match(reopened.node("#detail").textContent, /시간 표시/);
   assert.equal(reopened.node("#connection-error").hidden, true);
+});
+
+test("process observations and AI reports stay separate and a newly collected result refreshes detail", async () => {
+  const executions = { items: [], next_offset: null };
+  const app = await viewer({ structured: true, executions });
+  assert.match(app.node("#detail").textContent, /수집된 실행 결과 없음/);
+  executions.items.push({ id: "execution", executable: "<img src=x>", started_at: "2026-10-21T01:00:00Z", duration_ms: 150,
+    outcome: "exited", exit_code: 0, stdout_bytes: 14, stderr_bytes: 0, record_id: "record" });
+  await app.tick();
+  const section = app.node("#detail").querySelector(".execution-observations");
+  assert.match(section.textContent, /직접 실행 관측.*정상 종료 · 코드 0/);
+  assert.match(section.textContent, /종료 코드 0은 기능 검증 완료를 뜻하지 않습니다/);
+  assert.equal(section.querySelector("img"), null);
+  assert.match(app.node("#detail").textContent, /확인 결과 · AI 보고.*통과 보고/);
+  executions.items[0].outcome = "unconfirmed"; executions.items[0].duration_ms = null;
+  await app.tick(); assert.match(app.node("#detail").textContent, /종료 관측 없음/);
 });
 
 test("recovery UI separates saved, pending and blocked requests and never calls an empty list complete", async () => {

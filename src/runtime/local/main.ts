@@ -13,6 +13,7 @@ import { loadProjectBinding } from "../../adapters/project/binding.js";
 const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly serve [--db /absolute/path/memory.sqlite] [--project /absolute/project]
   skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
+  skilly exec --db /absolute/memory.sqlite --project /absolute/project --run-id <UUID> [--record-id <UUID>] [--timeout-ms 60000] -- executable args
   skilly backup --db /absolute/memory.sqlite --output /absolute/new-backup-directory
   skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
   skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory
@@ -32,6 +33,11 @@ Incomplete outputs are retained without a completion marker; never use them. No 
 `;
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "exec") {
+    const { executeCommand } = await import("./execute.js");
+    process.exitCode = await executeCommand(process.argv.slice(3));
+    return;
+  }
   const { values, positionals } = parseArgs({
     options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" },
       input: { type: "string" }, output: { type: "string" }, "project-id": { type: "string" },

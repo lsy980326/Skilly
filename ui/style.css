@@ -8,6 +8,14 @@
   --display: "Avenir Next", "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: "SFMono-Regular", Consolas, monospace;
 }
+.execution-observations { margin: 24px 0 30px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.execution-card { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--wash); overflow-wrap: anywhere; }
+.execution-card.unconfirmed { border-left-color: var(--attention); background: var(--warning); }
+.execution-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.execution-top strong { font: 600 13px var(--mono); }
+.execution-outcome { font-size: 12px; font-weight: 650; }
+.execution-meta, .execution-empty { margin: 8px 0; color: var(--muted); font-size: 12px; }
+.execution-card small { color: var(--muted); }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.55 var(--body); }
 button, input, select { font: inherit; }

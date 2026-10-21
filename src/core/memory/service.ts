@@ -212,6 +212,7 @@ export class MemoryService {
     return {
       record: parseJsonObject(JSON.stringify({ ...record, report: this.store.work.report(projectId, recordId) ?? null })), provenance: "agent_report",
       knowledge_status: recordStatus(record), verified: false,
+      executions: this.store.executions.list(projectId, record.run_id, 0, recordId),
     };
   }
 
@@ -220,6 +221,11 @@ export class MemoryService {
     const run = await this.store.getRun(projectId, runId);
     if (!run) throw new MemoryError("not_found", "Run not found in this project.");
     return { run: parseJsonObject(JSON.stringify({ ...run, ...this.store.work.identity(projectId, runId) })), project_revision: project.revision, capture: "agent_reports_only", pending_queue_supported: false };
+  }
+
+  async listExecutions(projectId: string, runId: string, offset: number): Promise<JsonObject> {
+    await this.getStatus(projectId, runId);
+    return this.store.executions.list(projectId, runId, offset);
   }
 
   private async requireProject(id: string): Promise<Project> {

@@ -172,6 +172,25 @@ the recording gate and all memory writes, including the final summary.
 
 ## Record meaningful progress
 
+### Optional direct execution observations
+
+When the local `skilly exec` runner and its DB/project paths are explicitly known,
+use it for authorized local checks with this task's saved `run_id`; an optional
+`--record-id` must be a saved record from the same task. The syntax is
+`skilly exec --db /absolute/db --project /absolute/root --run-id UUID [--record-id UUID] -- executable args`.
+Do not guess a DB path, read private config, install hooks, bypass trust, run a new
+command just to create evidence, or use this as a substitute when MCP recording
+is blocked. It inherits the caller's permissions and is not a sandbox.
+
+Read `memory_list_executions` when exposed, or `memory_get_evidence.executions`
+for a directly linked record. Only the runner supplies process exit facts; never
+manufacture them through notes or supplied JSON. Exit 0 means a process exited
+normally, not that a feature is verified. Keep the human report's checks as AI
+reports, linking known execution IDs in technical references when supported.
+Arguments and output text are not stored. A missing/unconfirmed result is not
+proof of no execution. Never rerun a command to recover missing result storage.
+This path is opt-in and observes no commands outside explicit runner invocations.
+
 Call `memory_checkpoint` for decisions, important changes, issues, or next steps:
 `project_id`, `run_id`, concise stable feature `topic`, `kind`, `body`, and a unique
 `idempotency_key`. Avoid per-command/per-token writes and full logs.

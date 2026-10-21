@@ -111,6 +111,11 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       z.strictObject(runId),
       async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery) }),
     ),
+    memory_list_executions: define(
+      "Read direct local-runner process observations linked to this task. No execution or writes. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
+      true, z.strictObject({ ...runId, offset: z.int().min(0).max(1_000_000).default(0) }),
+      input => service.listExecutions(input.project_id, input.run_id, input.offset),
+    ),
   };
   if (recovery && retry) {
     const recoveryScope = {

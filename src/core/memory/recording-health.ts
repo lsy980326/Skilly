@@ -10,6 +10,7 @@ export function recordingCoverage() {
     received_writes: "receipts_and_retained_requests",
     unreceived_writes: "not_observable",
     execution_events: "not_collected",
+    explicit_process_results: "local_runner_only",
     missing_record_count: null,
     completeness: "unknown",
     live_execution: "unknown",

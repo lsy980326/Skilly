@@ -53,7 +53,9 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   section("제약·확인 필요", report?.limitations, "별도 제약 보고가 없습니다. 제한이 없다는 뜻은 아닙니다.");
   const evidence = element("section", "feature-section feature-evidence");
   evidence.append(element("h3", "", "실제로 확인된 실행 근거"),
-    element("p", "", "미수집 · 현재 Skilly는 명령 실행 결과를 자동 수집하지 않습니다. 아래 검사 보고와 저장 영수증은 실제 실행 근거와 구분합니다."),
+    element("p", "", feature.execution_evidence?.status === "observations_available"
+      ? `직접 실행 관측 ${feature.execution_evidence.total}건 · 종료 미확인 ${feature.execution_evidence.unconfirmed}건. 연결 작업에서 확인하세요. 기능 검증 완료를 뜻하지 않습니다.`
+      : "미수집 · 연결 작업에 수집된 실행 결과가 없습니다. Skilly 실행기를 거치지 않은 명령은 관측하지 않습니다. 아래 AI 보고와 구분합니다."),
     element("h4", "", "AI가 보고한 검사 결과 · 미검증"));
   if (report?.checks?.length) {
     const list = element("ul");

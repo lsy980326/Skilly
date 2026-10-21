@@ -1,4 +1,5 @@
 import { SqliteSkills } from "./skills.js";
+import { SqliteExecutions } from "./executions.js";
 import { DatabaseSync, type SQLOutputValue, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import {
@@ -14,6 +15,7 @@ export class SqliteMemoryStore implements MemoryStore {
   private readonly db: DatabaseSync;
   readonly work: SqliteWorkReader;
   readonly skills: SqliteSkills;
+  readonly executions: SqliteExecutions;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
@@ -23,6 +25,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db);
       this.skills = new SqliteSkills(this.db);
+      this.executions = new SqliteExecutions(this.db);
     } catch (error) {
       this.db.close();
       throw storageError(error);
@@ -37,8 +40,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 5) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 5) return;
+    if (version > 6) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 6) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -60,6 +63,7 @@ export class SqliteMemoryStore implements MemoryStore {
       if (lockedVersion < 5) {
         this.db.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       }
+      if (lockedVersion < 6) this.db.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

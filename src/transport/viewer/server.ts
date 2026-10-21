@@ -85,6 +85,8 @@ export async function startViewer(options: { db: string; port?: number }) {
       }
       if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url))); return; }
       const detail = /^\/api\/runs\/([^/]+)$/.exec(url.pathname);
+      const executions = /^\/api\/runs\/([^/]+)\/executions$/.exec(url.pathname);
+      if (executions?.[1]) { json(response, 200, reader.executions(project, executions[1], offset(url))); return; }
       if (detail?.[1]) {
         const raw = url.searchParams.get("before");
         if (raw !== null && !/^\d{1,16}$/.test(raw)) throw new ViewerError("invalid_input", "기록 위치가 올바르지 않습니다.");
