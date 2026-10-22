@@ -16,6 +16,7 @@ const assets = new Map([
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
   ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
+  ["/document-batch.js", { file: "document-batch.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {

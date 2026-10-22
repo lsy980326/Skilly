@@ -41,15 +41,18 @@ export class ViewerDocuments {
     // Sign the reviewed snapshot and destination. A changed file or target needs a fresh preview.
     const snapshot = JSON.stringify([input.project_id, target.repository, target.environment, input.component_key, input.path, preview.source.sha256]);
     const signature = createHmac("sha256", this.secret).update(snapshot).digest("hex");
-    if (operation === "preview") return { ...preview, preview_token: signature };
+    const key = "viewer-md:v1:" + context.hash(snapshot);
+    const existing = reader.documentStatus(input.project_id, target, preview.source, input.text, key);
+    if (operation === "preview") return { ...preview, preview_token: signature, existing };
     const supplied = Buffer.from(input.preview_token ?? ""); const expected = Buffer.from(signature);
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
       throw new ViewerError("invalid_input", "미리보기 이후 문서나 저장 위치가 바뀌었습니다. 다시 미리보기해 주세요.");
+    if (existing.state === "stored") return { status: "persisted", run_id: existing.run_id, import_run_id: existing.import_run_id, record_ids: existing.record_ids,
+      report_origin: "retrospective", claims_verified: false, source_path_verified: false, source: preview.source };
     const store = new SqliteMemoryStore(this.db);
     try {
       const service = new MemoryService(store, context);
       const importer = new DocumentImporter(store, context);
-      const key = "viewer-md:v1:" + context.hash(snapshot);
       const started = await service.beginTask({ project_id: input.project_id, repository: target.repository, environment: target.environment,
         mode: "change", actor: "로컬 화면", title: `문서 가져오기 · ${input.path.slice(-100)}`,
         goal: `선택한 문서 ${input.path}의 원문을 소급·미검증 자료로 보관합니다. 원본 파일을 수정하지 않습니다. 내용 SHA-256: ${preview.source.sha256}`,

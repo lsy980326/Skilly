@@ -448,6 +448,16 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .import-caution { margin: 0; padding: 12px; border-left: 2px solid var(--attention); background: var(--warning); font-size: 11px; line-height: 1.8; }
 .import-preview { min-width: 0; background: var(--canvas); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
 .import-preview h3 { font-size: 12px; margin: 0 0 8px; }
+.import-files { list-style: none; padding: 0; margin: 0 0 22px; max-height: 240px; overflow: auto; }
+.import-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.import-file-pick { text-align: left; min-width: 0; overflow-wrap: anywhere; border: 0; padding: 2px 0; color: var(--ink); background: transparent; font: 600 12px var(--body); cursor: pointer; }
+.import-file-pick[aria-pressed="true"] { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+.import-file-state { align-self: start; padding: 3px 6px; border-radius: 4px; background: var(--wash); font-size: 10px; }
+.import-file small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.import-file[data-state="saved"] .import-file-state { background: var(--wash); color: var(--accent); }
+.import-file[data-state="save_error"] .import-file-state, .import-file[data-state="preview_error"] .import-file-state, .import-file[data-state="read_error"] .import-file-state { background: var(--warning); color: var(--attention); }
+.import-file[data-state="saving"] { border-color: var(--accent); }
+.import-file[data-state="saving"] .import-file-state { color: var(--accent); animation: record-halo 2.8s ease-in-out infinite; }
 .import-preview-meta { font: 10px/1.7 var(--mono); color: var(--muted); overflow-wrap: anywhere; min-height: 34px; }
 .import-original { font: 12px/1.9 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 16px 0 0; max-height: 300px; min-height: 160px; overflow: auto; }
 .import-footer { display: flex; gap: 12px; justify-content: flex-end; align-items: center; border-top: 1px solid var(--line); margin-top: 25px; padding-top: 18px; }
@@ -456,3 +466,4 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .document-import button:disabled { cursor: default; }
 @media(max-width:700px) { .document-import { width: calc(100vw - 20px); padding: 20px; } .import-grid { grid-template-columns: 1fr; gap: 18px; } .import-footer { flex-wrap: wrap; } .import-status { max-width: none; width: 100%; } .import-original { max-height: 220px; } .top-actions { gap: 8px; } }
 @media(prefers-reduced-motion:reduce) { .flow-step.current::after, .flow-step.current .flow-point, .import-steps .current::before { animation: none; } .flow-step.current::after { display: none; } }
+@media(prefers-reduced-motion:reduce) { .import-file[data-state="saving"] .import-file-state { animation: none; } }

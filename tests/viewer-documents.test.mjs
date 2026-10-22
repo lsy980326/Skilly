@@ -54,6 +54,7 @@ test('an import retry finishes its own partial task; a previous MCP import is re
  const input={...f.input,path:'docs/partial.md',text:'# 중간 저장 실패 재시도'};const p=await f.post('preview',input),payload={...input,preview_token:p.data.preview_token};
  const db=new DatabaseSync(f.path);t.after(()=>db.close());db.exec("CREATE TRIGGER fail_finish BEFORE INSERT ON records WHEN NEW.topic='task-summary' BEGIN SELECT RAISE(ABORT,'fixture'); END");
  assert.equal((await f.post('import',payload)).status,503);const count=db.prepare("SELECT count(*) n FROM records WHERE topic='document-import'").get().n;
+ assert.equal((await f.post('preview',input)).data.existing.state,'completion_pending');
  db.exec('DROP TRIGGER fail_finish');const retried=await f.post('import',payload);assert.equal(retried.status,200);assert.equal(db.prepare("SELECT count(*) n FROM records WHERE topic='document-import'").get().n,count);
  assert.equal((await f.call('memory_get_status',{project_id:f.pid,run_id:retried.data.import_run_id})).run.state,'completed');
 });
@@ -78,4 +79,13 @@ test('an empty project imports into an explicit new scope without preview writes
  assert.deepEqual(db.prepare('SELECT * FROM projects WHERE id=?').get(f.pid),projects.find(p=>p.id===f.pid));
  const fresh=db.prepare('SELECT * FROM projects WHERE id=?').get(pid);assert.deepEqual({...fresh,revision:0},{...projects.find(p=>p.id===pid)});assert.deepEqual(readFileSync(source),before);
  const after=await(await fetch(f.server.origin+'/api/documents/targets?project='+pid,{headers:f.headers})).json();assert.equal(after.items[0].repository,'new-repo');
+});
+
+test('duplicate previews are read-only and exact-scope; duplicate imports reuse originals without extra tasks',async t=>{
+ const f=await setup(t),p=await f.post('preview',f.input);assert.equal(p.data.existing.state,'new');
+ const saved=await f.post('import',{...f.input,preview_token:p.data.preview_token});assert.equal(saved.status,200);
+ const db=new DatabaseSync(f.path);t.after(()=>db.close());const rows=()=>db.prepare('SELECT count(*) n FROM records').get().n;const before=rows();
+ const again=await f.post('preview',f.input);assert.equal(again.data.existing.state,'stored');assert.deepEqual(again.data.existing.record_ids,saved.data.record_ids);assert.equal(rows(),before);
+ assert.deepEqual(await f.post('import',{...f.input,preview_token:again.data.preview_token}),saved);assert.equal(rows(),before);
+ for(const patch of [{text:f.input.text+'new'},{path:'docs/another.md'},{component_key:''}])assert.equal((await f.post('preview',{...f.input,...patch})).data.existing.state,'new');
 });

@@ -13,23 +13,27 @@ export function markdownParts(text: string): string[] {
   return parts;
 }
 
+export function markdownReceiptIdentity(scope: Pick<Run, "repository" | "environment">, source: MarkdownSource, text: string, hash: Context["hash"]) {
+  return { key: "md:v1:" + hash([scope.repository, scope.environment, source.source_root, source.path, source.sha256]),
+    hash: hash({ operation: "import_markdown", repository: scope.repository, environment: scope.environment,
+      source_root: source.source_root, path: source.path, sha256: source.sha256, text }) };
+}
+
 /** An imported document is retrospective source material, never current verified knowledge. */
 export class DocumentImporter {
   constructor(private readonly store: MemoryStore, private readonly context: Context) {}
   async stored(projectId: string, scope: Pick<Run, "repository" | "environment">, source: MarkdownSource, text: string) {
-    const key = "md:v1:" + this.context.hash([scope.repository, scope.environment, source.source_root, source.path, source.sha256]);
+    const { key, hash } = markdownReceiptIdentity(scope, source, text, this.context.hash);
     const existing = await this.store.getReceipt(projectId, key);
-    if (existing && existing.hash !== this.context.hash({ operation: "import_markdown", repository: scope.repository, environment: scope.environment,
-      source_root: source.source_root, path: source.path, sha256: source.sha256, text }))
+    if (existing && existing.hash !== hash)
       throw new MemoryError("idempotency_conflict", "Document identity conflicts with a saved import.");
     return existing?.result;
   }
   async import(projectId: string, runId: string, source: MarkdownSource, text: string): Promise<JsonObject> {
     const run = await this.store.getRun(projectId, runId);
     if (!run || run.state !== "active") throw new MemoryError("run_closed", "Use this project's active task for document import.");
-    const key = "md:v1:" + this.context.hash([run.repository, run.environment, source.source_root, source.path, source.sha256]);
+    const { key, hash } = markdownReceiptIdentity(run, source, text, this.context.hash);
     // Caller run does not create duplicates of the same source bytes/root in this scope.
-    const hash = this.context.hash({ operation: "import_markdown", repository: run.repository, environment: run.environment, source_root: source.source_root, path: source.path, sha256: source.sha256, text });
     for (let attempt = 0; attempt < 3; attempt++) {
       const existing = await this.store.getReceipt(projectId, key);
       if (existing) {

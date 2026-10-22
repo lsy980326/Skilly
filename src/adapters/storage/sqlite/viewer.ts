@@ -1,4 +1,6 @@
 import { SqliteSkills } from "./skills.js";
+import { markdownReceiptIdentity, type MarkdownSource } from "../../../core/documents/importer.js";
+import { createMemoryContext } from "./context.js";
 import { SqliteExecutions } from "./executions.js";
 import { lstatSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -78,6 +80,23 @@ export class SqliteViewer {
     const component = componentKey ? task.components.find(item => item.key === componentKey) : undefined;
     if (componentKey && !component) throw new ViewerError("invalid_input", "선택한 작업 공간의 구성요소를 다시 확인해 주세요.");
     return { repository: task.repository, environment: task.environment, component };
+  }
+
+  documentStatus(projectId: string, scope: { repository: string; environment: string }, source: MarkdownSource, body: string, importKey: string) {
+    const identity = markdownReceiptIdentity(scope, source, body, createMemoryContext().hash);
+    const receipt = this.db.prepare("SELECT payload_hash,result_json FROM receipts WHERE scope=? AND idempotency_key=?").get(projectId, identity.key);
+    if (!receipt) return { state: "new" as const };
+    if (text(receipt, "payload_hash") !== identity.hash) throw new ViewerError("unavailable", "기존 문서의 저장 내용을 확인하지 못했습니다.");
+    const result: unknown = JSON.parse(text(receipt, "result_json"));
+    if (!result || typeof result !== "object" || !("record_ids" in result) || !Array.isArray(result.record_ids) || !result.record_ids.length
+      || result.record_ids.some(id => typeof id !== "string" || !UUID.test(id))) throw new ViewerError("unavailable", "기존 문서 연결을 확인하지 못했습니다.");
+    const ids = result.record_ids as string[];
+    const records = ids.map(id => this.db.prepare("SELECT run_id,repository,environment,source_fingerprint FROM records WHERE project_id=? AND id=?").get(projectId, id));
+    if (records.some(row => !row || row["repository"] !== scope.repository || row["environment"] !== scope.environment || row["source_fingerprint"] !== source.sha256))
+      throw new ViewerError("unavailable", "기존 원문 기록을 확인하지 못했습니다.");
+    const own = this.db.prepare("SELECT r.id,r.state FROM receipts p JOIN runs r ON r.project_id=p.scope AND r.id=json_extract(p.result_json,'$.run.id') WHERE p.scope=? AND p.idempotency_key=?").get(projectId, importKey);
+    return { state: own?.["state"] === "active" ? "completion_pending" as const : "stored" as const,
+      run_id: text(records[0]!, "run_id"), import_run_id: own ? text(own, "id") : text(records[0]!, "run_id"), record_ids: ids };
   }
 
   private version(): number {

@@ -67,7 +67,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  const documents = readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${documents}\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
@@ -499,7 +499,7 @@ test('only unfinished storage stages have a current flow point; closed tasks sta
 test('empty-project import keeps a selected file while its new destination is edited', async () => {
  const body=new Element('body');let savedInput;
  const doc={body,createElement:tag=>{const n=new Element(tag);n.showModal=()=>{};n.close=()=>{};return n;}};
- const source=readFileSync(new URL('../ui/documents.js',import.meta.url),'utf8').replace('export function','function');
+ const source=readFileSync(new URL('../ui/document-batch.js',import.meta.url),'utf8').replace('export function','function')+'\n'+readFileSync(new URL('../ui/documents.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace('export function','function');
  const ui=runInNewContext(source+'; createDocumentImport', {TextDecoder})({document:doc,request:async(url,options)=>{
   if(!options)return {items:[]};savedInput=JSON.parse(options.body);return {preview_token:'preview',source:{bytes:10,sha256:'hash'},parts:1};
  },onSaved:()=>{}});
