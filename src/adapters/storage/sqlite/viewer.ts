@@ -58,8 +58,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v6)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v7)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }

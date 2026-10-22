@@ -40,8 +40,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 6) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 6) return;
+    if (version > 7) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 7) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -64,6 +64,7 @@ export class SqliteMemoryStore implements MemoryStore {
         this.db.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       }
       if (lockedVersion < 6) this.db.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 7) this.db.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -173,8 +174,7 @@ export class SqliteMemoryStore implements MemoryStore {
           this.db.prepare("INSERT INTO run_actors VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING").run(run.id, run.actor);
         }
       }
-      if (change.record) {
-        const r = change.record;
+      for (const r of [...(change.record ? [change.record] : []), ...(change.records ?? [])]) {
         this.db.prepare(`INSERT INTO records
           (id, project_id, run_id, topic, kind, body, environment, repository, source_fingerprint, observed_at, recorded_at, supersedes, superseded_by, report_origin)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -190,6 +190,7 @@ export class SqliteMemoryStore implements MemoryStore {
         }
       }
       if (change.work) writeWork(this.db, project.id, change.work);
+      for (const report of change.reports ?? []) writeWork(this.db, project.id, report);
       this.db.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?)").run(receipt.scope, receipt.key, receipt.hash, JSON.stringify(receipt.result));
       this.db.exec("COMMIT");
       return "committed";

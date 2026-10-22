@@ -13,7 +13,7 @@ import { loadProjectBinding } from "../../adapters/project/binding.js";
 const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly serve [--db /absolute/path/memory.sqlite] [--project /absolute/project]
   skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
-  skilly exec --db /absolute/memory.sqlite --project /absolute/project --run-id <UUID> [--record-id <UUID>] [--timeout-ms 60000] -- executable args
+  skilly exec --db /absolute/memory.sqlite --project /absolute/project --run-id <UUID> [--record-id <UUID>] [--timeout-ms 60000] [--test-format vitest] -- executable args
   skilly backup --db /absolute/memory.sqlite --output /absolute/new-backup-directory
   skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
   skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory

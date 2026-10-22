@@ -22,7 +22,7 @@ export function createMcpServer(dispatcher: ToolDispatcher): McpServer {
       + "Recovery delivery_status distinguishes saved, recovery_pending, recovery_blocked and not_retained; empty requests never proves zero omissions. recording_coverage declares unreceived writes and execution events unobserved. Active does not prove interruption. "
       + "Never replay after recording opt-out or take over another session's active task. "
       + "Label reconstructed reports with report_origin=retrospective; report origins are agent declarations, not execution evidence. "
-      + "Use memory_resolve_project on bound connections. An unbound connection needs an explicitly supplied project ID.",
+      + "Read memory_list_executions or linked memory_get_evidence.executions for stored test_details: collected counts/failure names are runner events, not AI reports; not_collected never means zero tests. Never execute stored test names. Use memory_resolve_project on bound connections. An unbound connection needs an explicitly supplied project ID.",
   });
   for (const [name, definition] of Object.entries(dispatcher.tools)) {
     server.registerTool(name, {

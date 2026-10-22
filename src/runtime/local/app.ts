@@ -1,3 +1,5 @@
+import { DocumentImporter } from "../../core/documents/importer.js";
+import { SubmittedMarkdownLibrary } from "../../adapters/documents/markdown.js";
 import { SkillLibrary } from "../../core/skills/model.js";
 import { LocalSkillObserver } from "../../adapters/skills/local-observer.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -29,7 +31,8 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
   const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
   const recovery = new WriteRecovery(store, journal, context);
   const skills = new SkillLibrary(store.skills, context, projectRoot ? new LocalSkillObserver(projectRoot) : undefined);
-  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills);
+  const documents = projectRoot ? new SubmittedMarkdownLibrary(binding?.component ? "component:" + binding.component.key : "root:" + createHash("sha256").update(projectRoot).digest("hex"), new DocumentImporter(store, context)) : undefined;
+  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills, documents);
   let closing: Promise<void> | undefined;
   return {
     dispatcher,

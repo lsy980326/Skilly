@@ -78,6 +78,29 @@ export function renderExecutions(data, { element, date, more }) {
     card.append(top, element("p", "execution-meta", `${date(item.started_at)}${item.duration_ms === null ? " · 종료 여부 확인 필요" : ` · ${(item.duration_ms / 1000).toFixed(2)}초`}`));
     card.append(element("small", "", `관측한 출력 ${item.stdout_bytes}B / 오류 출력 ${item.stderr_bytes}B · 원문 미보관`));
     if (item.output_complete === 0) card.append(element("p", "catalog-note", "출력 스트림을 끝까지 확인하지 못했습니다. 크기·해시는 관측한 범위만 나타냅니다."));
+    const details = item.test_details;
+    if (details?.status === "collected") {
+      const tests = element("section", "test-results");
+      tests.setAttribute("aria-label", "수집된 검사 상세");
+      tests.append(element("strong", "", `검사 상세 수집 · ${details.framework === "vitest" ? "Vitest" : "Node.js"}`));
+      const counts = element("div", "test-counts");
+      for (const [key, label] of [["passed", "통과"], ["failed", "실패"], ["cancelled", "취소"], ["skipped", "건너뜀"], ["todo", "예정"]]) {
+        counts.append(element("span", `test-count ${key}`, `${label} ${details.counts[key]}`));
+      }
+      tests.append(counts, element("small", "", `테스트 ${details.counts.tests}개 · 스위트 ${details.counts.suites}개 · 실행기 종합 판정: ${details.suite_success ? "성공" : "실패"}`));
+      if (details.failures.length) {
+        const list = element("ul", "test-failures");
+        for (const name of details.failures) list.append(element("li", "", name));
+        tests.append(element("h4", "", "실패 항목"), list);
+      }
+      if (details.failures_truncated) tests.append(element("p", "catalog-note", "실패 이름은 최대 20개·각 200자입니다. 일부 항목 또는 이름이 생략됐습니다."));
+      tests.append(element("p", "catalog-note", "테스트 실행기의 집계입니다. 실패 목록에는 상위 테스트·스위트가 함께 나올 수 있습니다. 기능 검증 완료를 뜻하지 않습니다."));
+      card.append(tests);
+    } else {
+      const reason = { unsupported_command: "지원 대상이 아닌 명령 또는 별도 리포터 사용", legacy: "이전 관측에는 검사 상세가 없음", unfinished: "종료 결과 미확인",
+        missing_summary: "최종 테스트 집계 없음", interrupted: "중단 또는 불완전한 수집", invalid_report: "올바른 집계를 확인하지 못함", limit_exceeded: "수집 크기 제한 초과" }[details?.reason] ?? "상세 조회 정보 없음";
+      card.append(element("p", "test-unavailable", `검사 상세 미수집 · ${reason}. 통과·실패 0개라는 뜻은 아닙니다.`));
+    }
     if (item.record_id) card.append(element("code", "feature-source", `연결된 AI 기록 ${item.record_id}`));
     const raw = element("details", "machine-report");
     raw.append(element("summary", "", "실행 관측 정보·ID"), element("pre", "machine-data", JSON.stringify(item, null, 2)));

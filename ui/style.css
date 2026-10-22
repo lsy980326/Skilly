@@ -406,3 +406,13 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .validation-counts { display: flex; gap: 7px 18px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--line); font: 11px var(--body); color: var(--muted); }
 .validation-evidence small { display: block; color: var(--muted); font-size: 11px; line-height: 1.7; }
 .validation-evidence .validation-caution { color: var(--attention); }
+
+/* Test-runner details keep counts separate from agent-written reports. */
+.test-results { margin-top: 14px; padding: 14px; border: 1px solid #d9d1eb; border-radius: 10px; background: #f8f6fc; }
+.test-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.test-count { padding: 4px 8px; border-radius: 6px; background: #eeeaf5; font-variant-numeric: tabular-nums; }
+.test-count.passed { color: #23634c; background: #e4f1e9; }
+.test-count.failed { color: #9c3333; background: #f9e6e5; }
+.test-failures { padding-left: 20px; overflow-wrap: anywhere; }
+.test-failures li + li { margin-top: 6px; }
+.test-unavailable { color: var(--muted); font-size: 12px; }

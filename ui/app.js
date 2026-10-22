@@ -15,8 +15,10 @@ let executionData = { items: [], next_offset: null };
 let featureKey = null, lastFeature = "";
 let navigationEpoch = 0;
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
+let componentsPaged = false, featuresPaged = false;
+let historyGap = false, executionsPaged = false;
 let projectsPaged = false, listPaged = false, detailPaged = false, lastDetail = "";
-const paged = () => projectsPaged || listPaged || detailPaged;
+const paged = () => projectsPaged || componentsPaged || featuresPaged || listPaged || detailPaged;
 const statusLabels = { recent: "최근 활동", unfinished: "갱신 확인 필요", completed: "완료", interrupted: "중단" };
 const originLabels = { contemporaneous: "당시 기록", retrospective: "소급 기록", unspecified: "작성 시점 미지정" };
 const kindLabels = { note: "메모", decision: "결정", change: "변경", issue: "문제", summary: "요약" };
@@ -79,12 +81,21 @@ function badge(label, style, dot = false) {
   return node;
 }
 async function api(path) {
-  const response = await fetch(path, { headers: session.headers(), credentials: "omit", cache: "no-store" });
-  if (response.status === 401) session.reject();
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "기록을 읽지 못했습니다.");
-  session.confirm();
-  return result;
+  const controller = new AbortController();
+  let timeout;
+  const request = async () => {
+    const response = await fetch(path, { headers: session.headers(), credentials: "omit", cache: "no-store", signal: controller.signal });
+    if (response.status === 401) session.reject();
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "기록을 읽지 못했습니다.");
+    session.confirm();
+    return result;
+  };
+  try {
+    return await Promise.race([request(), new Promise((_, reject) => {
+      timeout = setTimeout(() => { controller.abort(); reject(new Error("조회 시간이 초과됐습니다. 다시 새로고침해 주세요.")); }, 10000);
+    })]);
+  } finally { clearTimeout(timeout); }
 }
 function showError(error) {
   $("#connection-error").textContent = error.message || "연결을 확인하고 새로고침해 주세요.";
@@ -93,7 +104,7 @@ function showError(error) {
 }
 function showSynced() {
   $("#connection-error").hidden = true;
-  $("#sync-status").textContent = `${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })} 확인 · ${paged() ? "이전 목록 조회 중" : "15초마다 갱신"}`;
+  $("#sync-status").textContent = `${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} 확인 · ${paged() ? "이전 목록 유지 · 상세 자동 갱신" : "15초마다 갱신"}`;
   if (session.persistenceLimited) $("#sync-status").textContent += " · 브라우저 저장 제한: 새로고침 시 다시 연결해 주세요";
 }
 function renderProjects() {
@@ -114,9 +125,9 @@ function renderProjects() {
   }
   $("#more-projects").hidden = state.nextProjects === null;
 }
-async function loadProjects(more = false) {
+async function loadProjects(more = false, preserve = false) {
   const data = await api(`/api/projects?offset=${more ? state.nextProjects : 0}`);
-  if (more) {
+  if (more || preserve) {
     const byId = new Map(state.projects.map(project => [project.id, project]));
     data.items.forEach(project => byId.set(project.id, project));
     state.projects = [...byId.values()];
@@ -127,6 +138,7 @@ async function loadProjects(more = false) {
 async function selectProject(id) {
   if (state.project === id) return;
   navigationEpoch++;
+  componentsPaged = false; featuresPaged = false; executionsPaged = false; historyGap = false;
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all";
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
   featureKey = null; lastFeature = "";
@@ -153,7 +165,7 @@ async function selectProject(id) {
   await loadCatalog();
   await loadList();
 }
-async function loadCatalog(moreView) {
+async function loadCatalog(moreView, preserve = false) {
   if (!state.project) return;
   const request = ++catalogRequest, project = state.project;
   const views = moreView ? [moreView] : ["components", "features"];
@@ -164,10 +176,13 @@ async function loadCatalog(moreView) {
   if (request !== catalogRequest || project !== state.project) return;
   views.forEach((view, index) => {
     const data = responses[index];
+    const preserveView = preserve && (view === "components" ? componentsPaged : featuresPaged);
     state.summary = data.summary;
-    state[view] = moreView ? [...new Map([...state[view], ...data.items].map(item => [item.key, item])).values()] : data.items;
-    if (view === "components") state.nextComponents = data.next_offset;
-    else state.nextFeatures = data.next_offset;
+    state[view] = moreView ? [...new Map([...state[view], ...data.items].map(item => [item.key, item])).values()] : preserveView ? [...new Map([...data.items, ...state[view].filter(old => !data.items.some(item => item.key === old.key))].map(item => [item.key, item])).values()] : data.items;
+    if (!preserveView || moreView) {
+      if (view === "components") state.nextComponents = data.next_offset;
+      else state.nextFeatures = data.next_offset;
+    }
   });
   if (!moreView) { state.overviewTasks = responses[views.length].items; state.overviewPartial = responses[views.length].next_offset !== null; }
   renderCatalog();
@@ -274,7 +289,7 @@ function renderTasks() {
 }
 async function openRun(id) {
   navigationEpoch++;
-  state.run = id; detailPaged = false; lastDetail = "";
+  state.run = id; detailPaged = false; executionsPaged = false; historyGap = false; lastDetail = "";
   if (state.view === "runs") renderTasks();
   $("#detail").replaceChildren(element("p", "loading", "상세 기록을 불러오는 중…"));
   $(".detail-panel").scrollTop = 0;
@@ -311,14 +326,18 @@ function showFeature(key) {
       await openRun(id);
     })().catch(showError); } }));
 }
-async function loadDetail(more = false) {
+async function loadDetail(more = false, preserve = false) {
   if (!state.project || !state.run) return;
   const request = ++detailRequest, project = state.project, run = state.run;
   const data = await api(`/api/runs/${run}?project=${project}${more ? `&before=${state.nextRecords}` : ""}`);
   if (request !== detailRequest || project !== state.project || run !== state.run) return;
-  state.records = more ? [...state.records, ...data.records.items] : data.records.items;
-  state.nextRecords = data.records.next_before;
-  executionData = data.executions ?? null;
+  if (preserve && state.records.length && data.records.items.length && !data.records.items.some(item => state.records.some(old => old.id === item.id))) historyGap = true;
+  if (!more && !preserve) historyGap = false;
+  state.records = more ? [...state.records, ...data.records.items] : preserve ? [...data.records.items, ...state.records.filter(old => !data.records.items.some(item => item.id === old.id))] : data.records.items;
+  if (!preserve) state.nextRecords = data.records.next_before;
+  executionData = preserve && executionsPaged && executionData?.items && data.executions?.items
+    ? { ...data.executions, items: [...data.executions.items, ...executionData.items.filter(old => !data.executions.items.some(item => item.id === old.id))] }
+    : data.executions ?? null;
   const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData]);
   if (fingerprint === lastDetail) return;
   lastDetail = fingerprint;
@@ -372,13 +391,14 @@ function renderDetail(task, counts = {}, animateNew = true) {
     try {
       const page = await api(`/api/runs/${run}/executions?project=${project}&offset=${executionData.next_offset}`);
       if (project !== state.project || run !== state.run || request !== detailRequest) return;
-      executionData = { ...page, items: [...executionData.items, ...page.items] };
-      detailPaged = true; renderDetail(task, counts, false);
+      executionData = { ...page, items: [...new Map([...executionData.items, ...page.items].map(item => [item.id, item])).values()] };
+      detailPaged = true; executionsPaged = true; renderDetail(task, counts, false);
     } catch (error) { showError(error); }
   } }));
   const heading = element("div", "timeline-heading");
   heading.append(element("h3", "", "기록 타임라인"), element("span", "", "최근 저장 순 · AI가 작성한 보고"));
   panel.append(heading);
+  if (historyGap) panel.append(element("p", "catalog-note", "새 기록이 많아 이전 페이지와 최신 기록 사이에 미조회 구간이 있을 수 있습니다. 상단 새로고침으로 최신부터 다시 읽어 주세요."));
   if (!state.records.length) panel.append(empty("아직 상세 기록이 없습니다", "작업 시작만 저장됐습니다. 변경·종료 보고가 들어오면 나타납니다."));
   state.records.forEach((record, index) => {
     const entry = element("article", `timeline-entry ${record.report_origin}${animateNew && sameTask && !priorRecords.has(record.id) ? " newly-saved" : ""}`);
@@ -395,7 +415,13 @@ function renderDetail(task, counts = {}, animateNew = true) {
     tags.append(badge(originLabels[record.report_origin] || originLabels.unspecified, record.report_origin),
       badge("미검증", ""));
     if (record.superseded_by) tags.append(badge("정정된 기록", "warning"));
+    if (record.report?.import_source) tags.append(badge("가져온 문서 · 원문 미검증", "retrospective"));
     details.append(summary, tags);
+    if (record.report?.import_source) {
+      const source = record.report.import_source;
+      details.append(element("p", "catalog-note", `출처: ${source.path} · ${source.part}/${source.parts} 조각 · ${source.bytes}B · ${source.source_root.startsWith("component:") ? source.source_root.replace("component:", "구성요소 ") : "프로젝트 원문"}`),
+        element("code", "feature-source", `SHA-256 ${source.sha256}`), element("small", "", "호스트가 전달한 원문 · 파일 경로의 실제 출처는 자동 확인하지 않았습니다."));
+    }
     if (record.report) {
       details.append(element("p", "report-label", "사람용 요약"));
       details.append(element("p", "report-summary", record.report.summary));
@@ -486,15 +512,19 @@ function renderRecovery(status) {
     container.append(card);
   }
 }
-async function refresh() {
+async function refresh(automatic = false) {
   if (refreshing) return;
   refreshing = true; $("#refresh").disabled = true; $("#sync-dot").classList.add("refreshing");
+  $("#sync-status").textContent = "기록을 새로 확인하는 중…";
   try {
-    await loadProjects();
+    await loadProjects(false, automatic && projectsPaged);
     if (!state.project && state.projects[0]) await selectProject(state.projects[0].id);
     else {
-      if (state.project) { await loadCatalog(); await loadList(); }
-      if (state.run) await loadDetail();
+      if (state.project) {
+        await loadCatalog(undefined, automatic);
+        if (!automatic || !listPaged || state.view === "features") await loadList();
+      }
+      if (state.run) await loadDetail(false, automatic && detailPaged);
     }
     showSynced();
   } catch (error) { showError(error); }
@@ -503,13 +533,13 @@ async function refresh() {
 function schedule() {
   clearTimeout(timer);
   if (!document.hidden) timer = setTimeout(async () => {
-    if (!document.hidden && !paged() && document.activeElement !== $("#search")) await refresh();
+    if (!document.hidden) await refresh(true);
     else if (!document.hidden) refreshRelativeTimes();
     schedule();
   }, 15_000);
 }
-$("#refresh").addEventListener("click", () => { projectsPaged = false; listPaged = false; detailPaged = false; void refresh(); });
-$(".brand").addEventListener("click", event => { event.preventDefault(); projectsPaged = false; listPaged = false; detailPaged = false; void refresh(); });
+$("#refresh").addEventListener("click", () => { projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; void refresh(); });
+$(".brand").addEventListener("click", event => { event.preventDefault(); projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; void refresh(); });
 $("#more-projects").addEventListener("click", async () => {
   projectsPaged = true;
   try { await loadProjects(true); showSynced(); } catch (error) { showError(error); }
@@ -518,6 +548,7 @@ $("#more-tasks").addEventListener("click", async () => {
   listPaged = true;
   try {
     if (state.view === "features") {
+      featuresPaged = true;
       const project = state.project, epoch = navigationEpoch;
       await loadCatalog("features");
       if (state.project !== project || state.view !== "features" || navigationEpoch !== epoch) return;
@@ -547,7 +578,7 @@ for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"]
   $(id).addEventListener("click", () => { void changeView(view).catch(showError); });
 }
 $("#more-components").addEventListener("click", async () => {
-  projectsPaged = true;
+  componentsPaged = true;
   try { await loadCatalog("components"); showSynced(); } catch (error) { showError(error); }
 });
 for (const field of ["component", "feature"]) {
@@ -570,7 +601,7 @@ document.addEventListener("keydown", event => {
   }
 });
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshRelativeTimes();
+  if (!document.hidden) { refreshRelativeTimes(); void refresh(true); }
   schedule();
 });
 await refresh();

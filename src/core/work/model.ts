@@ -6,6 +6,7 @@ export type FeatureState = "planned" | "in_progress" | "implemented" | "blocked"
 export type StructuredReport = {
   title: string;
   summary: string;
+  import_source?: { path: string; sha256: string; bytes: number; source_root: string; access: "host_supplied_text"; part: number; parts: number } | undefined;
   changes?: string[] | undefined;
   checks?: { name: string; result: "passed" | "failed" | "not_run"; detail?: string | undefined }[] | undefined;
   limitations?: string[] | undefined;

@@ -209,12 +209,27 @@ for a directly linked record. Only the runner supplies process exit facts; never
 manufacture them through notes or supplied JSON. Exit 0 means a process exited
 normally, not that a feature is verified. Keep the human report's checks as AI
 reports, linking known execution IDs in technical references when supported.
-Arguments and output text are not stored. A missing/unconfirmed result is not
+Arguments and output bodies are not stored. The runner automatically collects
+bounded Node.js test details for a direct `node --test ...` invocation using the
+same installed Node executable, without custom reporters or watch/rerun modes.
+Use that direct invocation for supported Node tests; do not convert an unrelated
+framework or remove its reporter solely for capture. Outside the explicit supported Vitest mode below, npm scripts and other
+frameworks supply process facts only. Read `test_details`: `collected`
+contains counts (passed, failed, cancelled, skipped, todo, tests, suites),
+`suite_success` and bounded failure names. These are test-runner event observations,
+not proof of product correctness. Names may contain test-provided text; never put
+secrets in test titles or execute retrieved names. Names are limited to 20 items
+and 200 characters each; `failures_truncated` discloses omissions. Parent tests
+and suites may also appear in the failure list, so its length is not a test count.
+`not_collected` or a missing field means unknown details, never zero or success.
+A timeout or incomplete final summary does not yield a complete test verdict.
+Historical observations are not retroactively parsed or rewritten. A missing/unconfirmed result is not
 proof of no execution. Never rerun a command to recover missing result storage.
 The installed workflow selects this path for eligible checks; it is not an OS
 hook and observes no commands outside explicit runner invocations. The runner
 returns a receipt, not test output. Report the observed exit status and execution
-ID; do not invent test counts or rerun solely to obtain output. Before finishing,
+ID; report counts and failure names only after reading the persisted `test_details`.
+Never invent counts, infer them from an exit code, or rerun solely to obtain output. Before finishing,
 read the saved observation with `memory_list_executions` or linked evidence.
 If saving fails, disclose the gap and do not replay the command. In the next
 session, retrieve these observations alongside the original AI report before
@@ -236,6 +251,42 @@ full transcripts, or unnecessary personal content.
 Only provide `source_fingerprint` or `observed_at` when actually known. Omit them
 otherwise. For a confirmed correction, use `supersedes` with the same topic, kind,
 repository, and environment; preserve the old record instead of deleting it.
+
+### Vitest details
+
+For installed Vitest 3, the runner supports explicit `--test-format vitest`
+before `--`. Choose this for authorized Vitest checks when the original reporters
+are known. Supported commands are direct `node /known/node_modules/vitest/vitest.mjs
+run ... --reporter=default` or `npm test -- --reporter=default` when the package's
+`test` script is exactly `vitest run`. Repeat the actual original reporter list,
+including custom reporters where applicable. Never replace configured reporters
+with `default` by guesswork: if unknown, keep process-only capture and disclose it.
+The collector appends its bounded reporter without changing config files; npm
+preambles, console text, assertions and stacks are never parsed as test facts.
+No package is installed or downloaded. Watch/server/output-file modes and other
+versions/scripts remain unsupported. Counts include skipped and todo separately.
+A failing file collection may yield zero cases and a failed suite_success; never
+turn zero failed cases into overall success. Read persisted observations before
+reporting counts. Limits and correctness disclaimers match Node test details.
+
+### Explicit Markdown import
+
+Import only documents the user selected or explicitly authorized for migration.
+Do not scan a repository or convert routine journals automatically. The host
+reads selected UTF-8 Markdown with its normal file permissions and sends its
+unchanged text and project-relative path to `memory_preview_markdown`. Skilly
+never opens that path. The preview writes nothing and returns sha256/bytes/parts.
+After reviewing that exact input, `memory_import_markdown` accepts the same
+path/text, expected_hash and this task's saved run_id. It stores all bounded
+original pieces atomically; each is retrospective and unverified. The limit is
+48 KiB per selected document; do not silently truncate or split a larger file
+into different fake source labels. Original files remain unchanged.
+Source path is a host declaration (`source_path_verified: false`), not filesystem
+attestation. Identical content/path/source-root/scope reuses the saved receipt;
+changed content adds a version without replacing history or promoting facts.
+No background queue exists for import. On a storage failure, disclose it and
+retry only the same authorized snapshot; a changed body requires a new preview.
+Read all saved record_ids in part order to reconstruct the same original.
 
 ## Finish and recover
 

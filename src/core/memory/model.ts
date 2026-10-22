@@ -129,6 +129,8 @@ export interface Mutation {
   run?: Run;
   record?: Omit<MemoryRecord, "seq">;
   work?: WorkMutation;
+  records?: Omit<MemoryRecord, "seq">[];
+  reports?: WorkMutation[];
 }
 
 export interface Context {

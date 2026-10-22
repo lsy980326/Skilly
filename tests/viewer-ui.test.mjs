@@ -33,7 +33,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
   recovery = { status: "available", items: [], next_offset: null }, featureDetail = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
-  let now = initial, scheduled, calls = 0;
+  let now = initial, scheduled, calls = 0, hangNext = false;
+  const deadlines = new Set();
   let recordAvailable = !initialEmpty;
   const requests = [], authorizations = [];
   let releaseScoped, releaseMore;
@@ -67,13 +68,14 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${app}\n})()`, {
-    document, URLSearchParams, location: { hash, pathname: "/" }, history: { replaceState() {} },
+    document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
-    setTimeout(callback) { scheduled = callback; return 1; }, clearTimeout() {},
+    setTimeout(callback, delay) { if (delay === 15000) scheduled = callback; else if (delay === 10000) deadlines.add(callback); return callback; }, clearTimeout(callback) { deadlines.delete(callback); },
     matchMedia() { return { matches: reducedMotion }; },
     async fetch(path, options) {
       calls++; requests.push(path);
+      if (hangNext) { hangNext = false; await new Promise(() => {}); }
       authorizations.push(options.headers.Authorization);
       assert.equal(options.credentials, "omit");
       if (requestFailure === "network") throw new Error("연결 실패");
@@ -107,6 +109,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   });
   return {
     node, document, calls: () => calls, requests, authorizations,
+    hangNext() { hangNext = true; },
+    async expireRequests() { for (const callback of [...deadlines]) callback(); await new Promise(setImmediate); },
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
     updateTask(patch) { Object.assign(run, patch); },
@@ -254,21 +258,23 @@ test("a selected feature from a later catalog page remains visible after polling
   }
 });
 
-test("search focus pauses fetching but not elapsed time; returning to the tab refreshes both labels", async () => {
+test("search focus keeps polling; returning to a visible tab immediately fetches updates", async () => {
   const app = await viewer();
   const calls = app.calls();
   app.document.activeElement = app.node("#search");
   app.advance(120_000);
   await app.tick();
   assert.deepEqual(app.labels(), ["2분 전", "2분 전"]);
-  assert.equal(app.calls(), calls);
+  assert.ok(app.calls() > calls);
+  const afterFocusedPoll = app.calls();
   app.document.hidden = true;
   app.document.listeners.visibilitychange();
   app.advance(60_000);
   app.document.hidden = false;
   app.document.listeners.visibilitychange();
   assert.deepEqual(app.labels(), ["3분 전", "3분 전"]);
-  assert.equal(app.calls(), calls);
+  await new Promise(setImmediate);
+  assert.ok(app.calls() > afterFocusedPoll);
 });
 
 test("feature brief separates declared status, latest work and uncollected evidence; polling refreshes only changes", async () => {
@@ -450,4 +456,31 @@ test('feature evidence summary follows aggregate observations without promoting 
   app.updateFeature({ execution_evidence: { status: 'observations_available', total: 2, unconfirmed: 2 } });
   await app.tick();
   assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /확인 불가/);
+});
+
+test('execution cards render collected counts and safe failure names without promoting AI reports', async () => {
+  const row = { id: 'observed', executable: 'node', outcome: 'exited', exit_code: 1, duration_ms: 500, started_at: '2026-10-21T01:00:00Z', stdout_bytes: 25, stderr_bytes: 0,
+    test_details: {status:'collected',framework:'node_test',counts:{tests:4,passed:1,failed:1,cancelled:0,skipped:1,todo:1,suites:1},suite_success:false,failures:['<img src=x onerror=bad()>'],failures_truncated:true} };
+  const app = await viewer({structured:true,executions:{items:[row],next_offset:null}});
+  const detail = app.node('#detail'), section = detail.querySelector('.test-results');
+  assert.match(section.textContent,/통과 1/);assert.match(section.textContent,/실패 1/);assert.match(section.textContent,/건너뜀 1/);
+  assert.match(section.textContent,/실행기 종합 판정: 실패/);assert.match(section.textContent,/일부 항목 또는 이름이 생략/);
+  assert.match(section.textContent,/<img src=x/);assert.equal(section.querySelector('img'),null);
+  assert.match(detail.textContent,/AI 검사 보고 1건/);assert.match(detail.textContent,/기능 검증 완료를 뜻하지 않습니다/);
+  const unknown=await viewer({executions:{items:[{...row,test_details:{status:'not_collected',reason:'interrupted'}}],next_offset:null}});
+  assert.match(unknown.node('#detail').textContent,/검사 상세 미수집/);assert.equal(unknown.node('#detail').querySelector('.test-results'),null);
+});
+
+test('manual refresh reads new records and a hung request releases the button for retry',async()=>{
+ const app=await viewer();app.saveRecord('manual-new');app.node('#refresh').listeners.click();await new Promise(setImmediate);
+ assert.equal(app.node('#detail').querySelector('.timeline-entry').querySelector('details').dataset.record,'manual-new');
+ app.hangNext();app.node('#refresh').listeners.click();assert.equal(app.node('#refresh').disabled,true);await app.expireRequests();
+ assert.equal(app.node('#refresh').disabled,false);assert.match(app.node('#connection-error').textContent,/초과/);
+ app.node('#refresh').listeners.click();await new Promise(setImmediate);assert.equal(app.node('#connection-error').hidden,true);assert.equal(app.node('#refresh').disabled,false);
+});
+test('expanded older records remain while polling updates the latest record and dashboard',async()=>{
+ const app=await viewer({historyPage:true,active:true});await app.node('#detail').querySelectorAll('button').find(b=>b.textContent==='이전 기록 더 보기').listeners.click();
+ assert.equal(app.node('#detail').querySelectorAll('.timeline-entry').length,2);const calls=app.calls();app.saveRecord('new-head');app.updateTask({title:'갱신된 작업'});await app.tick();
+ assert.ok(app.calls()>calls);assert.match(app.node('#components').textContent,/갱신된 작업/);assert.ok(app.node('#detail').querySelectorAll('.timeline-entry').some(node=>node.querySelector('details').dataset.record==='older'));
+ assert.ok(app.node('#detail').querySelectorAll('.timeline-entry').some(node=>node.querySelector('details').dataset.record==='new-head'));
 });

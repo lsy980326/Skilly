@@ -1,3 +1,4 @@
+import type { MarkdownLibrary } from "../core/documents/importer.js";
 import { registerSkillSchema, skillKey, type SkillLibrary } from "../core/skills/model.js";
 import { z } from "zod";
 import { MemoryError, parseJsonObject, type JsonObject } from "../core/memory/model.js";
@@ -19,7 +20,7 @@ const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
 export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
-  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary): Record<string, ToolDefinition> {
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -112,7 +113,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery) }),
     ),
     memory_list_executions: define(
-      "Read direct local-runner process observations linked to this task. No execution or writes. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
+      "Read direct local-runner process observations linked to this task. Includes test_details with bounded node:test counts/failure names when collected; not_collected is not zero tests. No execution or writes. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
       true, z.strictObject({ ...runId, offset: z.int().min(0).max(1_000_000).default(0) }),
       input => service.listExecutions(input.project_id, input.run_id, input.offset),
     ),
@@ -152,6 +153,14 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
         tool: z.enum(["codex", "cursor"]), folder: skillKey }), async input => skills.assign(input));
     tools["memory_check_skill_installation"] = define("Explicitly compare only the registered package files in this launched root. Save hashes and a timestamp; never execute scripts, scan unrelated folders, or claim Codex loaded the files. Requires --project. Not a read-only tool.", false,
       z.strictObject({ ...projectId, ...idempotency, installation_id: id, ...installationScope }), async input => skills.inspect(input));
+  }
+  if (documents) {
+    const path = z.string().min(1).max(300);
+    const text = z.string().min(1).max(65536);
+    tools["memory_preview_markdown"] = define("Preview the original text the host read from one explicitly selected public Markdown file, up to 48 KiB. Skilly never opens the path, scans directories or executes content. Returns text hash/size/part count without writing. The relative path is a host declaration, not verified filesystem provenance.", true,
+      z.strictObject({ ...projectId, path, text }), input => Promise.resolve(documents.preview(input.path, input.text)));
+    tools["memory_import_markdown"] = define("Import exactly one reviewed Markdown text using preview sha256 as expected_hash and this active task. The host supplies the selected original, Skilly does not read or alter source files; stores bounded original chunks and source metadata as retrospective, unverified records. Identical text/path/source-root/scope reuse receipts across tasks. No automatic queue or file execution. After failure retry the same path/hash; never claim queued without a receipt.", false,
+      z.strictObject({ ...runId, path, text, expected_hash: z.string().regex(/^[a-f0-9]{64}$/) }), input => documents.import(input.project_id, input.run_id, input.path, input.text, input.expected_hash));
   }
   if (!bound) return tools;
   const { memory_register_project: _register, memory_list_projects: _list, ...scopedTools } = tools;
@@ -196,8 +205,8 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary) {
-    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills);
+  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents);
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {

@@ -113,13 +113,13 @@ test("v5 skill data survives whole backup and project transfer without becoming 
   }
 });
 
-test("v4 backup and export remain readable; only the import destination migrates to v6", async t => {
+test("v4 backup and export remain readable; only the import destination migrates to v7", async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "skilly-legacy-transfer-"))), path = join(root, "legacy.sqlite");
   const old = new DatabaseSync(path), pid = randomUUID(); initialize(old, false, 4);
   old.prepare("INSERT INTO projects VALUES (?,?,?,?,?)").run(pid, "legacy", "Legacy", 0, new Date().toISOString()); old.close();
   const b = join(root, "backup"), e = join(root, "export"); await backupDatabase(path, b); exportProject(path, pid, e);
   const restored = await restoreDatabase(b, join(root, "restored")), imported = await importProject(e, join(root, "imported"));
-  for (const [dbPath, expected] of [[path, 4], [restored.db, 4], [imported.db, 6]]) {
+  for (const [dbPath, expected] of [[path, 4], [restored.db, 4], [imported.db, 7]]) {
     const db = new DatabaseSync(dbPath, { readOnly: true }); try { assert.equal(db.prepare("PRAGMA user_version").get().user_version, expected); } finally { db.close(); }
   }
   const view = new SqliteViewer(path); try { assert.deepEqual(view.skills(pid).items, []); } finally { view.close(); }
