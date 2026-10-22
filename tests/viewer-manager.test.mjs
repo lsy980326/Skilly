@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, lstatSync, existsSync, writeFileSync, renameSync, symlinkSync, rmdirSync } from "node:fs";
+import { mkdtempSync, realpathSync, readFileSync, rmSync, lstatSync, existsSync, writeFileSync, renameSync, symlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -142,4 +142,17 @@ test("code restart preflight failure preserves the existing authenticated proces
     assert.equal((await fetch(started.origin+'/api/projects',{headers:headers(started)})).status,200);
     assert.equal((await control(f.paths.db,f.paths.socket,'connect')).pid,started.pid);
   } finally { rmSync(f.db);renameSync(f.db+'.original',f.db); }
+});
+
+
+test("explicit comparison roots survive code restart and invalid roots preserve the authorized worker",async t=>{
+  const f=await fixture(t),root=realpathSync(f.dir);
+  writeFileSync(join(root,'skilly.project.json'),JSON.stringify({version:1,key:'manager-test',name:'test',repository:'default',environment:'development'}));
+  const started=await manageViewer('start',f.db,0,[root]);
+  assert.deepEqual(started.sourceProjects,[root]);
+  const restarted=await manageViewer('restart-code',f.db,0);
+  assert.deepEqual(restarted.sourceProjects,[root]);assert.equal(restarted.url,started.url);
+  await assert.rejects(manageViewer('restart-code',f.db,0,['/missing/skilly-test-root']));
+  assert.equal((await manageViewer('status',f.db,0)).pid,restarted.pid);
+  assert.equal((await fetch(started.origin+'/api/projects',{headers:headers(started)})).status,200);
 });

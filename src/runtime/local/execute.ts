@@ -11,6 +11,7 @@ import { prepareVitest } from "./vitest-collector.js";
 import { nodeTestArguments, testCollector } from "./test-collector.js";
 import { Readable } from "node:stream";
 import { openLocal } from "./app.js";
+import { observeSource } from "../../adapters/project/source-version.js";
 
 const HASH_LIMIT = 1024 * 1024;
 function counter() {
@@ -59,6 +60,7 @@ export async function executeCommand(argv: string[]): Promise<number> {
     const name = basename(command);
     const executable = /^[a-zA-Z0-9._+-]{1,80}$/.test(name) ? name : "local-command";
     const id = app.executions.start({ project_id: project.id, run_id: runId,
+      source_observation: observeSource(root, binding),
       ...(values["record-id"] ? { record_id: values["record-id"] } : {}), executable,
       command_hash: createHash("sha256").update(JSON.stringify([command, ...args])).digest("hex") });
     const out = counter(), err = counter(), at = performance.now();
@@ -101,7 +103,7 @@ export async function executeCommand(argv: string[]): Promise<number> {
     try {
       app.executions.finish(id, { outcome, exit_code: result.code, signal: result.signal, error_code: launchError,
         duration_ms: Math.round(performance.now() - at), stdout_bytes: stdout.bytes, stderr_bytes: stderr.bytes,
-        stdout_hash: stdout.hash, stderr_hash: stderr.hash, stdout_hashed_bytes: stdout.hashed, stderr_hashed_bytes: stderr.hashed, output_complete: incomplete ? 0 : 1 }, (vitest ?? tests).finish(outcome === "exited" && !incomplete));
+        stdout_hash: stdout.hash, stderr_hash: stderr.hash, stdout_hashed_bytes: stdout.hashed, stderr_hashed_bytes: stderr.hashed, output_complete: incomplete ? 0 : 1 }, (vitest ?? tests).finish(outcome === "exited" && !incomplete), observeSource(root, binding));
     } catch {
       throw new MemoryError("execution_save_failed", "Process ended but result storage is unconfirmed. Never replay the command to retry storage.", false,
         { execution_id: id, persistence: "unconfirmed", automatic_replay: false });

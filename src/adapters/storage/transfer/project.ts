@@ -55,6 +55,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     try {
       for (const table of tables) {
         if (table === "execution_test_details" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 7) continue;
+        if (table === "execution_sources" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 8) continue;
         if (table === "executions" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 6) continue;
         if (table.startsWith("skill_") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 5) continue;
         const db = table === "requests" ? snapshots.recovery : snapshots.main;
@@ -107,6 +108,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     lastTable = index;
     if (manifest.schema_version < 5 && table.startsWith("skill_")) fail("invalid_bundle", "Skill rows require schema v5.");
     if (manifest.schema_version < 7 && table === "execution_test_details") fail("invalid_bundle", "Test details require schema v7.");
+    if (manifest.schema_version < 8 && table === "execution_sources") fail("invalid_bundle", "Execution source observations require schema v8.");
     if (manifest.schema_version < 6 && table === "executions") fail("invalid_bundle", "Execution rows require schema v6.");
     const row = parsedRow(table, entry.row, manifest.project_id, runs);
     if (table === "projects") projects++;
@@ -132,6 +134,7 @@ export async function importProject(input: string, output: string, base?: string
       else if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 4) main.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 5) main.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 6) main.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
+      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 7) main.exec(readFileSync(new URL("../../../../migrations/008-execution-source.sql", import.meta.url), "utf8"));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {

@@ -16,6 +16,12 @@
 .execution-outcome { font-size: 12px; font-weight: 650; }
 .execution-meta, .execution-empty { margin: 8px 0; color: var(--muted); font-size: 12px; }
 .execution-card small { color: var(--muted); }
+.execution-version { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.execution-version strong { font-size: 13px; }
+.execution-version p { margin: 6px 0; font-size: 12px; }
+.execution-version code, .execution-version small { display: block; margin-top: 6px; font-size: 11px; }
+.execution-version.changed { border-left: 3px solid var(--attention); }
+.execution-version.same_version { border-left: 3px solid var(--accent); }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.55 var(--body); }
 button, input, select { font: inherit; }

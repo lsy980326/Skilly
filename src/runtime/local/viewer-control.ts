@@ -6,7 +6,7 @@ import { join, dirname, basename, isAbsolute } from "node:path";
 
 export const SERVICE = "skilly-viewer-manager-v1";
 export type ViewerCommand = "status" | "connect" | "restart" | "stop";
-export type ControlReply = { service: string; db: string; status: string; pid?: number; origin?: string; url?: string; error?: string; restart_mode?: string; message?: string };
+export type ControlReply = { service: string; db: string; status: string; pid?: number; origin?: string; url?: string; error?: string; restart_mode?: string; sourceProjects?: string[]; message?: string };
 
 export function privateDirectory(path: string) {
   try { mkdirSync(path, { mode: 0o700 }); }

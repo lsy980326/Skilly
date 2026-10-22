@@ -115,7 +115,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
         ...(taskEvents ? { task_recording: taskEvents.status(input.project_id, input.run_id) } : {}) }),
     ),
     memory_list_executions: define(
-      "Read direct local-runner process observations linked to this task. Includes test_details with bounded node:test counts/failure names when collected; not_collected is not zero tests. No execution or writes. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
+      "Read direct local-runner process observations linked to this task. Includes test_details with bounded counts/failure names when collected; not_collected is not zero tests. code_version compares before/after/current Git metadata: same_version, changed or unknown; matching clean commits never verify correctness, dependencies or runtime. May read bounded Git metadata at the explicitly configured host root only; no task-command execution or DB writes. Dirty, hidden index entries, missing source or unconfigured roots remain unknown. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
       true, z.strictObject({ ...runId, offset: z.int().min(0).max(1_000_000).default(0) }),
       input => service.listExecutions(input.project_id, input.run_id, input.offset),
     ),

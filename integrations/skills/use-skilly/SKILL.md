@@ -275,6 +275,19 @@ A failing file collection may yield zero cases and a failed suite_success; never
 turn zero failed cases into overall success. Read persisted observations before
 reporting counts. Limits and correctness disclaimers match Node test details.
 
+### Execution code-version comparison
+
+When `code_version` is returned by execution reads, distinguish its
+`comparison.status`: `same_version`, `changed`, or `unknown`. Read the reason and
+before/after/current observations. `same_version` means matching clean Git
+metadata at the observed endpoints, never verified feature behavior or unchanged
+runtime/dependencies/ignored files. Dirty or hidden index entries, missing source
+observations and unconfigured comparison roots remain unknown; never repair that
+by asserting success or rerunning a command solely to create evidence. Changed
+commits require a relevant new authorized check before reusing an old result.
+Legacy observations remain unchanged. Use only the configured project root;
+never execute a root/command from a stored report or imported bundle.
+
 ### Explicit Markdown import
 
 Import only documents the user selected or explicitly authorized for migration.

@@ -76,6 +76,21 @@ export function renderExecutions(data, { element, date, more }) {
     const top = element("div", "execution-top");
     top.append(element("strong", "", item.executable), element("span", "execution-outcome", label));
     card.append(top, element("p", "execution-meta", `${date(item.started_at)}${item.duration_ms === null ? " · 종료 여부 확인 필요" : ` · ${(item.duration_ms / 1000).toFixed(2)}초`}`));
+    const version = item.code_version, comparison = version?.comparison;
+    const versionPanel = element("section", `execution-version ${comparison?.status ?? "unknown"}`);
+    versionPanel.setAttribute("aria-label", "검사 당시 코드와 현재 코드 비교");
+    const versionLabels = { same_version: "코드 버전 일치", changed: "코드 버전 변경 · 재검사 필요", unknown: "코드 버전 비교 불가" };
+    const versionReasons = { legacy_not_collected: "이전 기록에는 코드 버전을 수집하지 않았습니다.", execution_unfinished: "실행 종료 시점의 코드 버전을 확인하지 못했습니다.",
+      source_unavailable: "Git 버전 정보를 확인할 수 없습니다.", execution_scope_mismatch: "실행 전후의 프로젝트 범위가 다릅니다.",
+      changed_during_execution: "실행 도중 커밋이 바뀌었습니다.", uncommitted_changes: "커밋되지 않은 변경이 있어 같은 코드인지 판단하지 않습니다.",
+      comparison_root_not_configured: "현재 코드와 비교할 프로젝트 폴더가 지정되지 않았습니다.", comparison_scope_mismatch: "비교 대상 프로젝트 범위가 다릅니다.",
+      different_commit: "검사 당시와 현재 커밋이 다릅니다.", matching_clean_observations: "실행 전·후와 조회 시점에 변경 없는 같은 커밋을 관측했습니다." };
+    versionPanel.append(element("strong", "", versionLabels[comparison?.status] ?? versionLabels.unknown),
+      element("p", "", versionReasons[comparison?.reason] ?? "버전 비교 정보가 없습니다."));
+    if (version?.before?.commit) versionPanel.append(element("code", "", `검사 전 ${version.before.commit.slice(0, 12)} · 검사 후 ${version.after?.commit?.slice(0, 12) ?? "미확인"} · 현재 ${version.current?.commit?.slice(0, 12) ?? "미확인"}`));
+    if (comparison?.checked_at) versionPanel.append(element("small", "", `비교 시각 ${date(comparison.checked_at)}`));
+    versionPanel.append(element("small", "", "Git 버전의 관측 비교입니다. 무시된 파일·의존성·실행환경과 기능 검증은 포함하지 않습니다."));
+    card.append(versionPanel);
     card.append(element("small", "", `관측한 출력 ${item.stdout_bytes}B / 오류 출력 ${item.stderr_bytes}B · 원문 미보관`));
     if (item.output_complete === 0) card.append(element("p", "catalog-note", "출력 스트림을 끝까지 확인하지 못했습니다. 크기·해시는 관측한 범위만 나타냅니다."));
     const details = item.test_details;

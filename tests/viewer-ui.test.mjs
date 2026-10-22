@@ -525,3 +525,13 @@ test('empty-project import keeps a selected file while its new destination is ed
  const save=body.querySelectorAll('button').find(n=>n.textContent==='소급 기록으로 가져오기');assert.equal(save.disabled,false);
  environment.value='test';environment.listeners.input();assert.equal(save.disabled,true);
 });
+
+test('code-version comparison is distinct from execution success and updates on refresh',async()=>{
+ const row={id:'code-version',executable:'node',started_at:'2026-10-21T01:00:00Z',duration_ms:10,outcome:'exited',exit_code:0,stdout_bytes:0,stderr_bytes:0,
+ code_version:{before:{commit:'a'.repeat(40)},after:{commit:'a'.repeat(40)},current:{commit:'a'.repeat(40)},comparison:{status:'same_version',reason:'matching_clean_observations',checked_at:'2026-10-21T01:00:00Z'}}};
+ const app=await viewer({structured:true,executions:{items:[row],next_offset:null}});
+ assert.match(app.node('#detail').querySelector('.execution-version').textContent,/코드 버전 일치/);
+ assert.match(app.node('#detail').querySelector('.execution-version').textContent,/기능 검증은 포함하지 않습니다/);
+ row.code_version.comparison={status:'changed',reason:'different_commit'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 변경 · 재검사 필요/);
+ row.code_version.comparison={status:'unknown',reason:'uncommitted_changes'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 비교 불가.*커밋되지 않은 변경/);
+});

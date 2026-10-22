@@ -5,6 +5,7 @@ import { ViewerError } from "../../core/viewer/model.js";
 import { SqliteViewer } from "../../adapters/storage/sqlite/viewer.js";
 import { MemoryError } from "../../core/memory/model.js";
 import { documentBody, ViewerDocuments } from "./documents.js";
+import { sourceProvider } from "../../adapters/project/source-version.js";
 
 const assets = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -31,7 +32,7 @@ function offset(url: URL): number {
   return Number(raw);
 }
 
-export async function startViewer(options: { db: string; port?: number; sessionToken?: string }) {
+export async function startViewer(options: { db: string; port?: number; sessionToken?: string; sourceProjects?: string[] }) {
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ViewerError("invalid_input", "포트는 0–65535여야 합니다.");
   if (options.sessionToken !== undefined && !/^[a-f0-9]{64}$/.test(options.sessionToken))
@@ -42,7 +43,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
     ...asset, body: readFileSync(new URL(`../../../ui/${asset.file}`, import.meta.url)),
   }]));
   let contents = loadContents();
-  let reader = new SqliteViewer(options.db);
+  const sources = sourceProvider(options.sourceProjects ?? []);
+  let reader = new SqliteViewer(options.db, Date.now, sources);
   const documents = new ViewerDocuments(options.db, token);
   let origin = "";
   const server = createServer(async (request, response) => {
@@ -152,7 +154,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (closing) throw new Error("종료 중인 화면은 다시 열 수 없습니다.");
       // Stage both resources first so a failed reload leaves the authorized server usable.
       const nextContents = loadContents();
-      const nextReader = new SqliteViewer(options.db);
+      const nextReader = new SqliteViewer(options.db, Date.now, sources);
       try { nextReader.projects(0); } catch (error) { nextReader.close(); throw error; }
       const previous = reader;
       reader = nextReader; contents = nextContents;

@@ -1,6 +1,7 @@
 import { SqliteSkills } from "./skills.js";
 import { SqliteExecutions } from "./executions.js";
 import { SqliteTaskEvents } from "./task-events.js";
+import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { DatabaseSync, type SQLOutputValue, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import {
@@ -18,7 +19,7 @@ export class SqliteMemoryStore implements MemoryStore {
   readonly skills: SqliteSkills;
   readonly executions: SqliteExecutions;
 
-  constructor(private readonly path: string) {
+  constructor(private readonly path: string, sources?: SourceProvider) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
     try {
       this.db.exec("PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL; PRAGMA cache_size = -8192;");
@@ -26,7 +27,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db);
       this.skills = new SqliteSkills(this.db);
-      this.executions = new SqliteExecutions(this.db);
+      this.executions = new SqliteExecutions(this.db, sources);
     } catch (error) {
       this.db.close();
       throw storageError(error);
@@ -42,8 +43,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 7) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 7) return;
+    if (version > 8) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 8) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -67,6 +68,7 @@ export class SqliteMemoryStore implements MemoryStore {
       }
       if (lockedVersion < 6) this.db.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       if (lockedVersion < 7) this.db.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 8) this.db.exec(readFileSync(new URL("../../../../migrations/008-execution-source.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

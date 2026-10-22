@@ -11,6 +11,7 @@ import type { RunState } from "../../../core/memory/model.js";
 import { SqliteWorkReader } from "./work.js";
 import { recordingCoverage, recordingDelivery } from "../../../core/memory/recording-health.js";
 import { SqliteTaskEvents } from "./task-events.js";
+import type { SourceProvider } from "../../../core/execution/currentness.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -52,7 +53,7 @@ function page<T>(rows: T[], offset: number) {
 export class SqliteViewer {
   private readonly db: DatabaseSync;
   private readonly work: SqliteWorkReader;
-  constructor(private readonly path: string, private readonly now: () => number = Date.now) {
+  constructor(private readonly path: string, private readonly now: () => number = Date.now, private readonly sources?: SourceProvider) {
     this.db = readOnly(path);
     try { this.version(); } catch (error) { this.db.close(); throw error; }
     this.work = new SqliteWorkReader(this.db, now);
@@ -68,7 +69,7 @@ export class SqliteViewer {
 
   documentTargets(projectId: string) {
     this.requireProject(projectId);
-    if (this.version() !== 7) return { items: [], unavailable: "문서 가져오기는 DB v7에서 지원합니다. 기존 파일은 변경하지 않았습니다." };
+    if (this.version() < 7) return { items: [], unavailable: "문서 가져오기는 DB v7 이상에서 지원합니다. 기존 파일은 변경하지 않았습니다." };
     const rows = this.db.prepare(`SELECT MAX(r.id) id, r.repository, r.environment, COALESCE(c.key,'') component_key, COALESCE(c.name,'서비스 공통') component_name
       FROM runs r LEFT JOIN run_components rc ON rc.project_id=r.project_id AND rc.run_id=r.id
       LEFT JOIN components c ON c.project_id=rc.project_id AND c.key=rc.component_key
@@ -79,7 +80,7 @@ export class SqliteViewer {
 
   documentTarget(projectId: string, runId: string | undefined, componentKey: string, scope?: { repository: string; environment: string }) {
     this.requireProject(projectId);
-    if (this.version() !== 7) throw new ViewerError("invalid_input", "문서 가져오기는 DB v7에서 지원합니다. 먼저 설치 버전을 확인해 주세요.");
+    if (this.version() < 7) throw new ViewerError("invalid_input", "문서 가져오기는 DB v7 이상에서 지원합니다. 먼저 설치 버전을 확인해 주세요.");
     if (scope) {
       if (runId || componentKey) throw new ViewerError("invalid_input", "새 작업 공간은 서비스 공통으로 저장합니다.");
       return { repository: scope.repository, environment: scope.environment, component: undefined };
@@ -111,8 +112,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v7)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v8)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -233,14 +234,14 @@ export class SqliteViewer {
         next_before: records.length > PAGE_SIZE ? records[PAGE_SIZE - 1]?.seq : null,
       }, claims_verified: false,
       record_counts: Object.fromEntries(counts.map(count => [text(count, "kind"), number(count, "total")])),
-      executions: new SqliteExecutions(this.db).list(projectId, runId),
+      executions: new SqliteExecutions(this.db, this.sources).list(projectId, runId),
     };
   }
 
   executions(projectId: string, runId: string, offset = 0) {
     this.requireProject(projectId); requireId(runId); pageOffset(offset);
     if (!this.db.prepare("SELECT 1 FROM runs WHERE project_id=? AND id=?").get(projectId, runId)) throw new ViewerError("not_found", "이 프로젝트의 작업이 아닙니다.");
-    return new SqliteExecutions(this.db).list(projectId, runId, offset);
+    return new SqliteExecutions(this.db, this.sources).list(projectId, runId, offset);
   }
 
   recovery(projectId: string, offset = 0) {
