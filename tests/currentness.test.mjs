@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {join} from 'node:path';
-import {mkdirSync,writeFileSync,realpathSync,readFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,realpathSync,readFileSync,existsSync} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import {fixture,project,run} from './helpers.mjs';
 import {observeSource,sourceProvider} from '../dist/adapters/project/source-version.js';
@@ -83,4 +83,18 @@ test('hidden index flags cannot become matching code and invalid scope never per
  const source=observeSource(f.root,f.binding);assert.throws(()=>sourceProvider(['/x'.repeat(900)]),/limit/);
  assert.throws(()=>f.app.executions.start({project_id:f.pid,run_id:f.rid,executable:'fixture',command_hash:'a'.repeat(64),source_observation:{...source,repository:'other'}}),{code:'scope_mismatch'});
  assert.equal(list(f).items.length,0);
+});
+
+test('a dirty observation avoids an oversized index scan without claiming source equality',async t=>{
+ const f=await setupGit(t),bin=join(realpathSync(f.directory),'git-bin'),marker=join(bin,'index-read');mkdirSync(bin);
+ const fake=`#!${process.execPath}
+const args=process.argv.slice(2);
+if(args.includes('--show-toplevel'))console.log(${JSON.stringify(f.root)});
+else if(args.includes('rev-parse'))console.log('a'.repeat(40));
+else if(args.includes('status'))process.stdout.write(' M source.js\\0');
+else if(args.includes('ls-files')){require('fs').writeFileSync(${JSON.stringify(marker)},'read');process.stdout.write('H hidden-path\\0'.repeat(20000));}
+`;
+ writeFileSync(join(bin,'git'),fake,{mode:0o700});const originalPath=process.env.PATH;
+ try {process.env.PATH=bin+':'+originalPath;const observation=observeSource(f.root,f.binding);assert.equal(observation.status,'dirty');assert.equal(observation.commit,'a'.repeat(40));assert.equal(observation.reason,'working_tree_changed');assert.equal(existsSync(marker),false);assert.equal(compareExecutionSource(observation,observation,observation).status,'unknown');}
+ finally {if(originalPath===undefined)delete process.env.PATH;else process.env.PATH=originalPath;}
 });

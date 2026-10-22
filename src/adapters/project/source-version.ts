@@ -22,7 +22,8 @@ export function observeSource(root: string, binding: ProjectBinding): SourceObse
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(before)) throw new Error("Invalid commit");
     const dirty = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"]);
     // Git status can hide tracked edits under these index flags. Never equate that with clean source.
-    if (git(root, ["ls-files", "-v", "-z"]).split("\0").some(entry => /^[a-zS]/.test(entry)))
+    // Dirty already means unknown; avoid enumerating a potentially large index in that case.
+    if (!dirty && git(root, ["ls-files", "-v", "-z"]).split("\0").some(entry => /^[a-zS]/.test(entry)))
       return { ...base, status: "unavailable", commit: null, reason: "index_entries_unobserved" };
     const after = git(root, ["rev-parse", "--verify", "HEAD"]).trim();
     return { ...base, status: dirty || before !== after ? "dirty" : "clean", commit: after,
