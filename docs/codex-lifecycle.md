@@ -62,8 +62,8 @@ npm run setup:hooks -- --project /absolute/existing-project \
 | 이벤트 `not_observed` | 이 경로·범위에서 관측 없음. 설치 안 됨·미실행·누락을 단정하지 않음 |
 | 이벤트 `unavailable` | 관측 저장소 조회 실패. 정상 빈 목록으로 취급하지 않음 |
 
-이벤트와 작업 ID는 자동 연결하지 않는다(`work_record_linkage: not_observed`).
-같은 프로젝트의 여러 채팅 중 어느 작업이 중단됐는지 추정하여 닫지 않는다.
+원시 이벤트 목록은 작업 ID를 추정하지 않는다(`work_record_linkage: not_observed`).
+선택적 명시 연결은 아래 절을 따른다. 같은 프로젝트의 다른 채팅을 추정하여 닫지 않는다.
 입력 출처는 `local_hook_input / authenticity: not_attested`이고 모든 주장 검증은 false다.
 `missing_record_count: null`, `completeness: unknown`을 유지한다.
 
@@ -77,3 +77,31 @@ npm run setup:hooks -- --project /absolute/existing-project \
 중단·재연결 검사를 구분한다. 직접 전달한 fixture 이벤트는 Codex가 발생시킨
 이벤트로 보고하지 않는다. 새 설치·이동 후보의 경로와 로컬 동작을 확인해도
 실제 앱 설정 로딩·신뢰 승인·훅 실행은 해당 호스트에서 따로 확인해야 한다.
+
+## 작업과 명시적으로 연결
+
+새 MCP의 `memory_link_task_events`에 자신의 `project_id`, 저장된 활성 `run_id`,
+**현재 훅 안내가 제공한** `observation_id`를 보낸다. 원시 목록에서 다른 채팅의
+ID를 고르거나 시간·프로젝트 이름으로 연결하지 않는다. 연결은 AI의 명시적 선언이며
+사용자 신원이나 세션 소유권의 암호학적 증명은 아니다.
+
+연결은 현재 관측 이후에 수신한 이벤트에만 적용한다. 과거 이벤트·기록·작업 상태를
+바꾸지 않는다. 다른 열린 작업으로 연결 전환은 거절하고, 같은 작업의 재요청은 기존
+연결 영수증을 반환한다. fork 세션은 연결을 상속하지 않는다. 종료된 작업에는 이후
+이벤트를 붙이지 않는다. 폴더 이동 후에는 새 루트의 관측으로 다시 연결해야 한다.
+
+`memory_get_status.task_recording`과 화면 상세는 같은 읽기 모듈을 사용한다.
+
+- `last_saved`: 지금 본 DB에서 확인되는 마지막 기록 ID·순서·저장 시각과 영수증 여부.
+- `interruption`: 명시적으로 연결된 중단 관측과 그 처리 중 읽은 저장 지점.
+- `association_unconfirmed`: 본 DB 접근 등으로 연결을 확인하지 못한 이벤트 수.
+- `linkage: not_linked | unavailable`: 연결 없음과 조회 실패를 구분.
+
+본 DB와 이벤트 DB 사이에는 하나의 트랜잭션이 없다. 중단 시점의 스냅샷은 훅 처리 중
+확인한 저장 지점이며, 동시 쓰기를 포함한 정확한 경계나 저장 누락을 증명하지 않는다.
+실패한 연결을 자동 재생·소급 연결하지 않는다. 복구 대기는 기존 원래 요청 보관함에서
+별도로 확인한다. 중단 이력이 있어도 작업을 자동 종료하거나 현재 실행 중이라고 단정하지 않는다.
+
+연결과 스냅샷은 기존 이벤트 sidecar의 추가 테이블에 보존한다. 본 DB 스키마와 기존
+행은 변경하지 않는다. 기존 이벤트만 있는 sidecar도 읽을 수 있다. 현재 백업·프로젝트
+교환 묶음에는 이 메타데이터가 포함되지 않으므로 이동 후 새 연결이 필요하다.

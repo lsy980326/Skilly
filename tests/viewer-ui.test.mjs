@@ -66,9 +66,10 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${documents}\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },

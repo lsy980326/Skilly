@@ -19,6 +19,7 @@ const assets = new Map([
   ["/document-batch.js", { file: "document-batch.js", type: "text/javascript; charset=utf-8" }],
   ["/document-library.js", { file: "document-library.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
+  ["/task-recording.js", { file: "task-recording.js", type: "text/javascript; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });

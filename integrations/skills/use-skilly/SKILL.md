@@ -298,7 +298,16 @@ saved, not that any task start, change or finish was saved. A `Stop` is a turn
 boundary, not task completion; an `Interrupt` does not identify which task ended.
 Do not close or resume another session's task from these signals. Missing or
 unavailable observations do not prove zero omissions. Current hook metadata has
-`work_record_linkage: not_observed`; do not invent a linkage from timestamps.
+`work_record_linkage: not_observed` in the raw feed; do not invent a linkage from timestamps.
+When the hook supplies the current `observation_id` and `memory_link_task_events`
+is exposed, explicitly link that observation to your own persisted active task.
+Only later events are associated. Never take an ID from another chat, infer it
+from the latest project event, or bypass a conflicting active-task link. A failed
+link is not queued; report it and inspect status before an identical retry.
+Read `memory_get_status.task_recording` after reconnecting: it separates the latest
+saved record from the snapshot visible during an interruption. That snapshot is
+not an atomic cutoff across DBs and cannot prove missing writes or claim accuracy.
+`association_unconfirmed` means association could not be checked, not recovery pending.
 The hook reminder supplements, never replaces, this skill's MCP recording gate.
 Never switch to CLI/direct DB work-record writes when MCP is unavailable.
 

@@ -6,6 +6,7 @@ import { renderFeatureList, renderFeatureDetail } from "./features.js";
 import { createDocumentImport } from "./documents.js";
 import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
+import { renderTaskRecording } from "./task-recording.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
@@ -278,6 +279,7 @@ function renderTasks() {
     button.setAttribute("aria-pressed", String(task.id === state.run));
     const top = element("span", "card-top");
     top.append(badge(statusLabels[task.activity], task.activity, true), relativeTime(task.updated_at, "span", "card-time"));
+    if (task.interruption_observed) top.append(badge("중단 이력", "warning"));
     button.append(top, element("span", "task-goal", task.title || task.goal), chips(task));
     if (task.latest_report) button.append(element("span", "task-summary", task.latest_report.summary));
     const footer = element("span", "card-footer");
@@ -363,6 +365,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
   const top = element("div", "detail-top");
   top.append(element("p", "eyebrow", modeLabels[task.mode] ?? task.mode), badge(statusLabels[task.activity], task.activity, true));
   panel.append(top, element("h2", "detail-title", task.title || Array.from(task.goal).slice(0, 100).join("") + (task.goal.length > 100 ? "…" : "")), chips(task));
+  panel.append(renderTaskRecording(task.task_recording, { element, date }));
   const request = element("details", "original-request");
   request.append(element("summary", "", "전체 작업 요청"), element("p", "record-body", task.goal));
   panel.append(request);

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { loadProjectBinding } from "../../project/binding.js";
 import type { ProjectBinding } from "../../../core/memory/binding.js";
 import { MemoryError } from "../../../core/memory/model.js";
+import { captureTaskEvent } from "./task-event-storage.js";
 
 export const lifecycleEvents = ["SessionStart", "PostToolUse", "PreCompact", "Stop", "Interrupt", "SessionEnd"] as const;
 const application = 1397446995;
@@ -66,6 +67,7 @@ export function recordLifecycle(dbPath: string, root: string, value: unknown) {
       db.prepare("INSERT INTO events VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id,
         binding.key, binding.repository, binding.environment, hash(realpathSync(root)), hash(input.session_id),
         input.turn_id ? hash(input.turn_id) : null, input.hook_event_name, input.source ?? null, tool, new Date().toISOString());
+      captureTaskEvent(db, dbPath, id);
       db.exec("COMMIT"); return receipt(id);
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   } finally { db.close(); }
@@ -84,6 +86,17 @@ function validate(db: DatabaseSync) {
     || db.prepare("PRAGMA user_version").get()?.["user_version"] !== 1) {
     throw new MemoryError("unsupported_event_store", "Unsupported event store; existing data was preserved.");
   }
+}
+
+export function openLifecycleStore(path: string, writable = false) {
+  regular(path);
+  const db = new DatabaseSync(path, { readOnly: !writable });
+  try {
+    db.exec("PRAGMA busy_timeout=200;");
+    if (!writable) db.exec("PRAGMA query_only=ON;");
+    else db.exec("PRAGMA synchronous=FULL;");
+    validate(db); return db;
+  } catch (error) { db.close(); throw error; }
 }
 
 export function readLifecycle(dbPath: string, binding: ProjectBinding, root: string) {

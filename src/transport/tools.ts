@@ -6,6 +6,7 @@ import { isRecoverableWrite, type WriteRecovery } from "../core/memory/recovery.
 import type { MemoryService } from "../core/memory/service.js";
 import type { BoundMemory } from "../core/memory/binding.js";
 import { reportSchema, workLinks, workKey } from "../core/work/schema.js";
+import type { TaskEvents } from "../core/memory/task-events.js";
 
 export const MAX_INPUT_BYTES = 128 * 1024;
 export const MAX_FRAME_BYTES = 160 * 1024;
@@ -20,7 +21,7 @@ const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
 export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
-  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary): Record<string, ToolDefinition> {
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -110,7 +111,8 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       "Read a local SQLite task's state and capture limitations. No polling is needed during ordinary work.",
       true,
       z.strictObject(runId),
-      async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery) }),
+      async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery),
+        ...(taskEvents ? { task_recording: taskEvents.status(input.project_id, input.run_id) } : {}) }),
     ),
     memory_list_executions: define(
       "Read direct local-runner process observations linked to this task. Includes test_details with bounded node:test counts/failure names when collected; not_collected is not zero tests. No execution or writes. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",
@@ -118,6 +120,12 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.listExecutions(input.project_id, input.run_id, input.offset),
     ),
   };
+  if (taskEvents && bound) {
+    tools["memory_link_task_events"] = define(
+      "Explicitly link this active task to the current hook observation's session. Only FUTURE events are associated; never guess an observation from time or another chat. Existing active-task links cannot be taken over. Same-session same-task retry returns the saved link. This writes local event-link metadata, not a work report; failures are not queued. Read memory_get_status.task_recording for linkage, interruption observations and the last confirmed saved record. Does not close tasks or verify claims.",
+      false, z.strictObject({ ...runId, observation_id: z.string().regex(/^(?:[a-f0-9]{64}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i) }),
+      input => taskEvents.link(input.project_id, input.run_id, input.observation_id));
+  }
   if (recovery && retry) {
     const recoveryScope = {
       ...projectId,
@@ -205,8 +213,8 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary) {
-    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents);
+  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents);
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {

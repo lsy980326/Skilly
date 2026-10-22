@@ -1,5 +1,6 @@
 import { SqliteSkills } from "./skills.js";
 import { SqliteExecutions } from "./executions.js";
+import { SqliteTaskEvents } from "./task-events.js";
 import { DatabaseSync, type SQLOutputValue, type SQLInputValue } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import {
@@ -17,7 +18,7 @@ export class SqliteMemoryStore implements MemoryStore {
   readonly skills: SqliteSkills;
   readonly executions: SqliteExecutions;
 
-  constructor(path: string) {
+  constructor(private readonly path: string) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
     try {
       this.db.exec("PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL; PRAGMA cache_size = -8192;");
@@ -33,6 +34,7 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   close(): void { this.db.close(); }
+  taskEvents(root?: string) { return new SqliteTaskEvents(this.db, this.path, root); }
 
   private migrate(): void {
     const version = number(this.db.prepare("PRAGMA user_version").get(), "user_version");

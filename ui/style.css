@@ -486,3 +486,12 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .library-references { margin-top: 20px; overflow-wrap: anywhere; }.library-references summary { font-size: 11px; cursor: pointer; }.library-status { font-size: 11px; color: var(--muted); margin-bottom: 0; }
 @media(max-width:850px) { .library-workspace { grid-template-columns: 1fr; }.library-list { max-height: 220px; }.library-detail { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }.library-version-controls { grid-template-columns: 1fr; } }
 @media(max-width:600px) { .document-library { padding: 18px; }.library-originals { grid-template-columns: 1fr; }.top-actions { flex-wrap: wrap; }.library-heading p { flex-basis: 100%; }.library-source-table th,.library-source-table td { padding: 6px; } }
+.task-recording { margin: 20px 0; padding: 18px; border: 1px solid var(--line, #dce3ec); border-radius: 12px; background: var(--panel, #fff); }
+.task-recording h3 { margin: 0 0 14px; font-size: 15px; }
+.recording-track { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.recording-track-step { display: grid; gap: 7px; padding-top: 10px; border-top: 3px solid #5a67f8; }
+.recording-track-step small, .recording-id { color: var(--muted, #68758b); font-size: 11px; overflow-wrap: anywhere; }
+.recording-track-step strong { font-size: 12px; }
+.has-interruption .recording-track-step:last-child { border-color: #c67b25; }
+.recording-interrupt { padding: 10px 12px; background: #fff6e9; color: #835318; border-radius: 7px; font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 700px) { .recording-track { grid-template-columns: 1fr; } }

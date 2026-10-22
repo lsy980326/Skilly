@@ -10,6 +10,7 @@ import { activityFor, ViewerError } from "../../../core/viewer/model.js";
 import type { RunState } from "../../../core/memory/model.js";
 import { SqliteWorkReader } from "./work.js";
 import { recordingCoverage, recordingDelivery } from "../../../core/memory/recording-health.js";
+import { SqliteTaskEvents } from "./task-events.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -183,8 +184,19 @@ export class SqliteViewer {
       throw new ViewerError("invalid_input", "검색어나 상태 필터를 확인해 주세요.");
     }
     this.requireFilters(options);
-    return this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
+    const result = this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
       ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) });
+    if (Array.isArray(result["items"])) {
+      const items = result["items"].map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item) || typeof item["id"] !== "string") throw new ViewerError("unavailable", "작업 목록을 확인하지 못했습니다.");
+        return item;
+      });
+      const ids = items.map(item => String(item["id"]));
+      const observed = new SqliteTaskEvents(this.db, this.path).interruptions(projectId, ids);
+      result["items"] = items.map((item,index) => ({ ...item,
+        interruption_observed: observed ? observed.has(ids[index]!) : null }));
+    }
+    return result;
   }
 
   overview(projectId: string, view: string, offset = 0) {
@@ -216,7 +228,7 @@ export class SqliteViewer {
     const counts = this.db.prepare("SELECT kind, count(*) AS total FROM records WHERE project_id = ? AND run_id = ? GROUP BY kind")
       .all(projectId, runId);
     return {
-      run: this.task(row), records: {
+      run: { ...this.task(row), task_recording: new SqliteTaskEvents(this.db, this.path).status(projectId, runId) }, records: {
         items: records.slice(0, PAGE_SIZE),
         next_before: records.length > PAGE_SIZE ? records[PAGE_SIZE - 1]?.seq : null,
       }, claims_verified: false,

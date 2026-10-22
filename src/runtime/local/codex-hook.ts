@@ -18,7 +18,8 @@ export async function codexHook(argv: string[]): Promise<void> {
   // A reminder uses the configured MCP, never a CLI fallback or direct record write.
   const event = input !== null && typeof input === "object" && "hook_event_name" in input ? input.hook_event_name : undefined;
   const reminder = "Skilly lifecycle observation saved; this is not a work-record receipt. Follow use-skilly through the configured MCP: resolve and recall, confirm a saved task start before editing, checkpoint meaningful changes, inspect recovery after reconnecting and finish your own task. Honor recording opt-out. Never invent missing records or close another session's run.";
+  const link = ` Current observation_id=${saved.observation_id}. If memory_link_task_events is exposed and your own task start is saved, link this current session explicitly before further work. Never use an ID from another chat or infer ownership from time. Linking covers future events only.`;
   process.stdout.write(JSON.stringify(event === "SessionStart" || event === "PostToolUse"
-    ? { hookSpecificOutput: { hookEventName: event, additionalContext: reminder } }
+    ? { hookSpecificOutput: { hookEventName: event, additionalContext: reminder + link } }
     : { systemMessage: `Skilly event ${saved.observation_id} saved. ${reminder}` }) + "\n");
 }
