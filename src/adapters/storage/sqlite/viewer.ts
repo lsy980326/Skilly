@@ -1,4 +1,5 @@
 import { SqliteSkills } from "./skills.js";
+import { SqliteDocuments } from "./documents.js";
 import { markdownReceiptIdentity, type MarkdownSource } from "../../../core/documents/importer.js";
 import { createMemoryContext } from "./context.js";
 import { SqliteExecutions } from "./executions.js";
@@ -56,6 +57,13 @@ export class SqliteViewer {
     this.work = new SqliteWorkReader(this.db, now);
   }
   close(): void { this.db.close(); }
+
+  importedDocuments(projectId: string, options: {id?:string;version?:string;compare?:string;offset?:number;query?:string} = {}) {
+    this.requireProject(projectId);
+    if(this.version()<7) return {items:[],next_offset:null,unavailable:"가져온 문서 보관함은 DB v7에서 지원합니다. 기존 파일은 변경하지 않았습니다."};
+    const reader=new SqliteDocuments(this.db);
+    return options.id ? reader.detail(projectId,options.id,options) : reader.list(projectId,options.offset,options.query);
+  }
 
   documentTargets(projectId: string) {
     this.requireProject(projectId);

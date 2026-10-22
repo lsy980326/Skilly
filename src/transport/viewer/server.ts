@@ -17,6 +17,7 @@ const assets = new Map([
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
   ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
   ["/document-batch.js", { file: "document-batch.js", type: "text/javascript; charset=utf-8" }],
+  ["/document-library.js", { file: "document-library.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {
@@ -76,12 +77,17 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if(url.pathname === "/api/documents") { json(response,200,reader.importedDocuments(project,{offset:offset(url),query:url.searchParams.get("query")??""}));return; }
+      if(url.pathname === "/api/document") {
+        const id=url.searchParams.get("document");if(!id) throw new ViewerError("invalid_input","문서를 선택해 주세요.");
+        json(response,200,reader.importedDocuments(project,{id,offset:offset(url),...(url.searchParams.has("version")?{version:url.searchParams.get("version")!}:{}),...(url.searchParams.has("compare")?{compare:url.searchParams.get("compare")!}:{})}));return;
+      }
       if (url.pathname === "/api/documents/targets") { json(response, 200, reader.documentTargets(project)); return; }
       if (url.pathname === "/api/skills") {
         json(response, 200, reader.skills(project, { offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;

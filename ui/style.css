@@ -467,3 +467,22 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 @media(max-width:700px) { .document-import { width: calc(100vw - 20px); padding: 20px; } .import-grid { grid-template-columns: 1fr; gap: 18px; } .import-footer { flex-wrap: wrap; } .import-status { max-width: none; width: 100%; } .import-original { max-height: 220px; } .top-actions { gap: 8px; } }
 @media(prefers-reduced-motion:reduce) { .flow-step.current::after, .flow-step.current .flow-point, .import-steps .current::before { animation: none; } .flow-step.current::after { display: none; } }
 @media(prefers-reduced-motion:reduce) { .import-file[data-state="saving"] .import-file-state { animation: none; } }
+
+/* Two saved originals share a reading desk; marks identify a range, never a verdict. */
+.document-library { width: min(1220px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 26px; border: 1px solid var(--line); border-radius: 18px; color: var(--ink); background: var(--paper); box-shadow: 0 24px 90px #20304728; }
+.document-library::backdrop { background: #20304755; backdrop-filter: blur(3px); }
+.library-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.library-heading .eyebrow { flex-basis: 100%; }.library-heading h2 { margin: 0; font: 650 26px var(--display); letter-spacing: -.7px; }.library-heading p { margin-right: auto; }
+.library-notice { background: var(--warning); border-left: 2px solid var(--attention); padding: 12px; font-size: 12px; }
+.library-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; margin-top: 22px; }
+.library-sidebar { min-width: 0; }.library-list { max-height: 600px; overflow: auto; margin: 14px 0; }.library-list .task-card { display: grid; gap: 7px; padding: 14px; width: 100%; text-align: left; }
+.library-count { font-size: 11px; color: var(--accent); }.library-search { display: flex; gap: 6px; }.library-search input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.library-detail { min-width: 0; border-left: 1px solid var(--line); padding-left: 24px; }.library-document-title { overflow-wrap: anywhere; font: 650 20px var(--display); margin: 6px 0 18px; }
+.library-version-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.library-source-table { table-layout: fixed; width: 100%; border-collapse: collapse; font-size: 11px; margin: 18px 0 10px; }
+.library-source-table th, .library-source-table td { padding: 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }.library-source-table th:first-child { width: 20%; color: var(--muted); }
+.library-source-table td { font-family: var(--mono); }.library-comparison-kind { font-size: 12px; font-weight: 650; color: var(--accent); }.library-diff-caption { font-size: 11px; color: var(--muted); }
+.library-originals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.library-original { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); }.library-original h4 { margin: 0 0 12px; font-size: 11px; color: var(--muted); }
+.library-original pre { margin: 0; max-height: 440px; min-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.9 var(--mono); }.library-original mark { background: #3d5afe16; color: inherit; border-bottom: 1px solid #3d5afe55; }
+.library-references { margin-top: 20px; overflow-wrap: anywhere; }.library-references summary { font-size: 11px; cursor: pointer; }.library-status { font-size: 11px; color: var(--muted); margin-bottom: 0; }
+@media(max-width:850px) { .library-workspace { grid-template-columns: 1fr; }.library-list { max-height: 220px; }.library-detail { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }.library-version-controls { grid-template-columns: 1fr; } }
+@media(max-width:600px) { .document-library { padding: 18px; }.library-originals { grid-template-columns: 1fr; }.top-actions { flex-wrap: wrap; }.library-heading p { flex-basis: 100%; }.library-source-table th,.library-source-table td { padding: 6px; } }

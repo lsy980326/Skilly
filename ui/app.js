@@ -4,6 +4,7 @@ import { createViewerSession } from "./session.js";
 import { renderMachineReport, renderExecutions, renderValidationEvidence } from "./reports.js";
 import { renderFeatureList, renderFeatureDetail } from "./features.js";
 import { createDocumentImport } from "./documents.js";
+import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
 
 const $ = selector => document.querySelector(selector);
@@ -611,6 +612,11 @@ document.addEventListener("visibilitychange", () => {
   schedule();
 });
 let documentImport;
+let documentLibrary;
+$("#browse-documents").addEventListener("click", () => {
+  documentLibrary ??= createDocumentLibrary({ document, request: api });
+  void documentLibrary.open(state.projects.find(project => project.id === state.project));
+});
 $("#import-document").addEventListener("click", () => {
   if (!state.project) { showError(new Error("먼저 문서를 보관할 서비스를 선택해 주세요.")); return; }
   documentImport ??= createDocumentImport({ document, request: api, onSaved: async (project, run) => {
