@@ -52,8 +52,13 @@ A recording opt-out disables DB writes without creating a replacement file.
 
 This integration uses the installed local stdio server and SQLite. Its tool calls
 do not upload data or call a model. A prohibition on cloud uploads or external
-services alone is not an opt-out from permitted local memory use. Explicit bans
-on MCP, DB writes, or recording still apply. Do not infer a remote connection is
+services alone is not an opt-out from permitted local memory use.
+
+Preserving existing settings or records means leaving their contents unchanged;
+it does not opt out of adding ordinary task reports. Only an explicit request
+not to record disables new memory writes.
+
+Explicit bans on MCP, DB writes, or recording still apply. Do not infer a remote connection is
 local, bypass a host approval, or change settings to make a tool available.
 
 ## Start a task or a new session
@@ -261,6 +266,10 @@ read the saved observation with `memory_list_executions` or linked evidence.
 If saving fails, disclose the gap and do not replay the command. In the next
 session, retrieve these observations alongside the original AI report before
 reusing its validation result. Absence of observations never proves no execution.
+
+For an implementation that changes files, save one meaningful change checkpoint
+after the edits and before finishing the task. A finish summary does not replace
+that change record. Keep this bounded; do not record each command or token.
 
 Call `memory_checkpoint` for decisions, important changes, issues, or next steps:
 `project_id`, `run_id`, concise stable feature `topic`, `kind`, `body`, and a unique
