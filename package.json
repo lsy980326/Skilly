@@ -17,6 +17,7 @@
     "bench": "npm run build && node scripts/bench.mjs",
     "bench:stability": "npm run build && node scripts/bench-stability.mjs",
     "setup:codex": "npm run build && node scripts/setup-codex.mjs",
+    "setup:hooks": "npm run build && node scripts/setup-codex-hooks.mjs",
     "doctor": "node scripts/doctor.mjs",
     "memory:inspect": "node scripts/inspect-memory.mjs"
   },

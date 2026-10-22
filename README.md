@@ -6,7 +6,7 @@
 
 **생각하고 개발하는 AI는 기존 Codex·Cursor입니다.** Skilly는 전달받은 내용을 저장하고, 인덱스로 찾고, 코드로 정한 규칙에 따라 기록 상태를 관리합니다. 자체 AI 모델·추론 서버·LLM API 호출을 넣지 않습니다.
 
-> 현재 단계: **로컬 MVP 0.1.0 + Codex 연동**. CLI와 MCP로 등록·기록·검색·정정 이력·작업 마감을 실행하고, 프로젝트 식별·`use-skilly` 설치로 세션 간 기록을 연결합니다. 모든 기록은 AI가 제출한 미확인 설명입니다. 실행 결과 자동 수집기와 훅은 없습니다. 설정 생성·실제 연결·AI 자동 수행은 [Codex 연동 안내](docs/codex-integration.md)에서 구분합니다.
+> 현재 단계: **로컬 MVP 0.1.0 + Codex 연동**. CLI와 MCP로 등록·기록·검색·정정 이력·작업 마감을 실행하고, 프로젝트 식별·`use-skilly` 설치로 세션 간 기록을 연결합니다. AI 보고는 미확인 설명이며, [실행기 관측](docs/execution-results.md)은 별도로 저장합니다. [선택적 Codex 훅](docs/codex-lifecycle.md)은 최소 이벤트와 기록 절차 안내를 보완하며 자동 설치하지 않습니다. 설정 생성·실제 연결·AI 자동 수행은 [Codex 연동 안내](docs/codex-integration.md)에서 구분합니다.
 
 ## 바로 실행
 

@@ -13,6 +13,7 @@ import { ToolDispatcher } from "../../transport/tools.js";
 import { BoundMemory, type ProjectBinding } from "../../core/memory/binding.js";
 import { WriteRecovery } from "../../core/memory/recovery.js";
 import { SqliteRecoveryJournal } from "../../adapters/storage/sqlite/recovery-journal.js";
+import { readLifecycle } from "../../adapters/storage/sqlite/lifecycle.js";
 
 export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: string) {
   if (!isAbsolute(path)) throw new MemoryError("invalid_path", "Use an absolute local database path.");
@@ -27,7 +28,8 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
   const context = createMemoryContext();
   const service = new MemoryService(store, context);
   const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
-  const recovery = new WriteRecovery(store, journal, context);
+  const recovery = new WriteRecovery(store, journal, context,
+    binding && projectRoot ? () => readLifecycle(path, binding, projectRoot) : undefined);
   const skills = new SkillLibrary(store.skills, context, projectRoot ? new LocalSkillObserver(projectRoot) : undefined);
   const documents = projectRoot ? new SubmittedMarkdownLibrary(binding?.component ? "component:" + binding.component.key : "root:" + createHash("sha256").update(projectRoot).digest("hex"), new DocumentImporter(store, context)) : undefined;
   const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills, documents);

@@ -290,6 +290,26 @@ Read all saved record_ids in part order to reconstruct the same original.
 
 ## Finish and recover
 
+### Optional Codex lifecycle observations
+
+When `memory_recovery_status.lifecycle_observations` is exposed, read it separately
+from work-write receipts. `observations_available` means minimal hook metadata was
+saved, not that any task start, change or finish was saved. A `Stop` is a turn
+boundary, not task completion; an `Interrupt` does not identify which task ended.
+Do not close or resume another session's task from these signals. Missing or
+unavailable observations do not prove zero omissions. Current hook metadata has
+`work_record_linkage: not_observed`; do not invent a linkage from timestamps.
+The hook reminder supplements, never replaces, this skill's MCP recording gate.
+Never switch to CLI/direct DB work-record writes when MCP is unavailable.
+
+Hook setup candidates do not change existing settings or grant trust. Moving a
+folder requires a reviewed new candidate and actual host reconnection; local
+preflight and a manually supplied event do not verify host loading. Honor recording
+opt-out for hooks too: the metadata collector does not inspect prompt text, so an
+installed collector must be disabled in the host or run with `SKILLY_RECORDING=off`.
+If that cannot be confirmed, disclose the limitation rather than claiming all
+recording stopped. Do not change private settings or trust to force it.
+
 Call `memory_finish_task` with a short summary covering **work done, observed
 validation, limitations, next work**, and `outcome: completed | interrupted`.
 Completed means the task ended, not that its claims were verified. Use interrupted

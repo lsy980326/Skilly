@@ -40,6 +40,7 @@ export class WriteRecovery {
     private readonly store: MemoryStore,
     private readonly journal: RecoveryJournal,
     private readonly context: Context,
+    private readonly lifecycle?: () => JsonObject,
   ) {}
 
   async execute(tool: RecoverableWrite, input: JsonObject, invoke: () => Promise<JsonObject>): Promise<JsonObject> {
@@ -130,6 +131,7 @@ export class WriteRecovery {
       next_offset: more ? input.offset + input.limit : null,
       capture: "agent_reports_only", claims_verified: false, automatic_replay: false,
       recording_coverage: recordingCoverage(),
+      ...(this.lifecycle ? { lifecycle_observations: this.lifecycle() } : {}),
       limitation: "Active does not prove a crash. Absence of a receipt is a point-in-time observation. Requests that never reached this server are not captured. Pagination is live, not a snapshot.",
     };
   }

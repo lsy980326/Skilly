@@ -26,4 +26,5 @@ exports/
 
 # Generated local Codex integration (source lives under integrations/)
 .codex/config.toml
+.codex/hooks.json
 .agents/skills/use-skilly/

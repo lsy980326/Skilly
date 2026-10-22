@@ -125,7 +125,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       environment: scope.default(bound?.binding.environment ?? "development"),
     };
     tools["memory_recovery_status"] = define(
-      "Read unfinished/interrupted tasks and retained write requests. delivery_status separates saved, recovery_pending, recovery_blocked and not_retained. recording_coverage declares unreceived writes unobservable; empty lists never prove zero omissions. Active is not proof of a crash. Reads never retry or finish a task. Saved receipts do not verify report content.",
+      "Read unfinished/interrupted tasks and retained write requests. delivery_status separates saved, recovery_pending, recovery_blocked and not_retained. Optional lifecycle_observations contain separately saved hook metadata, never work-record receipts or proof of task completion. recording_coverage declares unreceived writes unobservable; empty lists never prove zero omissions. Active is not proof of a crash. Reads never retry or finish a task. Saved receipts do not verify report content.",
       true,
       z.strictObject({ ...recoveryScope, limit: z.int().min(1).max(20).default(10),
         offset: z.int().min(0).max(1_000_000).default(0), request_id: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
