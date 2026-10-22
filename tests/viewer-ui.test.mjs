@@ -137,6 +137,16 @@ test("a new UI page without a token link restores the authorized connection", as
   assert.equal(reopened.node("#connection-error").hidden, true);
 });
 
+test("component shortcuts navigate without relabelling unknown historical work", async () => {
+  const app = await viewer();
+  const shortcut = app.node("#component-shortcuts").children.find(x => x.textContent.startsWith("미분류 "));
+  assert.ok(shortcut);
+  assert.match(app.node("#classification-note").textContent, /분류를 빠뜨린 작업/);
+  shortcut.listeners.click(); await new Promise(setImmediate);
+  assert.ok(app.requests.some(path => path.includes("component=unclassified")));
+  assert.match(app.node("#classification-note").textContent, /제목만으로 자동 분류하지 않습니다/);
+});
+
 test("process observations and AI reports stay separate and a newly collected result refreshes detail", async () => {
   const executions = { items: [], next_offset: null };
   const app = await viewer({ structured: true, executions });

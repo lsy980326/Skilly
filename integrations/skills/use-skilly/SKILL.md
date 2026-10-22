@@ -111,6 +111,12 @@ such as `{key: "web", name: "Web"}`. On a new task, include it in `components`
 when that input is exposed, and provide a short human-readable `title` and a
 known `branch` separately from repository scope. Do not change repository or
 environment to imitate a component. Preserve them exactly as resolved.
+New servers default a new task's omitted/empty components to the configured
+component. Still supply known components and check the persisted receipt; older
+servers may not default them. A workspace-root task spanning Web/Mobile/API must
+name its actual components explicitly. Do not leave a known target unclassified.
+Existing omitted-component retries keep their original receipt. Never guess a
+historical task's component from its title or rewrite it during a read.
 
 Use `memory_query_overview` when available: `view: "components" | "features" |
 "tasks"` returns bounded structured context. The default stays in the connection's

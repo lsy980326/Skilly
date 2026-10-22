@@ -179,14 +179,19 @@ test("retrospective reports never replace feature state; corrected reports leave
   assert.equal(result.items[0].latest_report, null);
 });
 
-test("bound component is explicit and does not mutate legacy recovery input; service read is project-bound", async t => {
+test("bound component defaults only new work without changing legacy retries; reads remain project-bound", async t => {
   const f = fixture(t), pid = await project(f.call);
+  const legacy = await run(f.call, pid);
   const binding = { version: 1, key: "example", name: "example", repository: "default", environment: "development", component: components[0] };
   const app = openLocal(f.path, binding); t.after(() => app.close());
   const call = (name, input) => app.dispatcher.call(name, input);
   const resolved = await call("memory_resolve_project", {}); assert.deepEqual(resolved.component, components[0]);
-  const legacy = await run(call, pid);
+  assert.equal(await run(call, pid), legacy, "Original omitted-component retry returns its original receipt.");
   assert.deepEqual((await call("memory_get_status", { project_id: pid, run_id: legacy })).run.components, []);
+  const automatic = await run(call, pid, { idempotency_key: "automatic" });
+  assert.deepEqual((await call("memory_get_status", { project_id: pid, run_id: automatic })).run.components, [components[0]]);
+  const explicit = await run(call, pid, { components: [components[1]], idempotency_key: "explicit" });
+  assert.deepEqual((await call("memory_get_status", { project_id: pid, run_id: explicit })).run.components, [components[1]]);
   const api = await run(f.call, pid, { components: [components[1]], repository: "api", idempotency_key: "api" });
   assert.equal((await call("memory_query_overview", { project_id: pid })).items.some(x => x.id === api), false);
   assert.equal((await call("memory_query_overview", { project_id: pid, coverage: "service" })).items.some(x => x.id === api), true);

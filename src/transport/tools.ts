@@ -36,7 +36,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.listProjects(input.cursor, input.limit),
     ),
     memory_begin_task: define(
-      "Begin a local SQLite task after recalling context. Optionally supply actor (the known assistant/operator label); this is a declaration, not authenticated identity. No upload or execution collector.",
+      "Begin a local SQLite task after recalling context. A configured component defaults new tasks when components are omitted or empty; explicit components and identical legacy retry receipts are preserved. Optionally supply actor (the known assistant/operator label); this is a declaration, not authenticated identity. No upload or execution collector.",
       false,
       z.strictObject({
         ...projectId, ...idempotency, goal: z.string().trim().min(1).max(2000),
@@ -47,7 +47,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
         title: z.string().trim().min(1).max(160).optional(),
         branch: scope.optional(), ...workLinks,
       }),
-      input => service.beginTask(input),
+      input => service.beginTask(input, bound?.binding.component),
     ),
     memory_checkpoint: define(
       "Save a note, change or other agent report to local SQLite. For new reports supply report.title and report.summary in readable user-language sentences, plus changes/checks/limitations/next_steps as relevant. Put exact files, symbols, commands and known record_ids in report.technical; keep original detail in body. Never concatenate jargon as a human summary or invent checks. Metadata stays optional for legacy clients and identical retries. Reports are unverified. Use supersedes only for an explicit same-topic/scope correction; reuse the original key and input on retries.",

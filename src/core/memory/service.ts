@@ -56,8 +56,10 @@ export class MemoryService {
     return this.store.work.overview(input);
   }
 
-  async beginTask(input: BeginTaskInput): Promise<JsonObject> {
+  async beginTask(input: BeginTaskInput, defaultComponent?: Component): Promise<JsonObject> {
     return this.mutate(input.project_id, input.idempotency_key, { operation: "begin", ...input }, async () => {
+      // Apply connection metadata only for a new mutation. Keep original retry hashes/receipts intact.
+      const workLinks = links(input.components?.length || !defaultComponent ? input : { ...input, components: [defaultComponent] });
       const project = await this.requireProject(input.project_id);
       const now = this.context.now();
       const run: Run = {
@@ -68,10 +70,10 @@ export class MemoryService {
       };
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision, run,
-        work: { run_id: run.id, ...links(input), ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}) },
+        work: { run_id: run.id, ...workLinks, ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}) },
         result: {
           status: "persisted", run: parseJsonObject(JSON.stringify({ ...run,
-            ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}), ...links(input) })),
+            ...(input.title ? { title: input.title } : {}), ...(input.branch ? { branch: input.branch } : {}), ...workLinks })),
           capture: "agent_reports_only", current_knowledge: [],
           next_tool: "memory_query_context",
         },

@@ -38,9 +38,10 @@ export type Table = keyof typeof rowSchemas;
 export const tables = Object.keys(rowSchemas) as Table[];
 const file = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: integer.nonnegative() });
 export const manifestSchema = z.strictObject({
-  format: z.literal("skilly-local-transfer"), version: z.literal(1), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7)]),
+  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7)]),
   created_at: text, recovery_snapshot_at: text.nullable(), main_snapshot_at: text,
-  project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable() }),
+  project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable(), events: file.optional() }),
   rows: integer.nonnegative().max(MAX_ROWS).nullable(),
-});
+}).refine(value => value.version === 2 ? value.kind === "backup" && value.files.events !== undefined : value.files.events === undefined,
+  "Event backups require format v2; project bundles remain v1.");
 export type Manifest = z.infer<typeof manifestSchema>;

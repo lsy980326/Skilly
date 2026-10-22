@@ -202,6 +202,18 @@ function renderCatalog() {
   task => { void openRun(task.id).catch(showError); });
   $("#workstream-note").textContent = `구성요소를 누르면 관련 작업을 봅니다. ${state.overviewPartial ? `최근 미완료 작업 ${state.overviewTasks.length}개 표시 · 나머지는 목록에서 확인` : "미완료는 종료 기록이 없다는 뜻입니다."}`;
   $("#more-components").hidden = state.nextComponents === null;
+  const shortcuts = $("#component-shortcuts"); shortcuts.replaceChildren();
+  for (const item of [{ key: "", name: "전체", total: state.summary.total }, ...state.components,
+    { key: "unclassified", name: "미분류", total: state.summary.unclassified }]) {
+    const button = element("button", "component-shortcut" + (state.component === item.key ? " selected" : ""));
+    button.setAttribute("aria-pressed", String(state.component === item.key));
+    button.append(document.createTextNode(item.name + " "), element("span", "", item.total ?? 0));
+    button.addEventListener("click", () => { void applyScope("component", item.key).catch(showError); });
+    shortcuts.append(button);
+  }
+  $("#classification-note").textContent = state.component && state.component !== "unclassified"
+    ? "선택한 구성요소의 연결이 저장된 작업입니다. 예전 작업이 없으면 미분류에서도 제목·작업 요청으로 찾아보세요."
+    : "미분류는 구성요소 연결이 없는 기록입니다. 예전 기록과 분류를 빠뜨린 작업이 포함되며, 제목만으로 자동 분류하지 않습니다.";
   for (const [id, items, value, label] of [["component", state.components, state.component, "구성요소"], ["feature", state.features, state.feature, "기능"]]) {
     const select = $(`#${id}-filter`); select.replaceChildren();
     const all = element("option", "", `전체 ${label}`); all.value = ""; select.append(all);

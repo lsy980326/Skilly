@@ -10,6 +10,12 @@ import { captureTaskEvent } from "./task-event-storage.js";
 
 export const lifecycleEvents = ["SessionStart", "PostToolUse", "PreCompact", "Stop", "Interrupt", "SessionEnd"] as const;
 const application = 1397446995;
+export const lifecycleSchemaSql = `CREATE TABLE events (seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE,
+          project_key TEXT NOT NULL, repository TEXT NOT NULL, environment TEXT NOT NULL,
+          root_hash TEXT NOT NULL, session_hash TEXT NOT NULL, turn_hash TEXT,
+          event TEXT NOT NULL, source TEXT, tool_group TEXT, received_at TEXT NOT NULL) STRICT;
+          CREATE INDEX event_scope ON events(project_key, repository, environment, root_hash, seq DESC);
+          PRAGMA application_id=${application}; PRAGMA user_version=1;`;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const text = z.string().min(1).max(256);
 const inputSchema = z.object({ hook_event_name: z.enum(lifecycleEvents), session_id: text,
@@ -49,12 +55,7 @@ export function recordLifecycle(dbPath: string, root: string, value: unknown) {
       const app = db.prepare("PRAGMA application_id").get()?.["application_id"];
       const version = db.prepare("PRAGMA user_version").get()?.["user_version"];
       if (app === 0 && version === 0 && db.prepare("SELECT count(*) AS n FROM sqlite_master").get()?.["n"] === 0) {
-        db.exec(`CREATE TABLE events (seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE,
-          project_key TEXT NOT NULL, repository TEXT NOT NULL, environment TEXT NOT NULL,
-          root_hash TEXT NOT NULL, session_hash TEXT NOT NULL, turn_hash TEXT,
-          event TEXT NOT NULL, source TEXT, tool_group TEXT, received_at TEXT NOT NULL) STRICT;
-          CREATE INDEX event_scope ON events(project_key, repository, environment, root_hash, seq DESC);
-          PRAGMA application_id=${application}; PRAGMA user_version=1;`);
+        db.exec(lifecycleSchemaSql);
       } else validate(db);
       const id = input.hook_event_name === "PostToolUse" && input.tool_use_id
         ? hash(JSON.stringify([binding.key, binding.repository, binding.environment, realpathSync(root), input.session_id, input.tool_use_id])) : randomUUID();
