@@ -512,3 +512,9 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .match-reason { display:block; font-size:11px; line-height:1.5; color:var(--discovery-label); background:#f0f4f8; border-radius:5px; padding:4px 7px; overflow-wrap:anywhere; }
 #feature-search-controls { padding:12px 18px 0; }
 #feature-search-controls .catalog-note { margin:8px 0; }
+
+.feature-knowledge { margin: 24px 0; padding: 20px; border: 1px solid var(--line, #e4e6ed); border-left: 3px solid #6a62cd; border-radius: 12px; background: #fafaff; }
+.feature-knowledge h3 { margin: 0 0 12px; }
+.knowledge-evidence { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e4e6ed; overflow-wrap: anywhere; }
+.knowledge-evidence .button { margin-top: 10px; }
+.knowledge-conflicts { padding-left: 18px; overflow-wrap: anywhere; }

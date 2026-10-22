@@ -3,7 +3,7 @@ import type { OverviewQuery } from "../../../core/work/model.js";
 import { parseJsonObject } from "../../../core/memory/model.js";
 
 /** Latest task report is context, not an inferred feature state or verified fact. */
-function featureScope(input: OverviewQuery, featureKey: string) {
+export function featureScope(input: OverviewQuery, featureKey: string) {
   const filters = ["r.project_id = ?", "x.feature_key = ?"], params: SQLInputValue[] = [input.project_id, featureKey];
   for (const field of ["repository", "environment"] as const) {
     if (input[field]) { filters.push(`r.${field} = ?`); params.push(input[field]); }

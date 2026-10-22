@@ -20,6 +20,8 @@ export function renderFeatureList(container, features, selected, { element, badg
       element("p", "feature-description", feature.description || "기능 설명 미수집"),
       element("p", "feature-preview", feature.latest_activity?.report?.summary || "최근 변경 요약 없음"));
     card.append(renderMatchReasons(feature,element));
+    const knowledge = feature.current_knowledge;
+    card.append(badge(knowledgeLabels[knowledge?.status] || "근거 미확인", knowledge?.status === "conflict" ? "warning" : "feature"));
     const next = feature.latest_activity?.report?.next_steps;
     card.append(element("p", "feature-next", next?.length ? `다음 · ${next[0]}` : "남은 작업 보고 없음"),
       element("small", "catalog-note", `연결 작업 ${feature.total ?? 0} · 미완료 ${feature.unfinished ?? 0}`));
@@ -33,6 +35,7 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   panel.append(element("p", "eyebrow", "FEATURE BRIEF"), element("h2", "", feature.name),
     element("p", "feature-purpose", feature.description || "이 기능의 설명은 아직 기록되지 않았습니다."));
   panel.append(renderMatchReasons(feature,element));
+  panel.append(renderFeatureKnowledge(feature.current_knowledge, { element, badge, date, onReport }));
   const discovery=element("section","feature-section");discovery.append(element("h3","","찾기에 사용하는 등록 정보"));
   for(const [key,label]of[["aliases","별칭"],["code_paths","코드 경로"]]) {
     const rows=feature.discovery?.[key]||[];
@@ -99,4 +102,47 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   }
   panel.append(actions, element("p", "record-id", `기능 ${feature.key} · 소급 보고와 정정된 기록은 현재 상태·최근 보고를 대체하지 않습니다.`));
   return panel;
+}
+
+
+const knowledgeLabels = { current: "현재 버전 근거 있음", stale: "오래된 검사", conflict: "검사 결과 충돌", unknown: "근거 미확인" };
+const knowledgeReasons = {
+  opposing_test_observations: "같은 코드 버전·명령에서 통과와 실패가 함께 관측됐습니다. 최근 성공만으로 충돌을 덮지 않습니다.",
+  observation_limit_exceeded: "조회 상한을 넘어 전체 근거를 판정하지 못했습니다. 연결 작업에서 확인하세요.",
+  incomparable_observations: "현재 코드와 비교할 수 없거나 검사 결과가 불완전한 관측이 있습니다.",
+  compatible_test_observations: "허용된 프로젝트 경로에서 현재 Git 버전과 비교 가능한 검사 관측이 있습니다.",
+  source_version_changed: "검사 당시와 현재 코드 버전이 달라 당시 결과를 현재 성공으로 재사용할 수 없습니다.",
+  no_direct_test_observations: "직접 수집된 검사 근거가 없습니다. AI의 구현·검사 보고만으로 확정하지 않습니다.",
+};
+const evidenceReasons = { source_not_clean: "코드가 dirty 또는 관측 불가 상태", matching_clean_observations: "현재 커밋과 일치", different_commit: "현재 커밋이 달라짐",
+  changed_during_execution: "실행 중 커밋 변경", uncommitted_changes: "미커밋 변경으로 비교 불가",
+  comparison_root_not_configured: "비교할 프로젝트 경로 미설정", legacy_not_collected: "당시 코드 정보 없음",
+  execution_unfinished: "실행 종료·코드 정보 불완전", test_verdict_unavailable: "검사 상세·정상 종료 근거 부족",
+  source_unavailable: "코드 관측 불가", execution_scope_mismatch: "실행 범위 불일치", comparison_scope_mismatch: "현재 비교 범위 불일치" };
+export function renderFeatureKnowledge(knowledge, { element, badge, date, onReport }) {
+  const box = element("section", "feature-knowledge");
+  box.append(element("h3", "", "지금 판단할 수 있는 근거"),
+    badge(knowledgeLabels[knowledge?.status] || "근거 미확인", knowledge?.status === "conflict" ? "warning" : "feature"),
+    element("p", "", knowledgeReasons[knowledge?.reason] || "조회 정보가 없거나 생략돼 현재 근거를 판정할 수 없습니다."));
+  const counts = knowledge?.counts;
+  if (counts) box.append(element("p", "catalog-note", `관측 기준 · 현재 버전 ${counts.current}건 · 오래됨 ${counts.stale}건 · 미확인 ${counts.unknown}건 · 현재 통과 ${counts.passed} / 실패 ${counts.failed}`));
+  box.append(element("p", "catalog-note", "이 판정은 검사 근거의 코드 버전 적합성입니다. 기능 전체의 정상 동작·배포·의존성·실행환경을 검증하지 않으며 AI 보고를 확정 사실로 승격하지 않습니다."));
+  if (knowledge?.conflicts?.length) {
+    const list = element("ul", "knowledge-conflicts");
+    for (const conflict of knowledge.conflicts) list.append(element("li", "", `충돌 · ${conflict.repository} / ${conflict.environment} · ${conflict.commit?.slice(0, 12) || "버전 미확인"} · 실행 ${conflict.execution_ids.join(", ")}${conflict.ids_truncated ? " (일부 표시)" : ""}`));
+    box.append(list);
+  }
+  const results = { passed: "통과 관측", failed: "실패 관측", unknown: "결과 미확인" };
+  for (const row of knowledge?.evidence || []) {
+    const item = element("div", "knowledge-evidence");
+    item.append(element("strong", "", `${knowledgeLabels[row.status] || "근거 미확인"} · ${results[row.result] || "결과 미확인"}`),
+      element("p", "catalog-note", `${evidenceReasons[row.reason] || "비교 불가"} · ${row.repository} / ${row.environment} · 검사 커밋 ${row.commit?.slice(0, 12) || "없음"} / 현재 ${row.current_commit?.slice(0, 12) || "미확인"}`));
+    if (row.counts) item.append(element("p", "catalog-note", `검사 ${row.counts.tests} · 통과 ${row.counts.passed} / 실패 ${row.counts.failed} / 취소 ${row.counts.cancelled} / 건너뜀 ${row.counts.skipped}`));
+    item.append(element("code", "feature-source", `실행 ${row.execution_id} · 작업 ${row.run_id}`));
+    if (row.comparison?.checked_at) item.append(element("small", "catalog-note", `비교 시각 ${date(row.comparison.checked_at)}`));
+    const button = element("button", "button", "근거 작업 보기"); button.addEventListener("click", () => onReport(row.run_id)); item.append(button);
+    box.append(item);
+  }
+  if (knowledge?.truncated || knowledge?.evidence_truncated || knowledge?.conflicts_truncated) box.append(element("p", "recovery-note", "근거 일부 표시 · 조회 범위와 표시 상한을 확인하세요. 생략은 성공을 뜻하지 않습니다."));
+  return box;
 }

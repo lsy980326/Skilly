@@ -1,3 +1,5 @@
+import { featureKnowledge } from "./feature-knowledge.js";
+import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { unreviewedRunSql, SqliteRunReviews } from "./run-reviews.js";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/memory/model.js";
@@ -17,7 +19,7 @@ function json(value: unknown): JsonObject { return parseJsonObject(JSON.stringif
 
 /** Shared projection for MCP and HTTP. Reads never create/migrate/enrich data. */
 export class SqliteWorkReader implements WorkReader {
-  constructor(private readonly db: DatabaseSync, private readonly now: () => number = Date.now) {}
+  constructor(private readonly db: DatabaseSync, private readonly now: () => number = Date.now, private readonly sources?: SourceProvider) {}
   private version(): number { return Number(this.db.prepare("PRAGMA user_version").get()?.["user_version"]); }
 
   identity(projectId: string, runId: string): WorkIdentity {
@@ -58,6 +60,12 @@ export class SqliteWorkReader implements WorkReader {
     const { project_id: pid, view, offset, limit } = input;
     const version = this.version();
     const discovery = new FeatureDiscovery(this.db, version);
+    const observedSources = new Map<string, ReturnType<SourceProvider>>();
+    const knowledgeSources: SourceProvider = recorded => {
+      const key = JSON.stringify([recorded.root_hash, recorded.project_key, recorded.repository, recorded.environment]);
+      if (!observedSources.has(key)) observedSources.set(key, this.sources?.(recorded));
+      return observedSources.get(key);
+    };
     const conditions = ["r.project_id = ?"], params: SQLInputValue[] = [pid];
     for (const field of ["repository", "environment"] as const) {
       if (input[field]) { conditions.push(`r.${field} = ?`); params.push(input[field]); }
@@ -154,7 +162,7 @@ export class SqliteWorkReader implements WorkReader {
           ORDER BY r.observed_at DESC, r.seq DESC LIMIT 1`).get(pid, text(row, "key"),
             ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.feature ? [input.feature] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
         item = json({ ...row, discovery: discovery.metadata(pid,text(row,"key"),input), match_reasons: discovery.reasons({key:text(row,"key"),name:text(row,"name"),description:text(row,"description")},input), latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
-          latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: featureExecutions(this.db, input, text(row, "key")) });
+          latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: featureExecutions(this.db, input, text(row, "key")), current_knowledge: featureKnowledge(this.db, input, text(row, "key"), knowledgeSources) });
       } else item = json(row);
       items.push(item);
       if (new TextEncoder().encode(JSON.stringify(response)).byteLength > 30 * 1024) {

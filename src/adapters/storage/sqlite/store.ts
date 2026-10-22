@@ -27,7 +27,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec("PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL; PRAGMA cache_size = -8192;");
       this.migrate();
       this.db.exec("PRAGMA journal_mode = WAL;");
-      this.work = new SqliteWorkReader(this.db);
+      this.work = new SqliteWorkReader(this.db, Date.now, sources);
       this.reviews = new SqliteRunReviews(this.db);
       this.skills = new SqliteSkills(this.db);
       this.executions = new SqliteExecutions(this.db, sources);

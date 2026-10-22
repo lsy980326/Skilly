@@ -57,7 +57,7 @@ export class SqliteViewer {
   constructor(private readonly path: string, private readonly now: () => number = Date.now, private readonly sources?: SourceProvider) {
     this.db = readOnly(path);
     try { this.version(); } catch (error) { this.db.close(); throw error; }
-    this.work = new SqliteWorkReader(this.db, now);
+    this.work = new SqliteWorkReader(this.db, now, sources);
   }
   close(): void { this.db.close(); }
 

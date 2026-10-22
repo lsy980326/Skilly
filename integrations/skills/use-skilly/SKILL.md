@@ -157,6 +157,18 @@ later reconstructions retrospective; they must not become the latest feature sta
 Keep check names short (at most 120 characters); put commands in check `detail`.
 Do not run another AI or reconstruct a second independent source of truth.
 
+### Feature evidence currentness
+
+When `memory_query_overview(view: "features")` returns `current_knowledge`, read
+its status, reason, counts, evidence IDs and truncation together. `current` means
+comparable direct checks at the configured Git version, not a verified feature
+or deployment; failed checks can also be current. Keep AI feature-state reports
+separate. `stale` cannot be reused as current success. `conflict` means opposing
+test observations for the same scope/version/command, not merely different
+checks or historical state transitions. `unknown`, omitted projections and a
+truncated scan are not success. Follow the returned run/execution IDs for the
+original evidence; never execute stored command strings or guess missing roots.
+
 ### Feature aliases and code paths
 
 When the exposed `features` schema supports `aliases` and `code_paths`, register

@@ -591,3 +591,11 @@ test('feature search sends its own query, explains matches and does not choose a
   await app.document.listeners.visibilitychange(); app.releaseRequest(); await polling; await new Promise(setImmediate);
   assert.ok(app.node("#detail").querySelectorAll(".timeline-entry").some(n => n.querySelector("details").dataset.record === "older"));
 });
+
+test('feature knowledge distinguishes current stale conflict unknown and keeps AI status separate',async()=>{
+ for(const [status,label]of[['current','현재 버전 근거 있음'],['stale','오래된 검사'],['conflict','검사 결과 충돌'],['unknown','근거 미확인']]){
+  const app=await viewer({featureDetail:{latest_report:{update:{state:'implemented',summary:'AI 완료 보고'}},current_knowledge:{status,reason:status==='conflict'?'opposing_test_observations':'incomparable_observations',counts:{current:1,stale:1,unknown:1,passed:1,failed:0},evidence:[{execution_id:'evidence<script>',run_id:'run',repository:'main',environment:'test',status:'unknown',result:'unknown',reason:'uncommitted_changes',commit:null}],claims_verified:false}}});
+  await app.node('#show-features').listeners.click();
+  assert.match(app.node('#detail').textContent,new RegExp(label));assert.match(app.node('#detail').textContent,/AI 完了|AI 완료 보고/);assert.match(app.node('#detail').textContent,/승격하지 않습니다/);assert.match(app.node('#detail').textContent,/evidence<script>/);
+ }
+});
