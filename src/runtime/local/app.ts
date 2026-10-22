@@ -1,8 +1,9 @@
+import { createMemoryContext } from "../../adapters/storage/sqlite/context.js";
 import { DocumentImporter } from "../../core/documents/importer.js";
 import { SubmittedMarkdownLibrary } from "../../adapters/documents/markdown.js";
 import { SkillLibrary } from "../../core/skills/model.js";
 import { LocalSkillObserver } from "../../adapters/skills/local-observer.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { closeSync, constants, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { MemoryService } from "../../core/memory/service.js";
@@ -23,10 +24,7 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
   }
   if (!lstatSync(path).isFile()) throw new MemoryError("invalid_path", "The database must be a regular local file.");
   const store = new SqliteMemoryStore(path);
-  const context = {
-    id: randomUUID, now: () => new Date().toISOString(),
-    hash: (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex"),
-  };
+  const context = createMemoryContext();
   const service = new MemoryService(store, context);
   const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
   const recovery = new WriteRecovery(store, journal, context);
@@ -42,16 +40,4 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
       return closing;
     },
   };
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value).filter(([, entry]) => entry !== undefined)
-      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(",")}}`;
-  }
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new MemoryError("invalid_input", "Unsupported input value.");
-  return encoded;
 }

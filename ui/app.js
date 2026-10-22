@@ -3,6 +3,7 @@ import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
 import { renderMachineReport, renderExecutions, renderValidationEvidence } from "./reports.js";
 import { renderFeatureList, renderFeatureDetail } from "./features.js";
+import { createDocumentImport } from "./documents.js";
 import "./layout.js";
 
 const $ = selector => document.querySelector(selector);
@@ -80,11 +81,11 @@ function badge(label, style, dot = false) {
   node.append(document.createTextNode(label));
   return node;
 }
-async function api(path) {
+async function api(path, options = {}) {
   const controller = new AbortController();
   let timeout;
   const request = async () => {
-    const response = await fetch(path, { headers: session.headers(), credentials: "omit", cache: "no-store", signal: controller.signal });
+    const response = await fetch(path, { ...options, headers: { ...session.headers(), ...(options.body ? { "Content-Type": "application/json" } : {}) }, credentials: "omit", cache: "no-store", signal: controller.signal });
     if (response.status === 401) session.reject();
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "기록을 읽지 못했습니다.");
@@ -365,23 +366,28 @@ function renderDetail(task, counts = {}, animateNew = true) {
   request.append(element("summary", "", "전체 작업 요청"), element("p", "record-body", task.goal));
   panel.append(request);
   const metadata = element("dl", "metadata");
-  metadata.append(meta("작성 주체", task.actor || "작성자 미수집", task.actor ? "AI가 제공한 이름 · 신원 인증 아님" : "이 기록에는 작성자 정보가 없습니다"),
+  metadata.append(meta("작성 주체", task.actor || "작성자 미수집", task.actor === "로컬 화면" ? "화면에서 요청한 가져오기 · 신원 인증 아님" : task.actor ? "AI가 제공한 이름 · 신원 인증 아님" : "이 기록에는 작성자 정보가 없습니다"),
     meta("마지막 기록", date(task.updated_at), relativeTime(task.updated_at, "small")),
     meta("저장소 / 환경", `${task.repository} / ${task.environment}`, task.branch ? `브랜치 ${task.branch}` : undefined),
     meta("작업 시작", date(task.created_at)));
   panel.append(metadata);
   const flow = element("div", "flow");
+  flow.dataset.state = task.state;
+  flow.setAttribute("aria-label", "작업 기록의 저장 단계 · 실제 실행 감지 아님");
   const progress = Object.entries(counts).some(([kind, count]) => kind !== "summary" && count > 0);
+  let flowIndex = 0;
   for (const [label, hint, done] of [
     ["시작", "시작 저장됨", true],
     ["진행 기록", progress ? "변경·진행 보고 있음" : "아직 없음", progress],
     [task.state === "interrupted" ? "중단" : "종료", task.state === "active" ? "마감되지 않음" : "마감 저장됨", task.state !== "active"],
   ]) {
     const step = element("div", `flow-step${done ? " done" : ""}`);
+    if (task.state === "active" && flowIndex === (progress ? 1 : 0)) { step.className += " current"; step.setAttribute("aria-current", "step"); }
+    flowIndex++;
     step.append(element("span", "flow-point"), document.createTextNode(label), element("small", "", hint));
     flow.append(step);
   }
-  panel.append(flow, element("p", "activity-note", task.state === "active"
+  panel.append(flow, element("p", "flow-caption", task.state === "active" ? "마감 대기 · 저장된 단계의 흐름 표시이며 실제 실행 감지가 아닙니다." : "저장된 단계 · 종료된 기록은 움직이지 않습니다."), element("p", "activity-note", task.state === "active"
     ? "최근 활동은 5분 이내 기록이 저장됐다는 뜻입니다. 실시간 실행 여부는 수집하지 않으므로, 오래 갱신되지 않은 작업은 AI 채팅에서 확인하세요."
     : "마감은 작업 상태를 뜻합니다. 기록 내용의 정확성이나 테스트 성공을 자동 검증한 것은 아닙니다."));
   panel.append(renderValidationEvidence({ checks: state.records.flatMap(record => record.report?.checks ?? []),
@@ -396,7 +402,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
     } catch (error) { showError(error); }
   } }));
   const heading = element("div", "timeline-heading");
-  heading.append(element("h3", "", "기록 타임라인"), element("span", "", "최근 저장 순 · AI가 작성한 보고"));
+  heading.append(element("h3", "", "기록 타임라인"), element("span", "", "최근 저장 순 · 원문과 보고"));
   panel.append(heading);
   if (historyGap) panel.append(element("p", "catalog-note", "새 기록이 많아 이전 페이지와 최신 기록 사이에 미조회 구간이 있을 수 있습니다. 상단 새로고침으로 최신부터 다시 읽어 주세요."));
   if (!state.records.length) panel.append(empty("아직 상세 기록이 없습니다", "작업 시작만 저장됐습니다. 변경·종료 보고가 들어오면 나타납니다."));
@@ -603,6 +609,18 @@ document.addEventListener("keydown", event => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) { refreshRelativeTimes(); void refresh(true); }
   schedule();
+});
+let documentImport;
+$("#import-document").addEventListener("click", () => {
+  if (!state.project) { showError(new Error("먼저 문서를 보관할 서비스를 선택해 주세요.")); return; }
+  documentImport ??= createDocumentImport({ document, request: api, onSaved: async (project, run) => {
+    try {
+      await selectProject(project); state.query = ""; state.component = ""; state.feature = ""; state.filter = "all";
+      $("#search").value = ""; $("#component-filter").value = ""; $("#feature-filter").value = "";
+      listPaged = false; detailPaged = false; await changeView("runs"); await refresh(); await openRun(run);
+    } catch (error) { showError(error); }
+  } });
+  void documentImport.open(state.projects.find(project => project.id === state.project));
 });
 await refresh();
 schedule();

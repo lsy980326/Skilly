@@ -55,6 +55,25 @@ export class SqliteViewer {
   }
   close(): void { this.db.close(); }
 
+  documentTargets(projectId: string) {
+    this.requireProject(projectId);
+    if (this.version() !== 7) return { items: [], unavailable: "문서 가져오기는 DB v7에서 지원합니다. 기존 파일은 변경하지 않았습니다." };
+    const rows = this.db.prepare(`SELECT MAX(r.id) id, r.repository, r.environment, COALESCE(c.key,'') component_key, COALESCE(c.name,'서비스 공통') component_name
+      FROM runs r LEFT JOIN run_components rc ON rc.project_id=r.project_id AND rc.run_id=r.id
+      LEFT JOIN components c ON c.project_id=rc.project_id AND c.key=rc.component_key
+      WHERE r.project_id=? GROUP BY r.repository,r.environment,c.key,c.name
+      ORDER BY r.repository,r.environment,component_name LIMIT 101`).all(projectId);
+    return { items: rows.slice(0, 100), truncated: rows.length > 100 };
+  }
+
+  documentTarget(projectId: string, runId: string, componentKey: string) {
+    if (this.version() !== 7) throw new ViewerError("invalid_input", "문서 가져오기는 DB v7에서 지원합니다. 먼저 설치 버전을 확인해 주세요.");
+    const task = this.detail(projectId, runId).run;
+    const component = componentKey ? task.components.find(item => item.key === componentKey) : undefined;
+    if (componentKey && !component) throw new ViewerError("invalid_input", "선택한 작업 공간의 구성요소를 다시 확인해 주세요.");
+    return { repository: task.repository, environment: task.environment, component };
+  }
+
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988

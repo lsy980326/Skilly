@@ -3,6 +3,8 @@ import { readFileSync, lstatSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { ViewerError } from "../../core/viewer/model.js";
 import { SqliteViewer } from "../../adapters/storage/sqlite/viewer.js";
+import { MemoryError } from "../../core/memory/model.js";
+import { documentBody, ViewerDocuments } from "./documents.js";
 
 const assets = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -13,6 +15,7 @@ const assets = new Map([
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
+  ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {
@@ -35,8 +38,9 @@ export async function startViewer(options: { db: string; port?: number }) {
   }]));
   let contents = loadContents();
   let reader = new SqliteViewer(options.db);
+  const documents = new ViewerDocuments(options.db, token);
   let origin = "";
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("X-Content-Type-Options", "nosniff");
@@ -47,7 +51,8 @@ export async function startViewer(options: { db: string; port?: number }) {
       || request.headers["sec-fetch-site"] === "cross-site") {
       json(response, 403, { error: "이 컴퓨터의 Skilly 화면에서만 접근할 수 있습니다." }); return;
     }
-    if (request.method !== "GET") {
+    const documentPost = request.method === "POST" && /^\/api\/documents\/(preview|import)$/.test(request.url ?? "");
+    if (request.method !== "GET" && !documentPost) {
       response.setHeader("Allow", "GET");
       json(response, 405, { error: "조회만 지원합니다." }); return;
     }
@@ -63,12 +68,18 @@ export async function startViewer(options: { db: string; port?: number }) {
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
         json(response, 401, { error: "터미널에 표시된 연결 주소로 다시 열어 주세요." }); return;
       }
+      if (documentPost) {
+        if (request.headers.origin !== origin) { json(response, 403, { error: "Skilly 화면에서 문서를 선택해 주세요." }); return; }
+        const input = await documentBody(request);
+        json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
+      }
       const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if (url.pathname === "/api/documents/targets") { json(response, 200, reader.documentTargets(project)); return; }
       if (url.pathname === "/api/skills") {
         json(response, 200, reader.skills(project, { offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
       }
@@ -94,6 +105,11 @@ export async function startViewer(options: { db: string; port?: number }) {
       }
       json(response, 404, { error: "페이지를 찾을 수 없습니다." });
     } catch (error) {
+      if (error instanceof MemoryError) {
+        const invalid = ["invalid_path", "invalid_document", "document_limit", "source_changed"].includes(error.code);
+        json(response, invalid ? 400 : 503, { error: invalid ? "48 KiB 이하의 공개 UTF-8 Markdown 문서와 올바른 문서 이름을 선택해 주세요."
+          : "저장 결과를 확인하지 못했습니다. 같은 문서와 저장 위치로 다시 시도해 주세요. 기존 기록은 삭제하지 않았습니다." }); return;
+      }
       const status = error instanceof ViewerError ? { invalid_input: 400, not_found: 404, unavailable: 503 }[error.code] : 503;
       json(response, status, { error: error instanceof ViewerError ? error.message : "DB를 읽지 못했습니다. 파일 상태를 확인한 뒤 새로고침해 주세요." });
     }

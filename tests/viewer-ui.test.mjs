@@ -67,7 +67,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${app}\n})()`, {
+  const documents = readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${featureUI}\n${documents}\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -483,4 +484,14 @@ test('expanded older records remain while polling updates the latest record and 
  assert.equal(app.node('#detail').querySelectorAll('.timeline-entry').length,2);const calls=app.calls();app.saveRecord('new-head');app.updateTask({title:'갱신된 작업'});await app.tick();
  assert.ok(app.calls()>calls);assert.match(app.node('#components').textContent,/갱신된 작업/);assert.ok(app.node('#detail').querySelectorAll('.timeline-entry').some(node=>node.querySelector('details').dataset.record==='older'));
  assert.ok(app.node('#detail').querySelectorAll('.timeline-entry').some(node=>node.querySelector('details').dataset.record==='new-head'));
+});
+
+test('only unfinished storage stages have a current flow point; closed tasks stay still',async()=>{
+ const app=await viewer({active:true});assert.equal(app.node('#detail').querySelector('.flow').dataset.state,'active');
+ assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,1);
+ assert.match(app.node('#detail').textContent,/마감 대기.*실제 실행 감지/);
+ app.updateTask({state:'completed',activity:'completed'});await app.tick();
+ assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,0);
+ app.updateTask({state:'interrupted',activity:'interrupted'});await app.tick();
+ assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,0);
 });

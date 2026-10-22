@@ -1,4 +1,4 @@
-import { MemoryError, type Context, type JsonObject, type MemoryRecord } from "../memory/model.js";
+import { MemoryError, type Context, type JsonObject, type MemoryRecord, type Run } from "../memory/model.js";
 import type { MemoryStore } from "../memory/ports.js";
 import type { WorkMutation } from "../work/model.js";
 
@@ -16,6 +16,14 @@ export function markdownParts(text: string): string[] {
 /** An imported document is retrospective source material, never current verified knowledge. */
 export class DocumentImporter {
   constructor(private readonly store: MemoryStore, private readonly context: Context) {}
+  async stored(projectId: string, scope: Pick<Run, "repository" | "environment">, source: MarkdownSource, text: string) {
+    const key = "md:v1:" + this.context.hash([scope.repository, scope.environment, source.source_root, source.path, source.sha256]);
+    const existing = await this.store.getReceipt(projectId, key);
+    if (existing && existing.hash !== this.context.hash({ operation: "import_markdown", repository: scope.repository, environment: scope.environment,
+      source_root: source.source_root, path: source.path, sha256: source.sha256, text }))
+      throw new MemoryError("idempotency_conflict", "Document identity conflicts with a saved import.");
+    return existing?.result;
+  }
   async import(projectId: string, runId: string, source: MarkdownSource, text: string): Promise<JsonObject> {
     const run = await this.store.getRun(projectId, runId);
     if (!run || run.state !== "active") throw new MemoryError("run_closed", "Use this project's active task for document import.");
