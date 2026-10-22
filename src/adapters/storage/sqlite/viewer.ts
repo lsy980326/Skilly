@@ -66,8 +66,14 @@ export class SqliteViewer {
     return { items: rows.slice(0, 100), truncated: rows.length > 100 };
   }
 
-  documentTarget(projectId: string, runId: string, componentKey: string) {
+  documentTarget(projectId: string, runId: string | undefined, componentKey: string, scope?: { repository: string; environment: string }) {
+    this.requireProject(projectId);
     if (this.version() !== 7) throw new ViewerError("invalid_input", "문서 가져오기는 DB v7에서 지원합니다. 먼저 설치 버전을 확인해 주세요.");
+    if (scope) {
+      if (runId || componentKey) throw new ViewerError("invalid_input", "새 작업 공간은 서비스 공통으로 저장합니다.");
+      return { repository: scope.repository, environment: scope.environment, component: undefined };
+    }
+    if (!runId) throw new ViewerError("invalid_input", "저장할 작업 공간을 선택해 주세요.");
     const task = this.detail(projectId, runId).run;
     const component = componentKey ? task.components.find(item => item.key === componentKey) : undefined;
     if (componentKey && !component) throw new ViewerError("invalid_input", "선택한 작업 공간의 구성요소를 다시 확인해 주세요.");

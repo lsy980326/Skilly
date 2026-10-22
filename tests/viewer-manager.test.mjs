@@ -121,3 +121,25 @@ test("a crashed test worker is reported unresponsive and start recovers only its
   assert.equal((await fetch(`${recovered.origin}/api/projects`, { headers: headers(started) })).status, 401);
   assert.equal((await fetch(`${recovered.origin}/api/projects`, { headers: headers(recovered) })).status, 200);
 });
+
+test("code restart replaces the worker while preserving origin, authorization, records and reload support", async t => {
+  const f=await fixture(t), before=readFileSync(f.db), started=await manageViewer('start',f.db,0);
+  const restarted=await manageViewer('restart-code',f.db,0);
+  assert.equal(restarted.restart_mode,'process_replaced');assert.notEqual(restarted.pid,started.pid);
+  assert.equal(restarted.origin,started.origin);assert.equal(restarted.url,started.url);
+  assert.equal((await fetch(started.origin+'/api/projects',{headers:headers(started)})).status,200);
+  assert.equal((await fetch(started.origin+'/api/projects')).status,401);
+  assert.equal((await fetch(started.origin+'/api/projects',{headers:{...headers(started),Origin:'https://example.com'}})).status,403);
+  assert.equal((await manageViewer('restart',f.db,0)).pid,restarted.pid);
+  assert.deepEqual(readFileSync(f.db),before);
+});
+
+test("code restart preflight failure preserves the existing authenticated process", async t => {
+  const f=await fixture(t), started=await manageViewer('start',f.db,0);
+  renameSync(f.db,f.db+'.original');writeFileSync(f.db,'not sqlite');
+  try {
+    await assert.rejects(manageViewer('restart-code',f.db,0));
+    assert.equal((await fetch(started.origin+'/api/projects',{headers:headers(started)})).status,200);
+    assert.equal((await control(f.paths.db,f.paths.socket,'connect')).pid,started.pid);
+  } finally { rmSync(f.db);renameSync(f.db+'.original',f.db); }
+});

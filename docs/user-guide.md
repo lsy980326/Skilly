@@ -125,6 +125,7 @@ Skilly 저장소에서 다음 명령을 사용한다. 기본 DB는 이 저장소
 npm run viewer -- start
 npm run viewer -- status
 npm run viewer -- restart
+npm run viewer -- restart-code
 npm run viewer -- stop
 ```
 
@@ -137,7 +138,11 @@ npm run viewer -- stop
 - `restart`: 같은 프로세스에서 화면 파일과 읽기 전용 DB를 다시 연다(`reload_in_place`).
   주소·포트·인증은 유지한다. 새 자산과 DB 조회가 모두 준비돼야 교체하며 실패 시 기존
   화면을 유지한다. 실행 중인 TypeScript 서버 모듈 자체를 다시 로드하는 것은 아니다.
-  서버 모듈을 업데이트했다면 `stop` 후 `start`하고 새 인증 주소로 연결한다.
+  서버 모듈을 업데이트했다면 `restart-code`를 사용한다.
+- `restart-code`: 실행 중인 정상 관리 서버의 주소·인증을 메모리로 전달해 서버
+  프로세스를 교체한다. 새 코드·화면·DB 조회를 먼저 확인하며 준비 실패 시 기존 서버를
+  유지한다. 교체 중에는 잠시 연결이 끊길 수 있다. 종료 후 새 프로세스 시작이 실패하면
+  `status`로 확인한다. 인증을 파일·명령행에 저장하거나 자동 시작을 등록하지 않는다.
 - `stop`: 이 DB의 관리 서버가 맞는지 확인한 뒤 그 서버만 종료한다. DB·복구 요청·기록을
   삭제하지 않는다. 이후 `start`는 새 인증 주소를 발급한다.
 

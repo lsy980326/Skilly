@@ -9,8 +9,9 @@ import { MemoryService } from "../../core/memory/service.js";
 import { ViewerError } from "../../core/viewer/model.js";
 import { createMemoryContext } from "../../adapters/storage/sqlite/context.js";
 
-const inputSchema = z.strictObject({ project_id: z.uuid(), target_run_id: z.uuid(), component_key: z.string().max(80),
-  path: z.string().min(1).max(300), text: z.string().min(1).max(65536), preview_token: z.string().max(100).optional() });
+const inputSchema = z.strictObject({ project_id: z.uuid(), target_run_id: z.uuid().optional(), target_scope: z.strictObject({
+  repository: z.string().trim().min(1).max(100), environment: z.string().trim().min(1).max(100) }).optional(), component_key: z.string().max(80),
+  path: z.string().min(1).max(300), text: z.string().min(1).max(65536), preview_token: z.string().max(100).optional() }).refine(input => Boolean(input.target_run_id) !== Boolean(input.target_scope), { message: "Choose one destination" });
 const context = createMemoryContext();
 
 export async function documentBody(request: IncomingMessage): Promise<unknown> {
@@ -34,7 +35,7 @@ export class ViewerDocuments {
     const parsed = inputSchema.safeParse(raw);
     if (!parsed.success) throw new ViewerError("invalid_input", "문서와 저장 위치를 다시 확인해 주세요.");
     const input = parsed.data;
-    const target = reader.documentTarget(input.project_id, input.target_run_id, input.component_key);
+    const target = reader.documentTarget(input.project_id, input.target_run_id, input.component_key, input.target_scope);
     const sourceRoot = target.component ? "component:" + target.component.key : "viewer";
     const preview = previewMarkdown(sourceRoot, input.path, input.text);
     // Sign the reviewed snapshot and destination. A changed file or target needs a fresh preview.

@@ -28,10 +28,12 @@ function offset(url: URL): number {
   return Number(raw);
 }
 
-export async function startViewer(options: { db: string; port?: number }) {
+export async function startViewer(options: { db: string; port?: number; sessionToken?: string }) {
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ViewerError("invalid_input", "포트는 0–65535여야 합니다.");
-  const token = randomBytes(32).toString("hex");
+  if (options.sessionToken !== undefined && !/^[a-f0-9]{64}$/.test(options.sessionToken))
+    throw new ViewerError("invalid_input", "기존 연결 인증을 확인하지 못했습니다.");
+  const token = options.sessionToken ?? randomBytes(32).toString("hex");
   const expected = Buffer.from(`Bearer ${token}`);
   const loadContents = () => new Map([...assets].map(([route, asset]) => [route, {
     ...asset, body: readFileSync(new URL(`../../../ui/${asset.file}`, import.meta.url)),

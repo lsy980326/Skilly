@@ -57,3 +57,25 @@ test('an import retry finishes its own partial task; a previous MCP import is re
  db.exec('DROP TRIGGER fail_finish');const retried=await f.post('import',payload);assert.equal(retried.status,200);assert.equal(db.prepare("SELECT count(*) n FROM records WHERE topic='document-import'").get().n,count);
  assert.equal((await f.call('memory_get_status',{project_id:f.pid,run_id:retried.data.import_run_id})).run.state,'completed');
 });
+
+test('an empty project imports into an explicit new scope without preview writes or setting changes',async t=>{
+ const f=await setup(t),pid=await project(f.call,'empty-import');
+ const db=new DatabaseSync(f.path);t.after(()=>db.close());
+ const existing=db.prepare('SELECT * FROM records ORDER BY seq').all();
+ const projects=db.prepare('SELECT * FROM projects ORDER BY id').all();
+ const input={project_id:pid,target_scope:{repository:'new-repo',environment:'development'},component_key:'',path:'docs/first.md',text:'\ufeff# 첫 문서\r\n새 프로젝트 원문\r\n'};
+ const source=join(f.directory,'first.md');writeFileSync(source,input.text);const before=readFileSync(source);
+ const targets=await(await fetch(f.server.origin+'/api/documents/targets?project='+pid,{headers:f.headers})).json();assert.deepEqual(targets.items,[]);
+ const p=await f.post('preview',input);assert.equal(p.status,200);assert.equal(p.data.persistence,'not_written');
+ assert.equal(db.prepare('SELECT count(*) n FROM runs WHERE project_id=?').get(pid).n,0);
+ for(const patch of [{target_scope:{repository:'other',environment:'development'}},{target_scope:{repository:'new-repo',environment:'production'}}])assert.equal((await f.post('import',{...input,...patch,preview_token:p.data.preview_token})).status,400);
+ for(const patch of [{target_scope:{repository:' ',environment:'dev'}},{target_scope:{repository:'main',environment:''}},{target_run_id:f.rid},{component_key:'web'},{project_id:randomUUID()}])assert.ok((await f.post('preview',{...input,...patch})).status>=400);
+ const payload={...input,preview_token:p.data.preview_token},saved=await f.post('import',payload);assert.equal(saved.status,200);assert.deepEqual(await f.post('import',payload),saved);
+ const detail=await(await fetch(f.server.origin+`/api/runs/${saved.data.run_id}?project=${pid}`,{headers:f.headers})).json();
+ assert.equal(detail.run.repository,'new-repo');assert.equal(detail.run.environment,'development');assert.equal(detail.run.state,'completed');assert.deepEqual(detail.run.components,[]);
+ const original=detail.records.items.find(r=>r.topic==='document-import');assert.equal(original.body,input.text);assert.equal(original.report_origin,'retrospective');assert.equal(original.verified,false);
+ assert.deepEqual(db.prepare('SELECT * FROM records WHERE project_id=? ORDER BY seq').all(f.pid),existing);
+ assert.deepEqual(db.prepare('SELECT * FROM projects WHERE id=?').get(f.pid),projects.find(p=>p.id===f.pid));
+ const fresh=db.prepare('SELECT * FROM projects WHERE id=?').get(pid);assert.deepEqual({...fresh,revision:0},{...projects.find(p=>p.id===pid)});assert.deepEqual(readFileSync(source),before);
+ const after=await(await fetch(f.server.origin+'/api/documents/targets?project='+pid,{headers:f.headers})).json();assert.equal(after.items[0].repository,'new-repo');
+});

@@ -495,3 +495,22 @@ test('only unfinished storage stages have a current flow point; closed tasks sta
  app.updateTask({state:'interrupted',activity:'interrupted'});await app.tick();
  assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,0);
 });
+
+test('empty-project import keeps a selected file while its new destination is edited', async () => {
+ const body=new Element('body');let savedInput;
+ const doc={body,createElement:tag=>{const n=new Element(tag);n.showModal=()=>{};n.close=()=>{};return n;}};
+ const source=readFileSync(new URL('../ui/documents.js',import.meta.url),'utf8').replace('export function','function');
+ const ui=runInNewContext(source+'; createDocumentImport', {TextDecoder})({document:doc,request:async(url,options)=>{
+  if(!options)return {items:[]};savedInput=JSON.parse(options.body);return {preview_token:'preview',source:{bytes:10,sha256:'hash'},parts:1};
+ },onSaved:()=>{}});
+ await ui.open({id:'new-project',name:'새 프로젝트'});
+ const inputs=body.querySelectorAll('input'),[repository,environment,file]=inputs;
+ const select=body.querySelector('select');assert.equal(select.value,'new');
+ let finishRead;file.files=[{name:'first.md',size:10,arrayBuffer:()=>new Promise(resolve=>{finishRead=resolve;})}];
+ const reading=file.listeners.change();repository.value='main';repository.listeners.input();environment.value='development';environment.listeners.input();
+ finishRead(new TextEncoder().encode('# 원문').buffer);await reading;
+ const preview=body.querySelectorAll('button').find(n=>n.textContent==='원문 미리보기');assert.equal(preview.disabled,false);await preview.listeners.click();
+ assert.deepEqual(JSON.parse(JSON.stringify(savedInput)),{project_id:'new-project',target_scope:{repository:'main',environment:'development'},component_key:'',path:'first.md',text:'# 원문'});
+ const save=body.querySelectorAll('button').find(n=>n.textContent==='소급 기록으로 가져오기');assert.equal(save.disabled,false);
+ environment.value='test';environment.listeners.input();assert.equal(save.disabled,true);
+});
