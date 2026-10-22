@@ -1,3 +1,4 @@
+import { unreviewedRunSql, SqliteRunReviews } from "./run-reviews.js";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/memory/model.js";
 import type { OverviewQuery, StructuredReport, WorkIdentity, WorkMutation, WorkReader } from "../../../core/work/model.js";
@@ -52,7 +53,7 @@ export class SqliteWorkReader implements WorkReader {
     return row ? { ...row, verified: false } : null;
   }
 
-  overview(input: OverviewQuery): JsonObject {
+  overview(input: OverviewQuery, options: { unreviewed?: boolean } = {}): JsonObject {
     const { project_id: pid, view, offset, limit } = input;
     const version = this.version();
     const conditions = ["r.project_id = ?"], params: SQLInputValue[] = [pid];
@@ -76,6 +77,7 @@ export class SqliteWorkReader implements WorkReader {
     let rows: Row[];
     if (view === "tasks") {
       const filters = [...conditions], values = [...params];
+      if (options.unreviewed && version >= 9) filters.push(unreviewedRunSql);
       if (input.state && input.state !== "all") { filters.push("r.state = ?"); values.push(input.state); }
       if (input.query) {
         filters.push("(instr(lower(r.goal),lower(?)) > 0 OR instr(lower(r.repository),lower(?)) > 0" +
@@ -110,6 +112,7 @@ export class SqliteWorkReader implements WorkReader {
         if (state !== "active" && state !== "completed" && state !== "interrupted") throw new MemoryError("invalid_data", "Invalid task state.");
         const identity = this.identity(pid, text(row, "id"));
         item = json({ ...row, ...identity, features: identity.features.map(({ key, name }) => ({ key, name })), latest_report: this.latest(pid, text(row, "id")),
+          user_review: new SqliteRunReviews(this.db).status(pid, text(row, "id"), text(row, "updated_at")),
           actor_source: row["actor"] ? "self_reported" : "not_collected", activity: activityFor(state, text(row, "updated_at"), this.now()) });
       }
       else if (view === "features") {

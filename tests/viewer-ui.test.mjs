@@ -17,6 +17,9 @@ class Element {
   get textContent() { return this.children.map(child => typeof child === "string" ? child : child.textContent).join(""); }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
+  replaceChild(fresh, old) { this.children[this.children.indexOf(old)] = fresh; }
+  insertBefore(node, next) { this.children = this.children.filter(x => x !== node); const index = next ? this.children.indexOf(next) : this.children.length; this.children.splice(index, 0, node); }
+  removeChild(node) { this.children = this.children.filter(x => x !== node); }
   setAttribute() {}
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelectorAll(selector) {
@@ -37,7 +40,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const deadlines = new Set();
   let recordAvailable = !initialEmpty;
   const requests = [], authorizations = [];
-  let releaseScoped, releaseMore;
+  let releaseScoped, releaseMore, holdRequest = false, releaseRequest;
   const nodes = new Map();
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, new Element("div"));
@@ -45,7 +48,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   };
   const document = {
     hidden: false, activeElement: null, listeners: {},
-    createElement: tag => new Element(tag), createTextNode: text => String(text),
+    createElement: tag => new Element(tag), createElementNS: (ns, tag) => new Element(tag), createTextNode: text => String(text),
     querySelector: node,
     querySelectorAll: selector => [...nodes.values()].flatMap(root => root.querySelectorAll(selector)),
     addEventListener(name, callback) { this.listeners[name] = callback; },
@@ -61,6 +64,10 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     report_origin: "contemporaneous", observed_at: run.updated_at, recorded_at: run.updated_at,
     report: structured ? { title: "목록과 상세 시간 수정", summary: "<img src=x onerror=alert(1)>", changes: ["같은 시계 사용"], checks: [{ name: "시간 검사", result: "passed" }], next_steps: ["실제 화면 확인"], technical: { files: ["ui/app.js"], symbols: ["<script>bad()</script>"], commands: ["node --test tests/viewer-ui.test.mjs"] } } : null };
   const sampleSkill = { project_id: "project", skill_key: "sample", name: "샘플 스킬", version: "2.0", source: "local:sample", description: "보관 원문", content_hash: "a".repeat(64), files: [], body: "<img src=x onerror=alert(1)>", install_instructions: "설치 안내" };
+  const geometry = readFileSync(new URL("../ui/factory-geometry.js", import.meta.url), "utf8").replaceAll("export ", "");
+  const motion = readFileSync(new URL("../ui/factory-motion.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export ", "");
+  const scene = readFileSync(new URL("../ui/factory-scene.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
+  const simple = readFileSync(new URL("../ui/simple-dashboard.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
@@ -69,7 +76,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -77,6 +84,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     matchMedia() { return { matches: reducedMotion }; },
     async fetch(path, options) {
       calls++; requests.push(path);
+      if (holdRequest) { holdRequest = false; await new Promise(resolve => { releaseRequest = resolve; }); }
       if (hangNext) { hangNext = false; await new Promise(() => {}); }
       authorizations.push(options.headers.Authorization);
       assert.equal(options.credentials, "omit");
@@ -112,6 +120,8 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   return {
     node, document, calls: () => calls, requests, authorizations,
     hangNext() { hangNext = true; },
+    holdNext() { holdRequest = true; },
+    releaseRequest() { releaseRequest?.(); },
     async expireRequests() { for (const callback of [...deadlines]) callback(); await new Promise(setImmediate); },
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
@@ -534,4 +544,36 @@ test('code-version comparison is distinct from execution success and updates on 
  assert.match(app.node('#detail').querySelector('.execution-version').textContent,/기능 검증은 포함하지 않습니다/);
  row.code_version.comparison={status:'changed',reason:'different_commit'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 변경 · 재검사 필요/);
  row.code_version.comparison={status:'unknown',reason:'uncommitted_changes'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 비교 불가.*커밋되지 않은 변경/);
+});
+
+test("simple view uses saved states and the same refresh loop while detail remains available", async () => {
+  const app = await viewer({ active: true, structured: true });
+  const detail = app.node("#detail").textContent;
+  app.node("#simple-mode").listeners.click(); await new Promise(setImmediate);
+  assert.equal(app.node("#simple-dashboard").hidden, false);
+  assert.match(app.node("#factories").textContent, /진행중.*완료 보관함/);
+  assert.ok(app.requests.some(x => x.includes("state=completed")));
+  app.updateTask({ title: "갱신된 작업" }); await app.tick();
+  assert.match(app.node("#factories").textContent, /갱신된 작업/);
+  app.node("#pause-factory").listeners.click();
+  assert.equal(app.node("#pause-factory").textContent, "애니메이션 재개");
+  app.node("#detail-mode").listeners.click(); await new Promise(setImmediate);
+  assert.equal(app.node("#simple-dashboard").hidden, true);
+  assert.ok(detail.length); assert.match(app.node("#detail").textContent, /갱신된 작업/);
+});
+
+ test("mode switches during a pending refresh schedule the latest view", async () => {
+  const app = await viewer({ active: true });
+  app.hangNext(); app.node("#refresh").listeners.click();
+  app.node("#simple-mode").listeners.click();
+  await app.expireRequests(); await new Promise(setImmediate);
+  assert.match(app.node("#factories").textContent, /진행중/);
+});
+
+ test("merged automatic refreshes preserve expanded historical records", async () => {
+  const app = await viewer({ historyPage: true, active: true });
+  await app.node("#detail").querySelectorAll("button").find(b => b.textContent === "이전 기록 더 보기").listeners.click();
+  app.holdNext(); const polling = app.tick(); await new Promise(setImmediate);
+  await app.document.listeners.visibilitychange(); app.releaseRequest(); await polling; await new Promise(setImmediate);
+  assert.ok(app.node("#detail").querySelectorAll(".timeline-entry").some(n => n.querySelector("details").dataset.record === "older"));
 });

@@ -1,3 +1,4 @@
+import { createSimpleDashboard } from "./simple-dashboard.js";
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
@@ -12,7 +13,7 @@ const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
 const state = { projects: [], project: null, run: null, view: "runs", filter: "all", query: "", items: [], records: [], nextProjects: null, nextItems: null, nextRecords: null,
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
-state.skillKey = null; state.skillVersion = null; state.skillOffset = 0;
+state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; state.unreviewed = false;
 let lastSkill = "";
 let executionData = { items: [], next_offset: null };
 let featureKey = null, lastFeature = "";
@@ -139,10 +140,11 @@ async function loadProjects(more = false, preserve = false) {
   renderProjects();
 }
 async function selectProject(id) {
+  if (simpleMode) setSimpleMode(false);
   if (state.project === id) return;
   navigationEpoch++;
   componentsPaged = false; featuresPaged = false; executionsPaged = false; historyGap = false;
-  state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all";
+  state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all"; state.unreviewed = false;
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
   featureKey = null; lastFeature = "";
   state.overviewTasks = []; state.overviewPartial = false;
@@ -251,6 +253,8 @@ async function loadList(more = false) {
   }
   const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0) });
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
+  if (view === "runs" && state.unreviewed) params.set("review", "unread");
+  if (view === "runs") $("#list-label").textContent = state.unreviewed ? "미확인 완료 · 상태 필터를 누르면 전체 기록 조회" : "작업 현황";
   if (view === "runs" && state.component) params.set("component", state.component);
   if (view === "runs" && state.feature) params.set("feature", state.feature);
   const data = await api(`/api/${view === "runs" ? "runs" : view === "skills" ? "skills" : "recovery"}?${params}`);
@@ -534,13 +538,48 @@ function renderRecovery(status) {
     container.append(card);
   }
 }
+let simpleMode = false, factoryPaused = false, refreshPending = false, pendingAutomatic = true;
+const simpleDashboard = createSimpleDashboard({ root: $("#factories"), request: api, element, relativeTime,
+  onAcknowledged: () => refresh(),
+  svgElement: (tag, attrs, text) => { const node = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value)); if (text) node.textContent = text; return node; },
+  onOpen: async (project, run, filter = "all", unreviewed = false) => {
+    try {
+      setSimpleMode(false);
+      await selectProject(project);
+      state.query = ""; state.component = ""; state.feature = ""; state.filter = filter; state.unreviewed = unreviewed;
+      $("#search").value = ""; $("#component-filter").value = ""; $("#feature-filter").value = "";
+      if (!run) { state.run = null; detailPaged = false; lastDetail = ""; $("#detail").replaceChildren(empty("작업을 선택하세요", "선택한 상태의 작업 기록을 확인하세요.")); }
+      renderFilters(); await changeView("runs");
+      if (run) await openRun(run);
+    } catch (error) { showError(error); }
+  } });
+function setSimpleMode(enabled) {
+  simpleMode = enabled;
+  $(".workspace").classList.toggle("simple-mode", enabled);
+  $("#simple-dashboard").hidden = !enabled;
+  $("#simple-mode").setAttribute("aria-pressed", String(enabled));
+  $("#detail-mode").setAttribute("aria-pressed", String(!enabled));
+  $(".skip").setAttribute("href", enabled ? "#simple-dashboard" : "#work-list");
+  simpleDashboard.setPaused(!enabled || factoryPaused || document.hidden);
+  if (!enabled) simpleDashboard.cancel();
+}
+$("#simple-mode").addEventListener("click", () => { setSimpleMode(true); void refresh(); });
+$("#detail-mode").addEventListener("click", () => { setSimpleMode(false); void refresh(); });
+$("#pause-factory").addEventListener("click", () => {
+  factoryPaused = !factoryPaused;
+  simpleDashboard.setPaused(factoryPaused || document.hidden || !simpleMode);
+  $("#simple-dashboard").classList.toggle("motion-paused", factoryPaused || document.hidden);
+  $("#pause-factory").setAttribute("aria-pressed", String(factoryPaused));
+  $("#pause-factory").textContent = factoryPaused ? "애니메이션 재개" : "애니메이션 멈추기";
+});
 async function refresh(automatic = false) {
-  if (refreshing) return;
+  if (refreshing) { refreshPending = true; pendingAutomatic = pendingAutomatic && automatic; return; }
   refreshing = true; $("#refresh").disabled = true; $("#sync-dot").classList.add("refreshing");
   $("#sync-status").textContent = "기록을 새로 확인하는 중…";
   try {
     await loadProjects(false, automatic && projectsPaged);
-    if (!state.project && state.projects[0]) await selectProject(state.projects[0].id);
+    if (simpleMode) await simpleDashboard.refresh(state.projects, state.nextProjects !== null);
+    else if (!state.project && state.projects[0]) await selectProject(state.projects[0].id);
     else {
       if (state.project) {
         await loadCatalog(undefined, automatic);
@@ -550,7 +589,9 @@ async function refresh(automatic = false) {
     }
     showSynced();
   } catch (error) { showError(error); }
-  finally { refreshRelativeTimes(); refreshing = false; $("#refresh").disabled = false; $("#sync-dot").classList.remove("refreshing"); }
+  finally { refreshRelativeTimes(); refreshing = false; $("#refresh").disabled = false; $("#sync-dot").classList.remove("refreshing");
+    if (refreshPending) { const automaticNext = pendingAutomatic; refreshPending = false; pendingAutomatic = true; void refresh(automaticNext); }
+  }
 }
 function schedule() {
   clearTimeout(timer);
@@ -564,7 +605,7 @@ $("#refresh").addEventListener("click", () => { projectsPaged = false; component
 $(".brand").addEventListener("click", event => { event.preventDefault(); projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; void refresh(); });
 $("#more-projects").addEventListener("click", async () => {
   projectsPaged = true;
-  try { await loadProjects(true); showSynced(); } catch (error) { showError(error); }
+  try { await loadProjects(true); if (simpleMode) await simpleDashboard.refresh(state.projects, state.nextProjects !== null); showSynced(); } catch (error) { showError(error); }
 });
 $("#more-tasks").addEventListener("click", async () => {
   listPaged = true;
@@ -609,7 +650,7 @@ for (const field of ["component", "feature"]) {
 $("#filters").addEventListener("click", async event => {
   const selected = event.target.closest("button[data-state]");
   if (!selected) return;
-  state.filter = selected.dataset.state; listPaged = false; renderFilters();
+  state.filter = selected.dataset.state; state.unreviewed = false; listPaged = false; renderFilters();
   try { await loadList(); } catch (error) { showError(error); }
 });
 $("#search").addEventListener("input", () => {
@@ -619,10 +660,12 @@ $("#search").addEventListener("input", () => {
 });
 document.addEventListener("keydown", event => {
   if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {
-    event.preventDefault(); if (state.view === "runs") $("#search").focus();
+    event.preventDefault(); if (!simpleMode && state.view === "runs") $("#search").focus();
   }
 });
 document.addEventListener("visibilitychange", () => {
+  simpleDashboard.setPaused(factoryPaused || document.hidden || !simpleMode);
+  $("#simple-dashboard").classList.toggle("motion-paused", factoryPaused || document.hidden);
   if (!document.hidden) { refreshRelativeTimes(); void refresh(true); }
   schedule();
 });

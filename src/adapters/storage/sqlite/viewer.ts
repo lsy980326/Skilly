@@ -1,3 +1,4 @@
+import { unreviewedRunSql } from "./run-reviews.js";
 import { SqliteSkills } from "./skills.js";
 import { SqliteDocuments } from "./documents.js";
 import { markdownReceiptIdentity, type MarkdownSource } from "../../../core/documents/importer.js";
@@ -112,8 +113,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v8)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v9)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -164,6 +165,7 @@ export class SqliteViewer {
   projects(offset = 0) {
     pageOffset(offset);
     const rows = this.db.prepare(`SELECT p.*, count(r.id) AS total,
+      coalesce(sum(r.state = 'completed' AND ${this.version() >= 9 ? unreviewedRunSql : "1"}),0) AS unreviewed_completed,
       coalesce(sum(r.state = 'active'), 0) AS unfinished,
       coalesce(sum(r.state = 'interrupted'), 0) AS interrupted,
       max(r.updated_at) AS last_activity FROM projects p LEFT JOIN runs r ON r.project_id = p.id
@@ -172,11 +174,11 @@ export class SqliteViewer {
     return page(rows.map(row => ({
       id: text(row, "id"), key: text(row, "project_key"), name: text(row, "name"),
       total: number(row, "total"), unfinished: number(row, "unfinished"), interrupted: number(row, "interrupted"),
-      last_activity: row["last_activity"],
+      last_activity: row["last_activity"], unreviewed_completed: number(row, "unreviewed_completed"),
     })), offset);
   }
 
-  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string } = {}) {
+  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string; unreviewed?: boolean } = {}) {
     this.requireProject(projectId);
     const offset = pageOffset(options.offset ?? 0);
     const query = options.query ?? "";
@@ -184,9 +186,10 @@ export class SqliteViewer {
     if (query.length > 200 || !["all", "active", "completed", "interrupted"].includes(state)) {
       throw new ViewerError("invalid_input", "검색어나 상태 필터를 확인해 주세요.");
     }
+    if (options.unreviewed && state !== "completed") throw new ViewerError("invalid_input", "미확인 보관함은 완료 작업만 조회합니다.");
     this.requireFilters(options);
     const result = this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
-      ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) });
+      ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) }, { unreviewed: options.unreviewed === true });
     if (Array.isArray(result["items"])) {
       const items = result["items"].map(item => {
         if (!item || typeof item !== "object" || Array.isArray(item) || typeof item["id"] !== "string") throw new ViewerError("unavailable", "작업 목록을 확인하지 못했습니다.");

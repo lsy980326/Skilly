@@ -1,3 +1,4 @@
+import { SqliteRunReviews } from "./run-reviews.js";
 import { SqliteSkills } from "./skills.js";
 import { SqliteExecutions } from "./executions.js";
 import { SqliteTaskEvents } from "./task-events.js";
@@ -16,6 +17,7 @@ type Row = Record<string, SQLOutputValue>;
 export class SqliteMemoryStore implements MemoryStore {
   private readonly db: DatabaseSync;
   readonly work: SqliteWorkReader;
+  readonly reviews: SqliteRunReviews;
   readonly skills: SqliteSkills;
   readonly executions: SqliteExecutions;
 
@@ -26,6 +28,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.migrate();
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db);
+      this.reviews = new SqliteRunReviews(this.db);
       this.skills = new SqliteSkills(this.db);
       this.executions = new SqliteExecutions(this.db, sources);
     } catch (error) {
@@ -43,8 +46,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 8) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 8) return;
+    if (version > 9) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 9) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -69,6 +72,7 @@ export class SqliteMemoryStore implements MemoryStore {
       if (lockedVersion < 6) this.db.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       if (lockedVersion < 7) this.db.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
       if (lockedVersion < 8) this.db.exec(readFileSync(new URL("../../../../migrations/008-execution-source.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 9) this.db.exec(readFileSync(new URL("../../../../migrations/009-run-acknowledgements.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

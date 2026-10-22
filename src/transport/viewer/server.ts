@@ -1,3 +1,4 @@
+import { acknowledgeRun } from "./run-reviews.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, lstatSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
@@ -8,6 +9,11 @@ import { documentBody, ViewerDocuments } from "./documents.js";
 import { sourceProvider } from "../../adapters/project/source-version.js";
 
 const assets = new Map([
+  ["/factory-geometry.js", { file: "factory-geometry.js", type: "text/javascript; charset=utf-8" }],
+  ["/factory-motion.js", { file: "factory-motion.js", type: "text/javascript; charset=utf-8" }],
+  ["/factory-scene.js", { file: "factory-scene.js", type: "text/javascript; charset=utf-8" }],
+  ["/simple-dashboard.js", { file: "simple-dashboard.js", type: "text/javascript; charset=utf-8" }],
+  ["/simple-dashboard.css", { file: "simple-dashboard.css", type: "text/css; charset=utf-8" }],
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/workstream.js", { file: "workstream.js", type: "text/javascript; charset=utf-8" }],
@@ -59,7 +65,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       json(response, 403, { error: "이 컴퓨터의 Skilly 화면에서만 접근할 수 있습니다." }); return;
     }
     const documentPost = request.method === "POST" && /^\/api\/documents\/(preview|import)$/.test(request.url ?? "");
-    if (request.method !== "GET" && !documentPost) {
+    const reviewPost = request.method === "POST" && request.url === "/api/runs/acknowledge";
+    if (request.method !== "GET" && !documentPost && !reviewPost) {
       response.setHeader("Allow", "GET");
       json(response, 405, { error: "조회만 지원합니다." }); return;
     }
@@ -75,12 +82,16 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
         json(response, 401, { error: "터미널에 표시된 연결 주소로 다시 열어 주세요." }); return;
       }
+      if (reviewPost) {
+        if (request.headers.origin !== origin) { json(response, 403, { error: "Skilly 화면에서 확인 완료를 눌러 주세요." }); return; }
+        json(response, 200, await acknowledgeRun(options.db, request)); return;
+      }
       if (documentPost) {
         if (request.headers.origin !== origin) { json(response, 403, { error: "Skilly 화면에서 문서를 선택해 주세요." }); return; }
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
@@ -102,7 +113,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       if (url.pathname === "/api/overview") { json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url))); return; }
       if (url.pathname === "/api/runs") {
-        json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all",
+        if (url.searchParams.has("review") && url.searchParams.get("review") !== "unread") throw new ViewerError("invalid_input", "확인 상태를 다시 선택해 주세요.");
+        json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all", unreviewed: url.searchParams.get("review") === "unread",
           ...(url.searchParams.has("component") ? { component: url.searchParams.get("component")! } : {}),
           ...(url.searchParams.has("feature") ? { feature: url.searchParams.get("feature")! } : {}) })); return;
       }
@@ -118,6 +130,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       json(response, 404, { error: "페이지를 찾을 수 없습니다." });
     } catch (error) {
       if (error instanceof MemoryError) {
+        if (reviewPost) { json(response, 503, { error: "확인 상태를 저장하지 못했습니다. 원래 기록은 그대로이며, 새로고침 후 다시 시도해 주세요." }); return; }
         const invalid = ["invalid_path", "invalid_document", "document_limit", "source_changed"].includes(error.code);
         json(response, invalid ? 400 : 503, { error: invalid ? "48 KiB 이하의 공개 UTF-8 Markdown 문서와 올바른 문서 이름을 선택해 주세요."
           : "저장 결과를 확인하지 못했습니다. 같은 문서와 저장 위치로 다시 시도해 주세요. 기존 기록은 삭제하지 않았습니다." }); return;

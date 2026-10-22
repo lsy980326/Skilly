@@ -6,12 +6,14 @@
   <meta name="color-scheme" content="light">
   <title>Skilly — 작업의 흐름</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/simple-dashboard.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <a class="skip" href="#work-list">작업 목록으로 건너뛰기</a>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Skilly 홈"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>skilly<span class="brand-caption">작업의 흐름</span></a>
+    <nav class="mode-switch" aria-label="화면 보기"><button id="simple-mode" aria-pressed="false">간단히 보기</button><button id="detail-mode" aria-pressed="true">상세보기</button></nav>
     <div class="top-actions"><span class="local-label"><span></span>로컬 · 원본 보존</span><button id="browse-documents" class="button">가져온 문서</button><button id="import-document" class="button">문서 가져오기</button><button id="reset-layout" class="button quiet" title="서비스 목록 폭과 작업 흐름 높이를 기본값으로 돌립니다">배치 초기화</button><button id="refresh" class="button quiet"><span aria-hidden="true">↻</span> 새로고침</button></div>
   </header>
   <div id="connection-error" class="connection-error" role="alert" hidden></div>
@@ -24,6 +26,7 @@
       <div class="refresh-status"><span id="sync-dot" class="sync-dot"></span><span id="sync-status" role="status">연결 확인 중</span></div>
     </aside>
     <div id="resize-sidebar" class="splitter splitter-sidebar" role="separator" aria-label="서비스 목록 폭 조절" aria-orientation="vertical" aria-controls="projects" tabindex="0" title="드래그 또는 좌우 방향키로 조절 · 두 번 클릭하면 기본 폭"><span aria-hidden="true"></span></div>
+    <section id="simple-dashboard" class="simple-dashboard" aria-label="프로젝트별 작업 현황" tabindex="-1" hidden><header class="simple-heading"><div><span class="eyebrow">PROJECT WORKSHOP</span><h2>프로젝트의 작업이 흐르는 곳</h2><p>저장된 진행중·완료 상태 · 실제 실행 감지 아님 · 최근 활동순</p></div><button id="pause-factory" class="button" aria-pressed="false">애니메이션 멈추기</button></header><div id="factories"></div></section>
     <section id="service-board" class="service-panel" aria-label="서비스 작업 흐름">
       <div class="project-header"><p id="project-key" class="eyebrow">PROJECT MEMORY</p><h2 id="project-name">작업을 이어볼 곳</h2><p id="project-description">프로젝트를 선택하면 저장된 작업이 나타납니다.</p></div>
       <div id="service-summary" class="service-summary" aria-label="서비스 작업 현황"></div>
@@ -44,7 +47,7 @@
         <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="200" placeholder="작업이나 저장소 찾기" aria-label="작업이나 저장소 검색"><kbd>/</kbd></label>
         <div id="filters" class="filters" aria-label="작업 상태 필터">
           <button data-state="all" class="selected" aria-pressed="true">전체</button>
-          <button data-state="active" aria-pressed="false">미완료</button>
+          <button data-state="active" aria-pressed="false">진행중</button>
           <button data-state="completed" aria-pressed="false">완료</button>
           <button data-state="interrupted" aria-pressed="false">중단</button>
         </div>
