@@ -506,3 +506,9 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .has-interruption .recording-track-step:last-child { border-color: #c67b25; }
 .recording-interrupt { padding: 10px 12px; background: #fff6e9; color: #835318; border-radius: 7px; font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 700px) { .recording-track { grid-template-columns: 1fr; } }
+:root { --discovery-label:#586b82; }
+.match-reasons { display:grid; gap:4px; margin:8px 0; }
+.match-reasons:empty { display:none; }
+.match-reason { display:block; font-size:11px; line-height:1.5; color:var(--discovery-label); background:#f0f4f8; border-radius:5px; padding:4px 7px; overflow-wrap:anywhere; }
+#feature-search-controls { padding:12px 18px 0; }
+#feature-search-controls .catalog-note { margin:8px 0; }

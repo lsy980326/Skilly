@@ -91,7 +91,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "repository", "environment"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
@@ -111,7 +111,10 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         if (!key) throw new ViewerError("invalid_input", "스킬을 선택해 주세요.");
         json(response, 200, reader.skills(project, { key, offset: offset(url), ...(url.searchParams.has("version") ? { version: url.searchParams.get("version")! } : {}) })); return;
       }
-      if (url.pathname === "/api/overview") { json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url))); return; }
+      if (url.pathname === "/api/overview") {
+        const filters = Object.fromEntries(["query","component","feature","repository","environment"].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)!]));
+        json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url),filters)); return;
+      }
       if (url.pathname === "/api/runs") {
         if (url.searchParams.has("review") && url.searchParams.get("review") !== "unread") throw new ViewerError("invalid_input", "확인 상태를 다시 선택해 주세요.");
         json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all", unreviewed: url.searchParams.get("review") === "unread",

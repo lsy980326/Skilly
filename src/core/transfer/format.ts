@@ -2,6 +2,7 @@ import { z } from "zod";
 import { testDetailsRowSchema } from "../execution/test-details.js";
 import { executionRowSchema } from "../execution/model.js";
 import { executionSourceRowSchema } from "../execution/currentness.js";
+import { featureAlias, featureCodePath, workKey } from "../work/schema.js";
 
 export const MAX_DATA_BYTES = 64 * 1024 * 1024;
 export const MAX_LINE_BYTES = 256 * 1024;
@@ -19,6 +20,8 @@ export const rowSchemas = {
   run_actors: z.strictObject({ run_id: id, actor: text }),
   components: z.strictObject({ project_id: id, key: text, name: text }),
   features: z.strictObject({ project_id: id, key: text, name: text, description: text }),
+  feature_aliases: z.strictObject({project_id:id,feature_key:workKey,repository:text,environment:text,alias:featureAlias,normalized_alias:text,source_run_id:id}),
+  feature_code_paths: z.strictObject({project_id:id,feature_key:workKey,repository:text,environment:text,path:featureCodePath,source_run_id:id}),
   run_components: z.strictObject({ project_id: id, run_id: id, component_key: text }),
   run_features: z.strictObject({ project_id: id, run_id: id, feature_key: text }),
   run_details: z.strictObject({ project_id: id, run_id: id, title: nullable, branch: nullable }),
@@ -41,7 +44,7 @@ export type Table = keyof typeof rowSchemas;
 export const tables = Object.keys(rowSchemas) as Table[];
 const file = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: integer.nonnegative() });
 export const manifestSchema = z.strictObject({
-  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9)]),
+  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10)]),
   created_at: text, recovery_snapshot_at: text.nullable(), main_snapshot_at: text,
   project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable(), events: file.optional() }),
   rows: integer.nonnegative().max(MAX_ROWS).nullable(),

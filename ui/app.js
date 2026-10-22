@@ -3,7 +3,7 @@ import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
 import { renderMachineReport, renderExecutions, renderValidationEvidence } from "./reports.js";
-import { renderFeatureList, renderFeatureDetail } from "./features.js";
+import { renderFeatureList, renderFeatureDetail, renderMatchReasons } from "./features.js";
 import { createDocumentImport } from "./documents.js";
 import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
@@ -17,6 +17,8 @@ state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; state.u
 let lastSkill = "";
 let executionData = { items: [], next_offset: null };
 let featureKey = null, lastFeature = "";
+let featureSearchQuery = "", featureSearchPage = {items:[],next_offset:null}, featureSearchRequest = 0;
+const visibleFeatures = () => featureSearchQuery ? featureSearchPage.items : state.features;
 let navigationEpoch = 0;
 let listRequest = 0, detailRequest = 0, catalogRequest = 0, refreshing = false, timer, searchTimer;
 let componentsPaged = false, featuresPaged = false;
@@ -147,6 +149,7 @@ async function selectProject(id) {
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all"; state.unreviewed = false;
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
   featureKey = null; lastFeature = "";
+  featureSearchQuery=""; featureSearchPage={items:[],next_offset:null};featureSearchRequest++;$("#feature-search").value="";
   state.overviewTasks = []; state.overviewPartial = false;
   state.summary = {}; state.nextComponents = null; state.nextFeatures = null;
   state.selectedNames = {};
@@ -249,7 +252,9 @@ async function loadList(more = false) {
   const request = ++listRequest;
   const project = state.project, view = state.view;
   if (view === "features") {
-    showFeature(featureKey || state.features[0]?.key); renderFeatures(); return;
+    if(featureSearchQuery) await loadFeatureSearch(more);
+    if(request!==listRequest||project!==state.project||state.view!=="features")return;
+    showFeature(featureKey || (featureSearchQuery ? null : state.features[0]?.key)); renderFeatures(); return;
   }
   const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0) });
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
@@ -298,6 +303,7 @@ function renderTasks() {
     if (task.interruption_observed) top.append(badge("중단 이력", "warning"));
     button.append(top, element("span", "task-goal", task.title || task.goal), chips(task));
     if (task.latest_report) button.append(element("span", "task-summary", task.latest_report.summary));
+    button.append(renderMatchReasons(task,element));
     const footer = element("span", "card-footer");
     footer.append(element("span", "actor-icon", task.actor ? task.actor.slice(0, 1) : "?"),
       element("span", "", task.actor || "작성자 미수집"),
@@ -316,19 +322,28 @@ async function openRun(id) {
   await loadDetail();
   if (matchMedia("(max-width: 600px)").matches) $(".detail-panel").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 }
+async function loadFeatureSearch(more=false) {
+  const ticket=++featureSearchRequest,project=state.project,query=featureSearchQuery;
+  const params=new URLSearchParams({project,view:"features",query,offset:String(more?featureSearchPage.next_offset:0)});
+  const data=await api(`/api/overview?${params}`);
+  if(ticket!==featureSearchRequest||project!==state.project||query!==featureSearchQuery||state.view!=="features")return;
+  featureSearchPage={items:more?[...new Map([...featureSearchPage.items,...data.items].map(x=>[x.key,x])).values()]:data.items,next_offset:data.next_offset};
+  $("#feature-search-note").textContent=more?"더 불러온 결과는 조회 당시 기준입니다. 최신 목록은 새로고침하세요. 검색으로 기록을 재분류하지 않습니다.":"선택한 프로젝트 전체 범위 · 일치 이유를 확인한 뒤 기능을 선택하세요. 검색으로 기록을 재분류하지 않습니다.";
+}
 function renderFeatures() {
   const container = $("#tasks");
-  $("#list-count").textContent = `${state.features.length}${state.nextFeatures !== null ? "+" : ""}개`;
-  $("#more-tasks").hidden = state.nextFeatures === null;
+  const features=visibleFeatures(),next=featureSearchQuery?featureSearchPage.next_offset:state.nextFeatures;
+  $("#list-count").textContent = `${features.length}${next !== null ? "+" : ""}개`;
+  $("#more-tasks").hidden = next === null;
   $("#more-tasks").textContent = "기능 더 보기";
-  renderFeatureList(container, state.features, featureKey, { element, badge, labels: featureStates,
+  renderFeatureList(container, features, featureKey, { element, badge, labels: featureStates,
     onSelect: key => {
       showFeature(key); renderFeatures();
       if (matchMedia("(max-width: 600px)").matches) $(".detail-panel").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
     } });
 }
 function showFeature(key) {
-  const feature = state.features.find(item => item.key === key);
+  const feature = visibleFeatures().find(item => item.key === key);
   if (!feature) {
     lastFeature = "";
     $("#detail").replaceChildren(empty("기능을 선택하세요", "목록에서 기능을 선택하거나 기능 더 보기로 찾아보세요.")); return;
@@ -337,10 +352,15 @@ function showFeature(key) {
   if (key === featureKey && fingerprint === lastFeature) return;
   if (key !== featureKey) { navigationEpoch++; $(".detail-panel").scrollTop = 0; }
   featureKey = key; lastFeature = fingerprint;
+  const featureTasks=()=>{
+    state.query="";state.component="";state.filter="all";state.unreviewed=false;
+    $("#search").value="";$("#component-filter").value="";renderFilters();
+    return applyScope("feature",key);
+  };
   $("#detail").replaceChildren(renderFeatureDetail(feature, { element, badge, date, labels: featureStates,
-    onTasks: () => { void applyScope("feature", key).catch(showError); },
+    onTasks: () => { void featureTasks().catch(showError); },
     onReport: id => { void (async () => {
-      const project = state.project, loading = applyScope("feature", key), epoch = navigationEpoch;
+      const project = state.project, loading = featureTasks(), epoch = navigationEpoch;
       await loading;
       if (epoch !== navigationEpoch || state.project !== project || state.view !== "runs" || state.feature !== key) return;
       await openRun(id);
@@ -583,7 +603,7 @@ async function refresh(automatic = false) {
     else {
       if (state.project) {
         await loadCatalog(undefined, automatic);
-        if (!automatic || !listPaged || state.view === "features") await loadList();
+        if (!automatic || !listPaged || (state.view === "features" && !featureSearchQuery)) await loadList();
       }
       if (state.run) await loadDetail(false, automatic && detailPaged);
     }
@@ -611,6 +631,7 @@ $("#more-tasks").addEventListener("click", async () => {
   listPaged = true;
   try {
     if (state.view === "features") {
+      if(featureSearchQuery){await loadList(true);showSynced();return;}
       featuresPaged = true;
       const project = state.project, epoch = navigationEpoch;
       await loadCatalog("features");
@@ -629,6 +650,8 @@ async function changeView(view) {
       $("#detail").replaceChildren(empty("항목을 선택하세요", "선택한 항목의 상세 내용을 확인하세요.")); }
     listRequest++;
     $("#run-controls").hidden = view !== "runs";
+    $("#feature-search-controls").hidden = view !== "features";
+    if(view!=="features")featureSearchRequest++;
     $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : view === "skills" ? "프로젝트 스킬" : "복구 요청";
     for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"]]) {
       const node = $(id), selected = view === target;
@@ -657,6 +680,11 @@ $("#search").addEventListener("input", () => {
   state.query = $("#search").value; listRequest++; listPaged = false;
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { void loadList().catch(showError); }, 200);
+});
+$("#feature-search").addEventListener("input",()=>{
+  featureSearchQuery=$("#feature-search").value.trim();featureSearchRequest++;listRequest++;
+  featureSearchPage={items:[],next_offset:null};featureKey=null;lastFeature="";featuresPaged=false;
+  clearTimeout(searchTimer);searchTimer=setTimeout(()=>{void loadList().catch(showError);},200);
 });
 document.addEventListener("keydown", event => {
   if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) {

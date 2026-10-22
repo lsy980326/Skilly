@@ -40,7 +40,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const deadlines = new Set();
   let recordAvailable = !initialEmpty;
   const requests = [], authorizations = [];
-  let releaseScoped, releaseMore, holdRequest = false, releaseRequest;
+  let releaseScoped, releaseMore, holdRequest = false, releaseRequest, searchCallback;
   const nodes = new Map();
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, new Element("div"));
@@ -80,7 +80,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
-    setTimeout(callback, delay) { if (delay === 15000) scheduled = callback; else if (delay === 10000) deadlines.add(callback); return callback; }, clearTimeout(callback) { deadlines.delete(callback); },
+    setTimeout(callback, delay) { if (delay === 15000) scheduled = callback; else if (delay === 10000) deadlines.add(callback); else if(delay===200)searchCallback=callback; return callback; }, clearTimeout(callback) { deadlines.delete(callback); },
     matchMedia() { return { matches: reducedMotion }; },
     async fetch(path, options) {
       calls++; requests.push(path);
@@ -101,6 +101,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
         : path.startsWith("/api/recovery?") ? recovery
         : path.startsWith("/api/skills?") ? { items: [{ skill_key: "sample", name: "샘플 스킬", versions: 2, installations: [{ repository: "web", version: "1.0", state: "modified" }], installations_total: 1 }], next_offset: null }
         : path.startsWith("/api/skill?") ? { skill: { ...sampleSkill, ...(path.includes("version=1.0") ? { version: "1.0", body: "이전 버전 전문" } : {}) }, versions: [{ version: "2.0" }, { version: "1.0" }], installations: [], installation_offset: 0, next_installation_offset: null }
+        : path.startsWith("/api/overview") && path.includes('query=') ? {items:new URLSearchParams(path.split('?')[1]).get('query')==='별칭'?[{key:'clock',name:'상대 시간',total:1,unfinished:0,match_reasons:[{kind:'feature_alias',label:'등록된 기능 별칭',value:'별칭 <script>literal</script>'}],discovery:{aliases:[{value:'별칭',repository:'web',environment:'development'}],code_paths:[]},...featureDetail}]:[],next_offset:null}
         : path.startsWith("/api/overview") ? { summary: { total: 1, unfinished: 0, unclassified: 0 },
           items: path.includes("view=components") ? [{ key: "web", name: "Web", total: 1, unfinished: 0 }]
             : manyFeatures ? (path.includes("offset=40") ? [{ key: lateFeatureKey, name: "마지막 기능", total: 1, unfinished: 0 }]
@@ -122,6 +123,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     hangNext() { hangNext = true; },
     holdNext() { holdRequest = true; },
     releaseRequest() { releaseRequest?.(); },
+    async featureSearch(value){node('#feature-search').value=value;node('#feature-search').listeners.input();searchCallback?.();await new Promise(setImmediate);},
     async expireRequests() { for (const callback of [...deadlines]) callback(); await new Promise(setImmediate); },
     advance(ms) { now += ms; },
     saveRecord(id) { record.id = id; recordAvailable = true; },
@@ -560,6 +562,18 @@ test("simple view uses saved states and the same refresh loop while detail remai
   app.node("#detail-mode").listeners.click(); await new Promise(setImmediate);
   assert.equal(app.node("#simple-dashboard").hidden, true);
   assert.ok(detail.length); assert.match(app.node("#detail").textContent, /갱신된 작업/);
+});
+
+test('feature search sends its own query, explains matches and does not choose an ambiguous candidate',async()=>{
+ const app=await viewer();await app.node('#show-features').listeners.click();await new Promise(setImmediate);
+ await app.featureSearch('별칭');
+ assert.ok(app.requests.some(x=>x.startsWith('/api/overview?')&&x.includes('query=')));
+ assert.match(app.node('#tasks').textContent,/등록된 기능 별칭.*<script>literal<\/script>/);
+ assert.match(app.node('#detail').textContent,/기능을 선택하세요/);
+ const selected=app.node('#tasks').querySelectorAll('button').find(x=>x.textContent.includes('상대 시간'));
+ selected.listeners.click();assert.match(app.node('#detail').textContent,/찾기에 사용하는 등록 정보.*별칭/);
+ await app.featureSearch('없는 별칭');assert.match(app.node('#tasks').textContent,/별칭·경로가 아직 등록되지 않았을 수 있습니다/);
+ await app.featureSearch('');assert.match(app.node('#tasks').textContent,/상대 시간/);
 });
 
  test("mode switches during a pending refresh schedule the latest view", async () => {

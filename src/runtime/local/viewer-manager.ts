@@ -97,7 +97,9 @@ export async function manageViewer(command: string, dbPath: string, port: number
   try {
     if (command === "restart-code") {
       const previous = await control(paths.db, paths.socket, "connect");
-      if (previous.status !== "running" || !previous.url || !previous.origin) throw new Error("정상 실행 중인 서버에서만 인증을 유지해 재시작할 수 있습니다. 기존 서버는 보존했습니다.");
+      // An older reader can be degraded after a schema upgrade. The current-code
+      // probe below must succeed before replacing that authenticated worker.
+      if (!["running","degraded"].includes(previous.status) || !previous.url || !previous.origin) throw new Error("연결을 확인한 관리 서버에서만 인증을 유지해 재시작할 수 있습니다. 기존 서버는 보존했습니다.");
       const address = new URL(previous.url);
       const sessionToken = new URLSearchParams(address.hash.slice(1)).get("token");
       if (address.origin !== previous.origin || address.hostname !== "127.0.0.1" || address.protocol !== "http:" || !sessionToken || !/^[a-f0-9]{64}$/.test(sessionToken))

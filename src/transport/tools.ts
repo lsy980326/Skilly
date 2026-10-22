@@ -85,7 +85,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.queryContext(input),
     ),
     memory_query_overview: define(
-      "Read components, features or tasks with structured reports. coverage=service explicitly spans repositories in this project; default repository scope stays bound. Reports and feature states are agent declarations, never verified or live execution. Retrieve original evidence on the record's configured repository connection; service reads do not broaden evidence/write permissions.",
+      "Read components, features or tasks with structured reports. query searches feature names, explicitly registered aliases and repository-relative code path segments, and existing linked tasks; match_reasons explains matches. Does not scan files, infer links or classify history. Register aliases/code_paths explicitly in features on begin/checkpoint; same aliases may yield multiple candidates. coverage=service explicitly spans repositories in this project; default repository scope stays bound. Reports and feature states remain unverified. Retrieve original evidence on the record's configured connection; service reads do not broaden write permissions.",
       true,
       z.strictObject({ ...projectId, view: z.enum(["components", "features", "tasks"]).default("tasks"),
         coverage: z.enum(["repository", "service"]).default("repository"), repository: scope.optional(),

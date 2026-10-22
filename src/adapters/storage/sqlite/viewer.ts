@@ -113,8 +113,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v9)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v10)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -203,10 +203,12 @@ export class SqliteViewer {
     return result;
   }
 
-  overview(projectId: string, view: string, offset = 0) {
+  overview(projectId: string, view: string, offset = 0, options: {query?:string;component?:string;feature?:string;repository?:string;environment?:string} = {}) {
     this.requireProject(projectId); pageOffset(offset);
     if (view !== "components" && view !== "features") throw new ViewerError("invalid_input", "조회 종류를 확인해 주세요.");
-    return this.work.overview({ project_id: projectId, view, offset, limit: PAGE_SIZE });
+    this.requireFilters(options);
+    if ((options.query?.length ?? 0) > 200 || [options.repository,options.environment].some(value=>value!==undefined&&(!value.length||value.length>100||/[\u0000-\u001f]/.test(value)))) throw new ViewerError("invalid_input","검색 범위를 확인해 주세요.");
+    return this.work.overview({ project_id: projectId, view, offset, limit: PAGE_SIZE, ...options });
   }
 
   private requireFilters(options: { component?: string; feature?: string }) {

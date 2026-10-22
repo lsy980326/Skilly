@@ -1,10 +1,17 @@
 import { renderValidationEvidence } from "./reports.js";
 
+export function renderMatchReasons(item, element) {
+  const box=element("span","match-reasons");
+  for(const reason of item.match_reasons||[]) box.append(element("span","match-reason",`${reason.label} · ${reason.value}${reason.feature_name ? ` · ${reason.feature_name}` : ""}`));
+  if(item.match_reasons_truncated)box.append(element("small","catalog-note","일치 이유 일부 표시"));
+  return box;
+}
+
 // Present saved reports without inferring a feature's completion or verification.
 export function renderFeatureList(container, features, selected, { element, badge, labels, onSelect }) {
   container.replaceChildren();
   container.append(element("p", "catalog-note", "기능을 선택해 최근 변경과 남은 작업을 확인하세요. 상태는 AI의 당시 보고입니다."));
-  if (!features.length) container.append(element("p", "catalog-note", "연결된 기능이 없습니다. 다음 작업에서 기능을 연결하면 여기에 나타납니다."));
+  if (!features.length) container.append(element("p", "catalog-note", "이 범위에서 일치하는 기능이 없습니다. 기능이 없다는 뜻은 아니며 별칭·경로가 아직 등록되지 않았을 수 있습니다."));
   for (const feature of features) {
     const card = element("button", `feature-card feature-select${feature.key === selected ? " selected" : ""}`);
     card.setAttribute("aria-pressed", String(feature.key === selected));
@@ -12,6 +19,7 @@ export function renderFeatureList(container, features, selected, { element, badg
       badge(labels[feature.latest_report?.update?.state] || "상태 보고 없음", "feature"),
       element("p", "feature-description", feature.description || "기능 설명 미수집"),
       element("p", "feature-preview", feature.latest_activity?.report?.summary || "최근 변경 요약 없음"));
+    card.append(renderMatchReasons(feature,element));
     const next = feature.latest_activity?.report?.next_steps;
     card.append(element("p", "feature-next", next?.length ? `다음 · ${next[0]}` : "남은 작업 보고 없음"),
       element("small", "catalog-note", `연결 작업 ${feature.total ?? 0} · 미완료 ${feature.unfinished ?? 0}`));
@@ -24,6 +32,14 @@ export function renderFeatureDetail(feature, { element, badge, date, labels, onT
   const panel = element("div", "feature-detail");
   panel.append(element("p", "eyebrow", "FEATURE BRIEF"), element("h2", "", feature.name),
     element("p", "feature-purpose", feature.description || "이 기능의 설명은 아직 기록되지 않았습니다."));
+  panel.append(renderMatchReasons(feature,element));
+  const discovery=element("section","feature-section");discovery.append(element("h3","","찾기에 사용하는 등록 정보"));
+  for(const [key,label]of[["aliases","별칭"],["code_paths","코드 경로"]]) {
+    const rows=feature.discovery?.[key]||[];
+    discovery.append(element("p","catalog-note",`${label} · ${rows.length?rows.map(r=>`${r.value} (${r.repository} / ${r.environment})`).join(" · "):"등록 정보 없음"}`));
+  }
+  if(feature.discovery?.truncated)discovery.append(element("p","catalog-note","등록 정보 일부만 표시합니다. 검색은 전체 등록 정보를 대상으로 합니다."));
+  discovery.append(element("small","catalog-note","AI가 명시적으로 등록한 검색 정보입니다. 실제 파일 존재·코드 실행을 확인한 근거가 아니며 과거 미분류 기록을 자동 연결하지 않습니다."));panel.append(discovery);
   const status = feature.latest_report;
   const state = element("section", "feature-status");
   state.append(badge(labels[status?.update?.state] || "상태 보고 없음", "feature"),

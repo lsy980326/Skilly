@@ -37,7 +37,7 @@ test("v3 migration preserves original rows and receipt replay without classifyin
   assert.deepEqual(viewer.runs(pid).items[0].components, []);
   assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 3); viewer.close();
   const app = openLocal(path); t.after(() => app.close()); t.after(() => raw.close());
-  assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 9);
+  assert.equal(raw.prepare("PRAGMA user_version").get().user_version, 10);
   for (const table of Object.keys(before)) assert.deepEqual(raw.prepare(`SELECT * FROM ${table}`).all(), before[table]);
   const replay = await app.dispatcher.call("memory_begin_task", input);
   assert.deepEqual(replay.run, oldResult.run);
@@ -251,6 +251,9 @@ test("JSON escape expansion returns an explicit compact item and advances the pa
   assert.equal(result.items[0].projection_truncated, true);
   assert.equal(result.items[0].id, rid); assert.equal(result.items[0].components_total, 12);
   assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 32 * 1024);
+  const searched=await f.call('memory_query_overview',{project_id:pid,query:'x',limit:40});
+  assert.ok(searched.items[0].match_reasons.length);assert.equal(searched.items[0].match_reasons[0].kind,'goal');
+  assert.ok(Buffer.byteLength(JSON.stringify(searched))<=32*1024);
 });
 
 test("large feature briefs remain byte-bounded and paginate without losing features", async t => {

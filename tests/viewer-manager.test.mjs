@@ -144,6 +144,22 @@ test("code restart preflight failure preserves the existing authenticated proces
   } finally { rmSync(f.db);renameSync(f.db+'.original',f.db); }
 });
 
+test('degraded reader is replaced only after the current database passes preflight, preserving authorization',async t=>{
+ const f=await fixture(t),initial=new DatabaseSync(f.db);initial.exec('PRAGMA journal_mode=DELETE');initial.close();
+ const before=readFileSync(f.db),started=await manageViewer('start',f.db,0);
+ const unsupported=new DatabaseSync(f.db);unsupported.exec('PRAGMA user_version=11');unsupported.close();
+ assert.equal((await manageViewer('status',f.db,0)).status,'degraded');
+ await assert.rejects(manageViewer('restart-code',f.db,0));
+ assert.equal((await control(f.paths.db,f.paths.socket,'connect')).pid,started.pid,'failed probe must retain the degraded process');
+ // The running reader keeps its old inode; current code probes a separately valid file.
+ renameSync(f.db,f.db+'.unsupported');writeFileSync(f.db,before,{mode:0o600});
+ assert.equal((await manageViewer('status',f.db,0)).status,'degraded');
+ const restarted=await manageViewer('restart-code',f.db,0);
+ assert.notEqual(restarted.pid,started.pid);assert.equal(restarted.url,started.url);
+ assert.equal((await fetch(started.origin+'/api/projects',{headers:headers(started)})).status,200);
+ assert.equal((await fetch(started.origin+'/api/projects')).status,401);
+});
+
 
 test("explicit comparison roots survive code restart and invalid roots preserve the authorized worker",async t=>{
   const f=await fixture(t),root=realpathSync(f.dir);

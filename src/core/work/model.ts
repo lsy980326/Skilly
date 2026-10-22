@@ -1,7 +1,7 @@
 import type { JsonObject } from "../memory/model.js";
 
 export type Component = { key: string; name: string };
-export type Feature = { key: string; name: string; description?: string | undefined };
+export type Feature = { key: string; name: string; description?: string | undefined; aliases?: string[] | undefined; code_paths?: string[] | undefined };
 export type FeatureState = "planned" | "in_progress" | "implemented" | "blocked" | "retired";
 export type StructuredReport = {
   title: string;

@@ -152,6 +152,27 @@ later reconstructions retrospective; they must not become the latest feature sta
 Keep check names short (at most 120 characters); put commands in check `detail`.
 Do not run another AI or reconstruct a second independent source of truth.
 
+### Feature aliases and code paths
+
+When the exposed `features` schema supports `aliases` and `code_paths`, register
+known alternate names and public repository-relative code paths in the same
+begin/checkpoint feature declaration. Use at most 8 of each per declaration.
+These are explicit AI-supplied search metadata, not file observations. Never
+invent an alias, scan the filesystem, supply absolute/private paths, or classify
+old unlinked work from its title. Metadata stays in the declaring task's actual
+repository/environment scope and records its source task.
+
+Use `memory_query_overview` with `view: "features"` and `query` to find candidate
+features, then `view: "tasks"` with the same query or selected feature key to
+retrieve already-linked tasks. Explain `match_reasons`; equal aliases may yield
+multiple candidates. Do not silently choose one or persist a match as a link.
+Code paths match segment boundaries, not arbitrary filename substrings, and do
+not prove a file exists. No match may mean unregistered metadata or narrower
+scope, not an absent feature. Preserve the resolved project/repository/environment
+and use service coverage only when intended. If fields are absent in the current
+connection, keep existing tools working and report the schema limitation; a
+fresh supported MCP connection is needed to register new fields.
+
 ### Readable notes and changes
 
 Apply the report format to **notes and changes as well as the final handoff**.

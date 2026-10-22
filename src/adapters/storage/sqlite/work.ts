@@ -5,6 +5,7 @@ import type { OverviewQuery, StructuredReport, WorkIdentity, WorkMutation, WorkR
 import { reportSchema } from "../../../core/work/schema.js";
 import { activityFor } from "../../../core/viewer/model.js";
 import { featureActivity, featureExecutions } from "./feature-status.js";
+import { FeatureDiscovery, writeFeatureDiscovery } from "./feature-discovery.js";
 
 type Row = Record<string, SQLOutputValue>;
 function text(row: Row, key: string): string {
@@ -56,6 +57,7 @@ export class SqliteWorkReader implements WorkReader {
   overview(input: OverviewQuery, options: { unreviewed?: boolean } = {}): JsonObject {
     const { project_id: pid, view, offset, limit } = input;
     const version = this.version();
+    const discovery = new FeatureDiscovery(this.db, version);
     const conditions = ["r.project_id = ?"], params: SQLInputValue[] = [pid];
     for (const field of ["repository", "environment"] as const) {
       if (input[field]) { conditions.push(`r.${field} = ?`); params.push(input[field]); }
@@ -80,9 +82,12 @@ export class SqliteWorkReader implements WorkReader {
       if (options.unreviewed && version >= 9) filters.push(unreviewedRunSql);
       if (input.state && input.state !== "all") { filters.push("r.state = ?"); values.push(input.state); }
       if (input.query) {
+        const matched = version >= 4 ? discovery.predicate("f", input, true) : null;
         filters.push("(instr(lower(r.goal),lower(?)) > 0 OR instr(lower(r.repository),lower(?)) > 0" +
-          (version >= 4 ? " OR EXISTS (SELECT 1 FROM run_details d WHERE d.project_id = r.project_id AND d.run_id = r.id AND instr(lower(d.title),lower(?)) > 0)" : "") + ")");
+          (version >= 4 ? " OR EXISTS (SELECT 1 FROM run_details d WHERE d.project_id = r.project_id AND d.run_id = r.id AND instr(lower(d.title),lower(?)) > 0)" : "") +
+          (matched ? ` OR EXISTS (SELECT 1 FROM run_features x JOIN features f ON f.project_id=x.project_id AND f.key=x.feature_key WHERE x.project_id=r.project_id AND x.run_id=r.id AND ${matched.sql})` : "") + ")");
         values.push(input.query, input.query); if (version >= 4) values.push(input.query);
+        if (matched) values.push(...matched.params);
       }
       rows = this.db.prepare(`SELECT r.*${version >= 3 ? ", a.actor" : ", NULL AS actor"} FROM runs r
         ${version >= 3 ? "LEFT JOIN run_actors a ON a.run_id = r.id" : ""}
@@ -93,18 +98,21 @@ export class SqliteWorkReader implements WorkReader {
       const links = view === "components" ? "run_components" : "run_features";
       const key = view === "components" ? "component_key" : "feature_key";
       const scoped = Boolean(input.repository || input.environment || input.component || input.feature);
+      const matched = view === "features" && input.query ? discovery.predicate("c",input) : null;
       rows = this.db.prepare(`SELECT c.*, (SELECT count(*) FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id
           WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where}) AS total,
         (SELECT count(*) FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id
           WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where} AND r.state='active') AS unfinished
         FROM ${table} c WHERE c.project_id = ?
         ${scoped ? `AND EXISTS (SELECT 1 FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where})` : ""}
-        ORDER BY c.key LIMIT ? OFFSET ?`).all(...params, ...params, pid, ...(scoped ? params : []), limit + 1, offset);
+        ${matched ? `AND ${matched.sql}` : ""}
+        ORDER BY c.key LIMIT ? OFFSET ?`).all(...params, ...params, pid, ...(scoped ? params : []), ...(matched?.params ?? []), limit + 1, offset);
     }
     const items: JsonObject[] = [];
     const response: JsonObject = { project_id: pid, view, summary: json(summary), items, next_offset: null,
       scope: json({ repository: input.repository ?? null, environment: input.environment ?? null, component: input.component ?? null, feature: input.feature ?? null }),
       capture: "agent_reports_only", claims_verified: false, observed_at: new Date(this.now()).toISOString() };
+    if (input.query) response["search"] = { query: input.query, matching: "literal_names_aliases_and_path_segments", classification: "unchanged", metadata_source: "explicit_declarations", file_access: "not_performed" };
     for (const row of rows.slice(0, limit)) {
       let item: JsonObject;
       if (view === "tasks") {
@@ -114,6 +122,22 @@ export class SqliteWorkReader implements WorkReader {
         item = json({ ...row, ...identity, features: identity.features.map(({ key, name }) => ({ key, name })), latest_report: this.latest(pid, text(row, "id")),
           user_review: new SqliteRunReviews(this.db).status(pid, text(row, "id"), text(row, "updated_at")),
           actor_source: row["actor"] ? "self_reported" : "not_collected", activity: activityFor(state, text(row, "updated_at"), this.now()) });
+        if (input.query) {
+          const taskScope = { ...input, repository: text(row,"repository"), environment: text(row,"environment") };
+          const reasons: unknown[] = [];
+          for (const [field,label] of [["goal","작업 요청"],["repository","저장소"],["title","작업 제목"]] as const) {
+            const value = item[field];
+            if (typeof value === "string" && value.toLowerCase().includes(input.query.toLowerCase())) reasons.push({kind:field,label,value});
+          }
+          if (version >= 4) {
+            const matched = discovery.predicate("f",taskScope);
+            const features = this.db.prepare(`SELECT f.* FROM features f JOIN run_features x ON x.project_id=f.project_id AND x.feature_key=f.key
+              WHERE x.project_id=? AND x.run_id=? AND ${matched.sql} ORDER BY f.key LIMIT 9`).all(pid,text(row,"id"),...matched.params);
+            for (const feature of features) reasons.push(...discovery.reasons({key:text(feature,"key"),name:text(feature,"name"),description:text(feature,"description")},taskScope));
+            item["match_reasons_truncated"] = reasons.length > 8 || features.length > 8;
+          }
+          item["match_reasons"] = json({items:reasons.slice(0,8)})["items"]!;
+        }
       }
       else if (view === "features") {
         const latest = this.db.prepare(`SELECT r.id AS record_id, r.observed_at, r.environment, r.repository,
@@ -129,7 +153,7 @@ export class SqliteWorkReader implements WorkReader {
             : input.component ? "AND EXISTS (SELECT 1 FROM run_components rc WHERE rc.project_id=r.project_id AND rc.run_id=r.run_id AND rc.component_key=?)" : ""}
           ORDER BY r.observed_at DESC, r.seq DESC LIMIT 1`).get(pid, text(row, "key"),
             ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.feature ? [input.feature] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
-        item = json({ ...row, latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
+        item = json({ ...row, discovery: discovery.metadata(pid,text(row,"key"),input), match_reasons: discovery.reasons({key:text(row,"key"),name:text(row,"name"),description:text(row,"description")},input), latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
           latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: featureExecutions(this.db, input, text(row, "key")) });
       } else item = json(row);
       items.push(item);
@@ -145,6 +169,16 @@ export class SqliteWorkReader implements WorkReader {
             if (typeof value === "string") compact[field] = Array.from(value).slice(0, field === "goal" ? 200 : 100).join("");
           }
           for (const field of ["total", "unfinished", "components_total", "features_total"]) if (typeof item[field] === "number") compact[field] = item[field];
+          const firstReason = Array.isArray(item["match_reasons"]) ? item["match_reasons"][0] : undefined;
+          if (firstReason && typeof firstReason === "object" && !Array.isArray(firstReason)) {
+            const reason: JsonObject = {};
+            for (const field of ["kind", "label", "value", "feature_key", "feature_name", "source_run_id"]) {
+              const value = firstReason[field];
+              if (typeof value === "string") reason[field] = Array.from(value).slice(0, 100).join("");
+            }
+            compact["match_reasons"] = [reason];
+            compact["match_reasons_truncated"] = true;
+          }
           if (view === "tasks") { compact["components"] = []; compact["features"] = []; compact["links_truncated"] = true; }
           items.push(compact);
         }
@@ -170,6 +204,7 @@ export function writeWork(db: DatabaseSync, projectId: string, input: WorkMutati
       throw new MemoryError("catalog_conflict", "Feature key already has another definition.");
     }
     db.prepare("INSERT INTO features VALUES (?,?,?,?) ON CONFLICT DO NOTHING").run(projectId, feature.key, feature.name, feature.description ?? "");
+    writeFeatureDiscovery(db,projectId,input.run_id,feature);
     if (input.run_id) db.prepare("INSERT INTO run_features VALUES (?,?,?) ON CONFLICT DO NOTHING").run(projectId, input.run_id, feature.key);
   }
   if (input.run_id && (input.title || input.branch)) {
