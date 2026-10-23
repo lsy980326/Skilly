@@ -13,6 +13,9 @@ import {
 import type { MemoryStore } from "../../../core/memory/ports.js";
 import { SqliteWorkReader, writeWork } from "./work.js";
 
+import type { InstallationComponent } from "../../../core/viewer/components.js";
+import { componentWhere } from "./component-links.js";
+
 type Row = Record<string, SQLOutputValue>;
 
 export class SqliteMemoryStore implements MemoryStore {
@@ -23,7 +26,7 @@ export class SqliteMemoryStore implements MemoryStore {
   readonly executions: SqliteExecutions;
   readonly plans: SqlitePlans;
 
-  constructor(private readonly path: string, sources?: SourceProvider) {
+  constructor(private readonly path: string, sources?: SourceProvider, bindings: InstallationComponent[] = []) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
     try {
       this.db.exec("PRAGMA busy_timeout = 1000; PRAGMA synchronous = FULL; PRAGMA cache_size = -8192;");
@@ -31,7 +34,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db, Date.now, sources);
       this.reviews = new SqliteRunReviews(this.db);
-      this.skills = new SqliteSkills(this.db);
+      this.skills = new SqliteSkills(this.db, bindings);
       this.executions = new SqliteExecutions(this.db, sources);
       this.plans = new SqlitePlans(this.db, sources);
     } catch (error) {
@@ -106,11 +109,12 @@ export class SqliteMemoryStore implements MemoryStore {
     return row ? runFrom(row) : undefined;
   }
 
-  async unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number): Promise<Run[]> {
+  async unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number, component?: string): Promise<Run[]> {
+    const selected = componentWhere(component, "SELECT 1 FROM run_components rc WHERE rc.project_id=r.project_id AND rc.run_id=r.id", "rc.component_key");
     return this.db.prepare(`SELECT r.*, a.actor FROM runs r LEFT JOIN run_actors a ON a.run_id = r.id
-      WHERE r.project_id = ? AND r.repository = ? AND r.environment = ? AND r.state IN ('active', 'interrupted')
+      WHERE r.project_id = ? AND r.repository = ? AND r.environment = ? AND r.state IN ('active', 'interrupted') AND ${selected.sql}
       ORDER BY r.updated_at ASC, r.id ASC LIMIT ? OFFSET ?`)
-      .all(projectId, repository, environment, limit, offset).map(runFrom);
+      .all(projectId, repository, environment, ...selected.params, limit, offset).map(runFrom);
   }
 
   async getRecord(projectId: string, recordId: string): Promise<MemoryRecord | undefined> {

@@ -4,6 +4,9 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { MemoryError, parseJsonObject } from "../../../core/memory/model.js";
 import { isRecoverableWrite, type PendingWrite, type RecoveryJournal, type RecoveryScope } from "../../../core/memory/recovery.js";
 
+import { attachRecoverySource, recoveryClassification } from "./recovery-components.js";
+import { componentWhere } from "./component-links.js";
+
 const APPLICATION_ID = 1397446994;
 const MAX_PENDING = 100;
 const MAX_PENDING_BYTES = 1024 * 1024;
@@ -11,7 +14,7 @@ const MAX_PENDING_BYTES = 1024 * 1024;
 /** Open only on demand. No polling, background replay or connection to the network. */
 export class SqliteRecoveryJournal implements RecoveryJournal {
   private db: DatabaseSync | undefined;
-  constructor(private readonly path: string) {}
+  constructor(private readonly path: string, private readonly mainPath?: string) {}
 
   close(): void { this.db?.close(); this.db = undefined; }
 
@@ -106,11 +109,20 @@ export class SqliteRecoveryJournal implements RecoveryJournal {
     return row ? fromRow(row) : undefined;
   }
 
-  async list(scope: RecoveryScope, limit: number, offset: number): Promise<PendingWrite[]> {
-    return this.open(false)?.prepare(`SELECT * FROM requests
-      WHERE project_id = ? AND repository = ? AND environment = ? AND input_json IS NOT NULL
+  async list(scope: RecoveryScope & { component?: string | undefined; include_rejected?: boolean | undefined; request_id?: string | undefined }, limit: number, offset: number): Promise<PendingWrite[]> {
+    const db = this.open(false);
+    if (!db) return [];
+    const version = this.mainPath ? attachRecoverySource(db, this.mainPath) : 0;
+    const classification = recoveryClassification(version);
+    const selected = componentWhere(scope.component, "SELECT 1 FROM json_each(component_json) c WHERE 1", "json_extract(c.value,'$.key')");
+    return db.prepare(`WITH classified AS (SELECT q.*, ${classification.components} AS component_json, ${classification.source} AS component_source
+      FROM requests q WHERE project_id=? AND repository=? AND environment=?
+        AND (input_json IS NOT NULL ${scope.include_rejected ? "OR last_error IS NOT NULL" : ""} ${scope.request_id ? "OR id=?" : ""}))
+      SELECT * FROM classified WHERE ${selected.sql} ${scope.request_id ? "AND id=?" : ""}
       ORDER BY received_at, id LIMIT ? OFFSET ?`)
-      .all(scope.project_id, scope.repository, scope.environment, limit, offset).map(fromRow) ?? [];
+      .all(scope.project_id, scope.repository, scope.environment, ...(scope.request_id ? [scope.request_id] : []), ...selected.params,
+        ...(scope.request_id ? [scope.request_id] : []), limit, offset)
+      .map(row => ({ ...fromRow(row), components: JSON.parse(String(row["component_json"])), component_source: String(row["component_source"]) }));
   }
 
   async markSaved(id: string): Promise<boolean> {

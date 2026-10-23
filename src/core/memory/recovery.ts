@@ -20,13 +20,15 @@ export interface PendingWrite extends RecoveryScope {
   input: JsonObject | null;
   received_at: string;
   last_error: string | null;
+  components?: JsonObject[];
+  component_source?: string;
 }
 
 /** This journal is independent of the record DB, so a record DB lock can be recovered. */
 export interface RecoveryJournal {
   prepare(request: PendingWrite): Promise<"new" | "existing">;
   get(id: string): Promise<PendingWrite | undefined>;
-  list(scope: RecoveryScope, limit: number, offset: number): Promise<PendingWrite[]>;
+  list(scope: RecoveryScope & { component?: string | undefined; include_rejected?: boolean | undefined; request_id?: string | undefined }, limit: number, offset: number): Promise<PendingWrite[]>;
   markSaved(id: string): Promise<boolean>;
   markFailed(id: string, code: string, retainInput: boolean): Promise<boolean>;
 }
@@ -85,18 +87,18 @@ export class WriteRecovery {
     return this.confirm(request, result);
   }
 
-  async status(input: RecoveryScope & { limit: number; offset: number; request_id?: string | undefined }): Promise<JsonObject> {
+  async status(input: RecoveryScope & { limit: number; offset: number; request_id?: string | undefined; component?: string | undefined; include_rejected?: boolean | undefined }): Promise<JsonObject> {
     if (!await this.store.getProject(input.project_id)) throw new MemoryError("not_found", "Project not found.");
     let requests: PendingWrite[];
     if (input.request_id) {
       const request = await this.journal.get(input.request_id);
       if (!request) throw new MemoryError("not_found", "Recovery request not found; retention is not confirmed.");
       this.assertScope(request, input);
-      requests = [request];
+      requests = await this.journal.list({ ...input, request_id: request.id }, 1, 0);
     } else {
       requests = await this.journal.list(input, input.limit + 1, input.offset);
     }
-    const runs = await this.store.unfinishedRuns(input.project_id, input.repository, input.environment, input.limit + 1, input.offset);
+    const runs = await this.store.unfinishedRuns(input.project_id, input.repository, input.environment, input.limit + 1, input.offset, input.component);
     const items: JsonObject[] = [];
     for (const request of requests.slice(0, input.limit)) {
       let receipt: JsonObject | undefined;
@@ -111,6 +113,7 @@ export class WriteRecovery {
         : request.last_error ? (["busy", "storage_error", "conflict"].includes(request.last_error) ? "retry_required" : "blocked")
         : "unconfirmed";
       items.push({
+        components: (request.components ?? []).slice(0, 12), components_truncated: (request.components?.length ?? 0) > 12, component_source: request.component_source ?? "not_collected",
         request_id: request.id, tool: request.tool, first_received_at: request.received_at,
         run_id: request.input?.["run_id"] ?? (receipt ? receiptSummary(receipt)["run_id"] : null) ?? null,
         persistence: receipt ? "persisted" : "not_found",
@@ -123,11 +126,14 @@ export class WriteRecovery {
     const more = requests.length > input.limit || runs.length > input.limit;
     return {
       requests: items,
-      unfinished_runs: runs.slice(0, input.limit).map(run => ({
+      unfinished_runs: runs.slice(0, input.limit).map(run => {
+        const identity = this.store.work.identity(input.project_id, run.id);
+        return { components: identity.components, components_total: identity.components_total ?? identity.components.length,
+        components_truncated: (identity.components_total ?? identity.components.length) > identity.components.length, component_source: "stored_task",
         id: run.id, mode: run.mode, state: run.state, created_at: run.created_at, updated_at: run.updated_at,
         goal: Array.from(run.goal).slice(0, 120).join(""), goal_truncated: Array.from(run.goal).length > 120,
         attention: run.state === "active" ? "unfinished_or_still_running" : "reported_interruption",
-      })),
+      }; }),
       next_offset: more ? input.offset + input.limit : null,
       capture: "agent_reports_only", claims_verified: false, automatic_replay: false,
       recording_coverage: recordingCoverage(),

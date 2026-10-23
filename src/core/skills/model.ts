@@ -37,8 +37,8 @@ export interface SkillRepository {
   version(projectId: string, key: string, version: string): SkillVersion | undefined;
   installation(projectId: string, id: string): Installation | undefined;
   save(projectId: string, key: string, hash: string, result: JsonObject, change: SkillChange): JsonObject;
-  list(projectId: string, offset: number, limit: number, query: string): JsonObject;
-  detail(projectId: string, key: string, version?: string, installationOffset?: number): JsonObject;
+  listForComponent(projectId: string, offset: number, limit: number, query: string, component?: string): JsonObject;
+  detail(projectId: string, key: string, version?: string, installationOffset?: number, component?: string): JsonObject;
 }
 export interface SkillObserver { readonly root: string; observe(installation: Installation, version: SkillVersion): FileObservation[]; }
 export class SkillLibrary {
@@ -85,6 +85,6 @@ export class SkillLibrary {
       { status: "persisted", observation_id: observation.id, installation_id: installation.id, state, observed_at: observation.observed_at,
         evidence: "local_files_at_observation_time", loading_status: "unknown", automatic_install: false }, { observation });
   }
-  list(projectId: string, offset: number, limit: number, query: string): JsonObject { return this.store.list(projectId, offset, limit, query); }
-  detail(projectId: string, key: string, version?: string, installationOffset?: number): JsonObject { return this.store.detail(projectId, key, version, installationOffset); }
+  list(projectId: string, offset: number, limit: number, query: string, component?: string): JsonObject { return this.store.listForComponent(projectId, offset, limit, query, component); }
+  detail(projectId: string, key: string, version?: string, installationOffset?: number, component?: string): JsonObject { return this.store.detail(projectId, key, version, installationOffset, component); }
 }

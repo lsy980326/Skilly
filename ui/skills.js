@@ -17,7 +17,7 @@ export function renderSkillList(container, items, selected, choose) {
     for (const i of skill.installations) {
       const row = node("span", "skill-assignment-line"); row.append(node("span", "", `${i.repository} · ${i.version}`), stamp(i.state)); card.append(row);
     }
-    if (skill.installations_total > skill.installations.length) card.append(node("small", "", `외 ${skill.installations_total - skill.installations.length}개 설치 지정`));
+    if (skill.installations_total > skill.installations.length) card.append(node("small", "", `전체 설치 ${skill.installations_total}개 · 이 범위 미리보기 ${skill.installations.length}개`));
     card.addEventListener("click", () => choose(skill.skill_key)); container.append(card);
   }
 }
@@ -47,7 +47,7 @@ export function renderSkillDetail(container, data, changeVersion, changeInstalla
     node("p", "catalog-note", "기존 스킬 폴더는 덮어쓰지 않습니다. 출처와 내용을 먼저 확인하세요. 해시는 파일 비교용이며 배포자 신원 인증이 아닙니다. 실행 권한은 추가하지 않으므로 스크립트는 검토 후 bash·python·node 등 해당 인터프리터로 실행하세요."),
     node("p", "catalog-note", "설치 후 새 AI 세션에서 스킬을 확인하세요. 스킬이 사용하는 MCP·도구 연결은 별도입니다. 파일 일치만으로 AI 사용을 확인할 수는 없습니다."));
   article.append(share);
-  const installs = node("section", "skill-section"); installs.append(node("h3", "", "프로젝트 설치 상태"), node("p", "catalog-note", "마지막 파일 관측 기준 · 현재 상태 재확인 필요 · AI 로딩·실행 미확인"));
+  const installs = node("section", "skill-section"); installs.append(node("h3", "", data.component_scope ? "선택한 구성요소의 설치 상태" : "전체 구성요소의 설치 상태"), node("p", "catalog-note", "마지막 파일 관측 기준 · 현재 상태 재확인 필요 · AI 로딩·실행 미확인"));
   if (!data.installations.length) installs.append(node("p", "", "설치 위치가 아직 지정되지 않았습니다. AI에 이 프로젝트의 버전 지정을 요청하세요."));
   for (const i of data.installations) {
     const box = node("div", "skill-installation"), title = node("div", "skill-installation-title");

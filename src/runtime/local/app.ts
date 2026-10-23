@@ -16,8 +16,11 @@ import { SqliteRecoveryJournal } from "../../adapters/storage/sqlite/recovery-jo
 import { readLifecycle } from "../../adapters/storage/sqlite/lifecycle.js";
 import { boundSourceProvider } from "../../adapters/project/source-version.js";
 
+import { projectInstallationComponents } from "../../adapters/project/installation-components.js";
+
 export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: string) {
   if (!isAbsolute(path)) throw new MemoryError("invalid_path", "Use an absolute local database path.");
+  const bindings = binding && projectRoot ? projectInstallationComponents(projectRoot, binding) : [];
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try {
     closeSync(openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600));
@@ -25,10 +28,10 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
     if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
   }
   if (!lstatSync(path).isFile()) throw new MemoryError("invalid_path", "The database must be a regular local file.");
-  const store = new SqliteMemoryStore(path, binding && projectRoot ? boundSourceProvider(projectRoot, binding) : undefined);
+  const store = new SqliteMemoryStore(path, binding && projectRoot ? boundSourceProvider(projectRoot, binding) : undefined, bindings);
   const context = createMemoryContext();
   const service = new MemoryService(store, context);
-  const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`);
+  const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`, path);
   const recovery = new WriteRecovery(store, journal, context,
     binding && projectRoot ? () => readLifecycle(path, binding, projectRoot) : undefined);
   const skills = new SkillLibrary(store.skills, context, projectRoot ? new LocalSkillObserver(projectRoot) : undefined);

@@ -123,7 +123,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (url.pathname === "/api/skill") {
         const key = url.searchParams.get("skill");
         if (!key) throw new ViewerError("invalid_input", "스킬을 선택해 주세요.");
-        json(response, 200, reader.skills(project, { key, offset: offset(url), ...(url.searchParams.has("version") ? { version: url.searchParams.get("version")! } : {}) })); return;
+        json(response, 200, reader.skills(project, { ...selection, key, offset: offset(url), ...(url.searchParams.has("version") ? { version: url.searchParams.get("version")! } : {}) })); return;
       }
       if (url.pathname === "/api/overview") {
         const filters = Object.fromEntries(["query","component","feature","repository","environment"].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)!]));

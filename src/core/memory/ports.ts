@@ -15,5 +15,5 @@ export interface MemoryStore {
   commit(mutation: Mutation): Promise<"committed" | "conflict">;
   query(input: RecordQuery): Promise<MemoryRecord[]>;
   maxSequence(projectId: string): Promise<number>;
-  unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number): Promise<Run[]>;
+  unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number, component?: string): Promise<Run[]>;
 }

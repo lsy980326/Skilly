@@ -184,3 +184,23 @@ Skilly/
 첫 설치·연결 문제는 `npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite`로 로컬 준비 상태부터 확인하세요. 설정 파일 내용을 읽거나 기존 파일을 고치지 않으며, 현재 채팅의 연결 성공을 대신 판정하지 않습니다. [설치·재연결 안내](docs/codex-integration.md#첫-설치와-연결-문제-진단)
 
 계획대로 어디까지 진행했는지는 **계획** 탭과 `memory_query_plans`로 확인합니다. 선택 MD·대화 계획, 항목별 완료 조건, 작업·검사 근거 연결은 [계획·체크리스트 안내](docs/plans.md)를 참고하세요.
+
+### 구성요소별 MCP 조회
+
+`memory_query_plans`, `memory_list_skills`, `memory_recovery_status`는 선택한
+`component`의 명시적 연결만 읽습니다. `unclassified`는 연결 정보가 없는
+항목이며 과거 원문으로 추정 분류하지 않습니다. 혼합 계획의 전체 진행률은
+그대로 유지하고, 스킬의 `installations_total`은 전체 설치 수입니다.
+
+MCP의 스킬 분류는 기본적으로 실행 폴더의 공개 `skilly.project.json`만
+확인합니다. 여러 구성요소의 설치를 함께 읽으려면 연결 설정 시 공개 파일
+`skilly.components.json`에 `{ "version": 1, "projects": ["/absolute/project"] }`로
+허용할 폴더를 명시합니다. 최대 15개 추가 폴더이며 각 공개 식별 파일만 읽습니다.
+DB에 저장된 설치 경로를 따라가거나 Codex 비공개 설정을 읽지 않습니다.
+화면 서버에는 같은 폴더를 기존 `--project` 옵션으로 허용해야 합니다.
+
+저장 문제 화면과 대조할 때는 `memory_recovery_status`에
+`include_rejected: true`를 지정합니다. 기본값은 이전과 같은 복구 대기 목록이고,
+이 옵션은 원문을 보관하지 못한 거절 요청도 포함합니다. MCP는 연결의 저장소·환경
+범위에서 오래된 요청부터, 화면은 서비스 범위에서 최근 요청부터 표시할 수 있습니다.
+같은 범위의 요청 ID·구성요소·저장 상태로 대조하며 읽기로 재시도하거나 기록을 바꾸지 않습니다.

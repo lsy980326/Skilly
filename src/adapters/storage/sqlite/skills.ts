@@ -82,6 +82,9 @@ export class SqliteSkills implements SkillRepository {
       this.db.exec("COMMIT"); return result;
     } catch (error) { if (this.db.isTransaction) this.db.exec("ROLLBACK"); throw error; }
   }
+  listForComponent(projectId: string, offset: number, limit: number, query: string, component?: string): JsonObject {
+    return this.list(projectId, offset, limit, query, undefined, component);
+  }
   list(projectId: string, offset: number, limit: number, query: string, sort?: ListSort, component?:string): JsonObject {
     this.project(projectId);
     componentSelection(component);
@@ -97,26 +100,28 @@ export class SqliteSkills implements SkillRepository {
       installations_total: this.db.prepare("SELECT count(*) AS n FROM skill_installations WHERE project_id=? AND skill_key=?").get(projectId, row["skill_key"]!)?.["n"] ?? 0,
     })) as JsonObject[], next_offset: rows.length > limit ? offset + limit : null, schema_supported: true, loading_status: "unknown" };
   }
-  private installations(projectId: string, key: string, offset = 0, limit = 3, component?:string): JsonObject[] {
+  private installations(projectId: string, key: string, offset = 0, limit = 3, component?:string, latest = false): JsonObject[] {
     const selected=componentWhere(component,`SELECT 1 FROM json_each(?) b WHERE ${installationMatch}`,"json_extract(b.value,'$.key')");
     return this.db.prepare(`SELECT i.*,o.id AS observation_id,o.observed_at,o.state,o.version AS observed_version,o.expected_hash
       FROM skill_installations i LEFT JOIN skill_observations o ON o.id=(SELECT id FROM skill_observations
         WHERE project_id=i.project_id AND installation_id=i.id ORDER BY observed_at DESC,seq DESC LIMIT 1)
-      WHERE i.project_id=? AND i.skill_key=? AND ${selected.sql} ORDER BY i.repository,i.tool,i.folder,i.id LIMIT ? OFFSET ?`)
+      WHERE i.project_id=? AND i.skill_key=? AND ${selected.sql} ORDER BY ${latest ? "i.assigned_at DESC,i.id" : "i.repository,i.tool,i.folder,i.id"} LIMIT ? OFFSET ?`)
       .all(projectId, key,...(component?[this.componentBindings(projectId),...selected.params]:[]), limit, offset).map(row => ({ ...row, state: row["observed_version"] === row["version"] ? row["state"] : "not_checked",
         evidence: "last_saved_file_observation", loading_status: "unknown", current_machine_verified: false })) as JsonObject[];
   }
-  detail(projectId: string, key: string, version?: string, installationOffset = 0): JsonObject {
+  detail(projectId: string, key: string, version?: string, installationOffset = 0, component?: string): JsonObject {
     this.project(projectId);
     if (!this.supported()) throw new MemoryError("not_found", "No skill library in this older DB.");
     const versions = this.db.prepare("SELECT version,content_hash,created_at FROM skill_versions WHERE project_id=? AND skill_key=? ORDER BY created_at DESC,rowid DESC LIMIT 101").all(projectId, key);
-    const chosen = version ?? (versions[0] ? String(versions[0]["version"]) : "");
+    componentSelection(component);
+    const assigned = component ? this.installations(projectId, key, 0, 1, component, true)[0]?.["version"] : undefined;
+    const chosen = version ?? (typeof assigned === "string" ? assigned : undefined) ?? (versions[0] ? String(versions[0]["version"]) : "");
     const selected = this.version(projectId, key, chosen);
     if (!selected) throw new MemoryError("not_found", "Skill version not found in this project.");
-    const allInstallations = this.installations(projectId, key, installationOffset, 7), installations = allInstallations.slice(0, 6);
+    const allInstallations = this.installations(projectId, key, installationOffset, 7, component), installations = allInstallations.slice(0, 6);
     return { skill: parseJsonObject(JSON.stringify(selected)), versions: versions.slice(0, 100) as JsonObject[], versions_truncated: versions.length > 100,
       installations: installations.map(i => ({ ...i, files: i["observation_id"] ? JSON.parse(String(this.db.prepare("SELECT files_json FROM skill_observations WHERE project_id=? AND id=?").get(projectId, String(i["observation_id"]))?.["files_json"])) : [] })) as JsonObject[],
-      installation_offset: installationOffset, next_installation_offset: allInstallations.length > 6 ? installationOffset + 6 : null, content_is_untrusted: true, loading_status: "unknown" };
+      ...(component ? { component_scope: component } : {}), installation_offset: installationOffset, next_installation_offset: allInstallations.length > 6 ? installationOffset + 6 : null, content_is_untrusted: true, loading_status: "unknown" };
   }
 }
 

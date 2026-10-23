@@ -335,7 +335,7 @@ async function openSkill(key, version, installationOffset = 0) {
   const request = ++detailRequest, project = state.project;
   state.skillKey = key; state.skillVersion = version; state.skillOffset = installationOffset;
   renderSkillList($("#tasks"), state.items, key, selected => { void openSkill(selected).catch(showError); });
-  const params = new URLSearchParams({ project, skill: key, offset: String(installationOffset) }); if (version) params.set("version", version);
+  const params = new URLSearchParams({ project, skill: key, offset: String(installationOffset) }); if (state.component) params.set("component", state.component); if (version) params.set("version", version);
   const data = await api(`/api/skill?${params}`);
   if (request !== detailRequest || state.project !== project || state.view !== "skills") return;
   state.skillVersion = data.skill.version;

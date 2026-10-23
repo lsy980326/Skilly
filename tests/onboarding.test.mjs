@@ -9,7 +9,8 @@ import {openLocal} from '../dist/runtime/local/app.js';
 const identity={key:'onboarding-test',name:'Onboarding test',repository:'web',environment:'test'};
 function fixture(){const root=realpathSync(mkdtempSync(join(tmpdir(),'skilly-onboarding-')));return {root,db:join(root,'memory.sqlite')};}
 test('first install validates explicit identity and creates all connection files without trusting or opening DB',async()=>{
- const f=fixture();const result=setupCodex({project:f.root,db:f.db,identity});assert.equal(result.connection_verified,false);assert.equal(result.files.length,5);
+ const f=fixture();const result=setupCodex({project:f.root,db:f.db,identity});assert.equal(result.connection_verified,false);assert.equal(result.files.length,6);
+ assert.equal(readFileSync(join(f.root,'.agents/skills/use-skilly/references/component-catalogs.md'),'utf8'),readFileSync(new URL('../integrations/skills/use-skilly/references/component-catalogs.md',import.meta.url),'utf8'));
  assert.deepEqual(JSON.parse(readFileSync(join(f.root,'skilly.project.json'),'utf8')),{version:1,...identity});assert.equal(existsSync(f.db),false);
  const before=result.files.map(p=>readFileSync(p));assert.throws(()=>setupCodex({project:f.root,db:f.db,identity}));
  assert.throws(()=>setupCodex({project:f.root,db:f.db}));result.files.forEach((p,n)=>assert.deepEqual(readFileSync(p),before[n]));

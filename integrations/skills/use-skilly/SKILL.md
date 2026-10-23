@@ -157,6 +157,9 @@ later reconstructions retrospective; they must not become the latest feature sta
 Keep check names short (at most 120 characters); put commands in check `detail`.
 Do not run another AI or reconstruct a second independent source of truth.
 
+For component-filtered plans, skills and recovery, read
+[component catalogs](references/component-catalogs.md) before querying.
+
 ### Feature evidence currentness
 
 When `memory_query_overview(view: "features")` returns `current_knowledge`, read
