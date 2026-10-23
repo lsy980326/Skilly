@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm";
 class Element {
   children = [];
   dataset = {};
+  style = {};
   className = "";
   listeners = {};
   classList = {
@@ -109,6 +110,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
             : [{ key: "clock", name: "상대 시간", total: 1, unfinished: 0, ...featureDetail }],
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
         : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
+        : path.includes("state=completed") ? { items: active ? [] : [run], filtered_total: active ? 0 : 1, next_offset: null }
         : path.startsWith("/api/runs/run")
           ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, executions, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
           : { items: [run], next_offset: null };
@@ -163,19 +165,19 @@ test("process observations and AI reports stay separate and a newly collected re
   const executions = { items: [], next_offset: null };
   const app = await viewer({ structured: true, executions });
   assert.match(app.node("#detail").textContent, /수집된 실행 결과 없음/);
-  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /AI 보고만 있음/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /AI 설명만 있어요/);
   executions.items.push({ id: "execution", executable: "<img src=x>", started_at: "2026-10-21T01:00:00Z", duration_ms: 150,
     outcome: "exited", exit_code: 0, stdout_bytes: 14, stderr_bytes: 0, record_id: "record" });
   await app.tick();
   const section = app.node("#detail").querySelector(".execution-observations");
-  assert.match(section.textContent, /직접 실행 관측.*정상 종료 · 코드 0/);
-  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /직접 실행 관측 있음/);
+  assert.match(section.textContent, /명령 실행 결과.*정상 종료 · 코드 0/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /실행 결과가 남아 있어요/);
   assert.match(section.textContent, /종료 코드 0은 기능 검증 완료를 뜻하지 않습니다/);
   assert.equal(section.querySelector("img"), null);
   assert.match(app.node("#detail").textContent, /확인 결과 · AI 보고.*통과 보고/);
   executions.items[0].outcome = "unconfirmed"; executions.items[0].duration_ms = null;
   await app.tick(); assert.match(app.node("#detail").textContent, /종료 관측 없음/);
-  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /확인 불가/);
+  assert.match(app.node("#detail").querySelector(".validation-evidence").textContent, /결과를 확인할 수 없어요/);
 });
 
 test("recovery UI separates saved, pending and blocked requests and never calls an empty list complete", async () => {
@@ -238,10 +240,10 @@ test("unchanged reports keep list and detail time in sync without rebuilding det
 
 test("structured report is readable, original is folded, and component filter reaches the API", async () => {
   const app = await viewer({ structured: true });
-  assert.match(app.node("#detail").textContent, /핵심 변화/);
+  assert.match(app.node("#detail").textContent, /달라진 점/);
   assert.match(app.node("#detail").textContent, /확인 결과 · AI 보고/);
-  assert.match(app.node("#detail").textContent, /다음 작업/);
-  assert.match(app.node("#detail").textContent, /사람용 요약/);
+  assert.match(app.node("#detail").textContent, /다음 할 일/);
+  assert.match(app.node("#detail").textContent, /작업 요약/);
   const machine = app.node("#detail").querySelector(".machine-report");
   assert.equal(machine.open, false);
   const data = JSON.parse(machine.querySelector("pre").textContent);
@@ -463,7 +465,7 @@ test("skill tab renders versioned plain-text content and keeps unchanged detail 
 test('missing execution data is not rendered as a confirmed empty query', async () => {
   const app = await viewer({ structured: true, executions: null });
   const detail = app.node('#detail');
-  assert.match(detail.querySelector('.validation-evidence').textContent, /확인 불가/);
+  assert.match(detail.querySelector('.validation-evidence').textContent, /결과를 확인할 수 없어요/);
   assert.match(detail.querySelector('.execution-observations').textContent, /조회 정보 없음/);
   assert.doesNotMatch(detail.querySelector('.execution-observations').textContent, /수집된 실행 결과 없음/);
 });
@@ -474,12 +476,12 @@ test('feature evidence summary follows aggregate observations without promoting 
     execution_evidence: { status: 'observations_available', total: 2, unconfirmed: 1 }
   } });
   app.node('#show-features').listeners.click(); await new Promise(setImmediate);
-  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /직접 실행 관측 있음/);
+  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /실행 결과가 남아 있어요/);
   assert.match(app.node('#detail').textContent, /연결 작업 전체 기준/);
   assert.match(app.node('#detail').textContent, /통과 보고/);
   app.updateFeature({ execution_evidence: { status: 'observations_available', total: 2, unconfirmed: 2 } });
   await app.tick();
-  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /확인 불가/);
+  assert.match(app.node('#detail').querySelector('.validation-evidence').textContent, /결과를 확인할 수 없어요/);
 });
 
 test('execution cards render collected counts and safe failure names without promoting AI reports', async () => {
@@ -512,7 +514,7 @@ test('expanded older records remain while polling updates the latest record and 
 test('only unfinished storage stages have a current flow point; closed tasks stay still',async()=>{
  const app=await viewer({active:true});assert.equal(app.node('#detail').querySelector('.flow').dataset.state,'active');
  assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,1);
- assert.match(app.node('#detail').textContent,/마감 대기.*실제 실행 감지/);
+ assert.match(app.node('#detail').textContent,/진행중으로 저장된 작업.*실제 실행 여부/);
  app.updateTask({state:'completed',activity:'completed'});await app.tick();
  assert.equal(app.node('#detail').querySelector('.flow').querySelectorAll('.current').length,0);
  app.updateTask({state:'interrupted',activity:'interrupted'});await app.tick();
@@ -542,10 +544,34 @@ test('code-version comparison is distinct from execution success and updates on 
  const row={id:'code-version',executable:'node',started_at:'2026-10-21T01:00:00Z',duration_ms:10,outcome:'exited',exit_code:0,stdout_bytes:0,stderr_bytes:0,
  code_version:{before:{commit:'a'.repeat(40)},after:{commit:'a'.repeat(40)},current:{commit:'a'.repeat(40)},comparison:{status:'same_version',reason:'matching_clean_observations',checked_at:'2026-10-21T01:00:00Z'}}};
  const app=await viewer({structured:true,executions:{items:[row],next_offset:null}});
- assert.match(app.node('#detail').querySelector('.execution-version').textContent,/코드 버전 일치/);
+ assert.match(app.node('#detail').querySelector('.execution-version').textContent,/검사 때와 같은 코드예요/);
  assert.match(app.node('#detail').querySelector('.execution-version').textContent,/기능 검증은 포함하지 않습니다/);
- row.code_version.comparison={status:'changed',reason:'different_commit'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 변경 · 재검사 필요/);
- row.code_version.comparison={status:'unknown',reason:'uncommitted_changes'};await app.tick();assert.match(app.node('#detail').textContent,/코드 버전 비교 불가.*커밋되지 않은 변경/);
+ row.code_version.comparison={status:'changed',reason:'different_commit'};await app.tick();assert.match(app.node('#detail').textContent,/검사 뒤 코드가 바뀌었어요/);
+ row.code_version.comparison={status:'unknown',reason:'uncommitted_changes'};await app.tick();assert.match(app.node('#detail').textContent,/지금 코드에도 같은 결과일까요.*커밋되지 않은 수정/);
+});
+
+test('task summary comes first and technical panels remain folded or retain the readers choice', async()=>{
+ const executions={items:[],next_offset:null};
+ const app=await viewer({structured:true,executions});
+ const content=app.node('#detail').querySelector('.detail-content');
+ assert.ok(content.children.indexOf(content.querySelector('.work-brief'))<content.children.indexOf(content.querySelector('.flow')));
+ assert.equal(content.querySelector('.execution-observations').open,false);
+ assert.equal(content.querySelector('.task-information').open,false);
+ assert.match(content.querySelector('.work-brief').textContent,/다음 할 일.*실제 화면 확인/);
+ content.querySelector('.execution-observations').open=true;
+ content.querySelector('.task-information').open=true;
+ executions.items.push({id:'new',executable:'node',outcome:'exited',exit_code:0,started_at:'2026-10-21T01:01:00Z',duration_ms:10,stdout_bytes:0,stderr_bytes:0});
+ await app.tick();
+ assert.equal(app.node('#detail').querySelector('.execution-observations').open,true);
+ assert.equal(app.node('#detail').querySelector('.task-information').open,true);
+ assert.match(app.node('#detail').querySelector('.validation-evidence').textContent,/실행 결과가 남아 있어요/);
+});
+
+test('compact result distinguishes failed launch, timeout, interruption and unknown ending',async()=>{
+ for(const [outcome,label] of [['launch_failed','시작하지 못했어요'],['timed_out','제한 시간에 도달'],['interrupted','중단 결과가 저장'],['unconfirmed','끝난 결과를 확인하지 못했어요']]){
+  const app=await viewer({executions:{items:[{id:'attempt',executable:'node',outcome,exit_code:null,duration_ms:null,started_at:'2026-10-21T01:00:00Z',stdout_bytes:0,stderr_bytes:0}],next_offset:null}});
+  assert.match(app.node('#detail').querySelector('.validation-result').textContent,new RegExp(label));
+ }
 });
 
 test("simple view uses saved states and the same refresh loop while detail remains available", async () => {
@@ -558,7 +584,7 @@ test("simple view uses saved states and the same refresh loop while detail remai
   app.updateTask({ title: "갱신된 작업" }); await app.tick();
   assert.match(app.node("#factories").textContent, /갱신된 작업/);
   app.node("#pause-factory").listeners.click();
-  assert.equal(app.node("#pause-factory").textContent, "애니메이션 재개");
+  assert.equal(app.node("#pause-factory").textContent, "움직임 재생");
   app.node("#detail-mode").listeners.click(); await new Promise(setImmediate);
   assert.equal(app.node("#simple-dashboard").hidden, true);
   assert.ok(detail.length); assert.match(app.node("#detail").textContent, /갱신된 작업/);

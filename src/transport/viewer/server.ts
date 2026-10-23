@@ -91,7 +91,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "repository", "environment"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
@@ -117,7 +117,9 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       if (url.pathname === "/api/runs") {
         if (url.searchParams.has("review") && url.searchParams.get("review") !== "unread") throw new ViewerError("invalid_input", "확인 상태를 다시 선택해 주세요.");
+        if (url.searchParams.has("completed_within") && url.searchParams.get("completed_within") !== "1h") throw new ViewerError("invalid_input", "완료 시간 범위를 다시 선택해 주세요.");
         json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all", unreviewed: url.searchParams.get("review") === "unread",
+          completedWithinHour: url.searchParams.get("completed_within") === "1h",
           ...(url.searchParams.has("component") ? { component: url.searchParams.get("component")! } : {}),
           ...(url.searchParams.has("feature") ? { feature: url.searchParams.get("feature")! } : {}) })); return;
       }

@@ -53,3 +53,46 @@ test('acknowledgement POST requires token, same origin and current completed sna
  const again=await post({Authorization:'Bearer '+token,Origin:server.origin});assert.equal(again.status,200);
  assert.equal((await fetch(server.origin+'/api/runs?project='+pid+'&state=completed&review=unread',{headers:{Authorization:'Bearer '+token}}).then(x=>x.json())).items.length,0);
 });
+
+
+test('recent completion window filters before pagination, counts only unread, and expires without changing records',async t=>{
+ const f=fixture(t),pid=await project(f.call),other=await project(f.call,'other');
+ let now=Date.parse('2026-10-23T10:00:00.000Z');
+ const raw=new DatabaseSync(f.path);t.after(()=>raw.close());
+ const at=(id,time)=>raw.prepare('UPDATE runs SET updated_at=? WHERE id=?').run(typeof time==='number'?new Date(time).toISOString():time,id);
+ const recent=[];for(let i=0;i<43;i++){const r=await completed(f,pid,'recent'+i);recent.push(r);at(r.id,now-1_800_000);}
+ const boundary=await completed(f,pid,'boundary');at(boundary.id,now-3_600_000);
+ const old=await completed(f,pid,'old');at(old.id,now-3_600_001);
+ const future=await completed(f,pid,'future');at(future.id,now+1);
+ const invalid=await completed(f,pid,'invalid');at(invalid.id,'invalid');
+ const foreign=await completed(f,other,'foreign');at(foreign.id,now-1_800_000);
+ await run(f.call,pid,{idempotency_key:'still-active'});
+ const store=new SqliteMemoryStore(f.path);t.after(()=>store.close());
+ store.reviews.acknowledge(pid,recent[0].id,new Date(now-1_800_000).toISOString());
+ const before={runs:raw.prepare('SELECT * FROM runs ORDER BY id').all(),records:raw.prepare('SELECT * FROM records ORDER BY seq').all()};
+ const reader=new SqliteViewer(f.path,()=>now);t.after(()=>reader.close());
+ const options={state:'completed',unreviewed:true,completedWithinHour:true};
+ const first=reader.runs(pid,options),next=reader.runs(pid,{...options,offset:first.next_offset});
+ assert.equal(first.filtered_total,43);assert.equal(first.items.length,40);assert.equal(first.next_offset,40);
+ assert.equal(next.filtered_total,43);assert.equal(next.items.length,3);assert.equal(next.next_offset,null);
+ const ids=[...first.items,...next.items].map(r=>r.id);assert.ok(ids.includes(boundary.id));
+ for(const r of [old,future,invalid,foreign,recent[0]])assert.ok(!ids.includes(r.id));
+ assert.equal(reader.detail(pid,old.id).run.state,'completed','older history is still available');
+ assert.throws(()=>reader.runs(pid,{completedWithinHour:true,state:'active'}),{code:'invalid_input'});
+ now+=1_860_000;
+ const later=reader.runs(pid,options);assert.equal(later.filtered_total,1);assert.equal(later.items[0].id,future.id);
+ now+=3_600_000;assert.equal(reader.runs(pid,options).filtered_total,0);
+ assert.deepEqual(raw.prepare('SELECT * FROM runs ORDER BY id').all(),before.runs);
+ assert.deepEqual(raw.prepare('SELECT * FROM records ORDER BY seq').all(),before.records);
+});
+
+test('recent-completion HTTP query validates window and retains authentication',async t=>{
+ const f=fixture(t),pid=await project(f.call);await completed(f,pid,'recent-http');
+ const server=await startViewer({db:f.path});t.after(()=>server.close());
+ const token=new URL(server.url).hash.slice('#token='.length),headers={Authorization:'Bearer '+token};
+ const path=server.origin+'/api/runs?project='+pid+'&state=completed&review=unread&completed_within=1h';
+ assert.equal((await fetch(path)).status,401);
+ const result=await fetch(path,{headers});assert.equal(result.status,200);const page=await result.json();assert.equal(page.filtered_total,1);assert.equal(page.items.length,1);
+ assert.equal((await fetch(path.replace('1h','2h'),{headers})).status,400);
+ assert.equal((await fetch(path.replace('state=completed','state=active'),{headers})).status,400);
+});

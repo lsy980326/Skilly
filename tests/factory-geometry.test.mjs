@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {projectFactoryPoint as P,boxVertices,assemblyPose,solveFactoryArm} from '../ui/factory-geometry.js';
 test('belt, cargo and transfer share one projection and deck plane',()=>{
- const p=P([0,0,42]),q=P([100,0,42]); assert.deepEqual(q.map((v,i)=>v-p[i]),[112,12]);
+ const p=P([0,0,42]),q=P([100,0,42]); assert.deepEqual(q.map((v,i)=>v-p[i]),[112,0]);
  const box=boxVertices([0,0,42],[64,46,22]);assert.ok(box.top.every(p=>p[2]===64));assert.ok(box.front.slice(0,2).every(p=>p[2]===42));
 });
 test('every robot pose preserves link lengths and gripper contact, including pickup and placement',()=>{

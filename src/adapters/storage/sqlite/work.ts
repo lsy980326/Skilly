@@ -56,7 +56,7 @@ export class SqliteWorkReader implements WorkReader {
     return row ? { ...row, verified: false } : null;
   }
 
-  overview(input: OverviewQuery, options: { unreviewed?: boolean } = {}): JsonObject {
+  overview(input: OverviewQuery, options: { unreviewed?: boolean; completedBetween?: readonly [string, string] } = {}): JsonObject {
     const { project_id: pid, view, offset, limit } = input;
     const version = this.version();
     const discovery = new FeatureDiscovery(this.db, version);
@@ -84,11 +84,15 @@ export class SqliteWorkReader implements WorkReader {
     const summary = this.db.prepare(`SELECT count(*) AS total, coalesce(sum(r.state = 'active'),0) AS unfinished,
       coalesce(sum(r.state = 'interrupted'),0) AS interrupted, coalesce(sum(${unclassified}),0) AS unclassified
       FROM runs r WHERE ${where}`).get(...params);
-    let rows: Row[];
+    let rows: Row[], filteredTotal: number | undefined;
     if (view === "tasks") {
       const filters = [...conditions], values = [...params];
       if (options.unreviewed && version >= 9) filters.push(unreviewedRunSql);
       if (input.state && input.state !== "all") { filters.push("r.state = ?"); values.push(input.state); }
+      if (options.completedBetween) {
+        filters.push("r.state = 'completed' AND julianday(r.updated_at) BETWEEN julianday(?) AND julianday(?)");
+        values.push(...options.completedBetween);
+      }
       if (input.query) {
         const matched = version >= 4 ? discovery.predicate("f", input, true) : null;
         filters.push("(instr(lower(r.goal),lower(?)) > 0 OR instr(lower(r.repository),lower(?)) > 0" +
@@ -97,6 +101,7 @@ export class SqliteWorkReader implements WorkReader {
         values.push(input.query, input.query); if (version >= 4) values.push(input.query);
         if (matched) values.push(...matched.params);
       }
+      if (options.completedBetween) filteredTotal = Number(this.db.prepare(`SELECT count(*) AS total FROM runs r WHERE ${filters.join(" AND ")}`).get(...values)?.["total"]);
       rows = this.db.prepare(`SELECT r.*${version >= 3 ? ", a.actor" : ", NULL AS actor"} FROM runs r
         ${version >= 3 ? "LEFT JOIN run_actors a ON a.run_id = r.id" : ""}
         WHERE ${filters.join(" AND ")} ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`).all(...values, limit + 1, offset);
@@ -120,6 +125,7 @@ export class SqliteWorkReader implements WorkReader {
     const response: JsonObject = { project_id: pid, view, summary: json(summary), items, next_offset: null,
       scope: json({ repository: input.repository ?? null, environment: input.environment ?? null, component: input.component ?? null, feature: input.feature ?? null }),
       capture: "agent_reports_only", claims_verified: false, observed_at: new Date(this.now()).toISOString() };
+    if (filteredTotal !== undefined) response["filtered_total"] = filteredTotal;
     if (input.query) response["search"] = { query: input.query, matching: "literal_names_aliases_and_path_segments", classification: "unchanged", metadata_source: "explicit_declarations", file_access: "not_performed" };
     for (const row of rows.slice(0, limit)) {
       let item: JsonObject;

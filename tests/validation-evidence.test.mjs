@@ -6,7 +6,7 @@ const empty = { items: [], next_offset: null };
 test('a report without observations is not proof of execution or nonexecution', () => {
   const result = validationEvidence({ checks, executions: empty });
   assert.equal(result.state, 'reported'); assert.equal(result.reports, 1);
-  assert.match(result.detail, /미실행을 뜻하지 않습니다/);
+  assert.match(result.detail, /실행하지 않았다는 뜻은 아니에요/);
   assert.equal(validationEvidence({ checks: [{ result: 'not_run' }], executions: empty }).state, 'reported');
 });
 test('unavailable, unfinished and incomplete reads stay unknown even with a passed AI report', () => {
@@ -20,7 +20,7 @@ test('observed failures count as observations; pending items and report results 
   const input = { checks, executions: { items: [{ outcome: 'exited', exit_code: 7 }, { outcome: 'unconfirmed' }], next_offset: null } };
   const before = JSON.stringify(input), result = validationEvidence(input);
   assert.equal(result.state, 'observed'); assert.equal(result.observed, 1); assert.equal(result.pending, 1);
-  assert.match(result.detail, /개별/); assert.equal(JSON.stringify(input), before);
+  assert.match(result.detail, /AI의 설명과 별도로/); assert.equal(JSON.stringify(input), before);
   assert.equal(validationEvidence({ executions: { items: [{ outcome: 'unexpected' }] } }).state, 'unknown');
 });
 test('feature aggregates distinguish finished, unconfirmed, absent and invalid counts', () => {

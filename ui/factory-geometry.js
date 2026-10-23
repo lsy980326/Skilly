@@ -1,6 +1,6 @@
-// One dimetric camera for every object. x follows the belt, y is depth, z is height.
+// One shallow orthographic camera for every object. x follows the belt, y is depth, z is height.
 export const BELT_HEIGHT = 40;
-export function projectFactoryPoint([x, y, z]) { return [500 + 1.12 * x - .5 * y, 235 + .12 * x + .52 * y - .98 * z]; }
+export function projectFactoryPoint([x, y, z]) { return [500 + 1.12 * x - .5 * y, 235 + .36 * y - .98 * z]; }
 export function boxVertices([x, y, z], [width, depth, height]) {
   const a=x-width/2,b=x+width/2,c=y-depth/2,d=y+depth/2;
   return {top:[[a,c,z+height],[b,c,z+height],[b,d,z+height],[a,d,z+height]],

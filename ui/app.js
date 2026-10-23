@@ -2,7 +2,7 @@ import { createSimpleDashboard } from "./simple-dashboard.js";
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
 import { createViewerSession } from "./session.js";
-import { renderMachineReport, renderExecutions, renderValidationEvidence } from "./reports.js";
+import { renderMachineReport, renderExecutions, renderValidationEvidence, renderWorkBrief } from "./reports.js";
 import { renderFeatureList, renderFeatureDetail, renderMatchReasons } from "./features.js";
 import { createDocumentImport } from "./documents.js";
 import { createDocumentLibrary } from "./document-library.js";
@@ -396,21 +396,25 @@ function renderDetail(task, counts = {}, animateNew = true) {
   const expanded = new Map([...$("#detail").querySelectorAll("details")].map(node => [node.dataset.record, node.open]));
   const rawExpanded = new Map([...$("#detail").querySelectorAll("details")].filter(node => node.dataset.raw).map(node => [node.dataset.raw, node.open]));
   const machineExpanded = new Map([...$("#detail").querySelectorAll(".machine-report")].map(node => [node.dataset.machine, node.open]));
+  const panelExpanded = new Map([...$("#detail").querySelectorAll("details")].filter(node => node.dataset.panel).map(node => [node.dataset.panel, node.open]));
   const panel = element("div", "detail-content");
   panel.dataset.run = task.id;
   const top = element("div", "detail-top");
   top.append(element("p", "eyebrow", modeLabels[task.mode] ?? task.mode), badge(statusLabels[task.activity], task.activity, true));
   panel.append(top, element("h2", "detail-title", task.title || Array.from(task.goal).slice(0, 100).join("") + (task.goal.length > 100 ? "…" : "")), chips(task));
-  panel.append(renderTaskRecording(task.task_recording, { element, date }));
+  panel.append(renderWorkBrief(state.records, element));
+  const information = element("details", "task-information");
+  information.dataset.panel = "information"; information.open = panelExpanded.get("information") ?? false;
+  information.append(element("summary", "", "작업 정보 · 저장 이력"), renderTaskRecording(task.task_recording, { element, date }));
   const request = element("details", "original-request");
   request.append(element("summary", "", "전체 작업 요청"), element("p", "record-body", task.goal));
-  panel.append(request);
+  information.append(request);
   const metadata = element("dl", "metadata");
   metadata.append(meta("작성 주체", task.actor || "작성자 미수집", task.actor === "로컬 화면" ? "화면에서 요청한 가져오기 · 신원 인증 아님" : task.actor ? "AI가 제공한 이름 · 신원 인증 아님" : "이 기록에는 작성자 정보가 없습니다"),
     meta("마지막 기록", date(task.updated_at), relativeTime(task.updated_at, "small")),
     meta("저장소 / 환경", `${task.repository} / ${task.environment}`, task.branch ? `브랜치 ${task.branch}` : undefined),
     meta("작업 시작", date(task.created_at)));
-  panel.append(metadata);
+  information.append(metadata);
   const flow = element("div", "flow");
   flow.dataset.state = task.state;
   flow.setAttribute("aria-label", "작업 기록의 저장 단계 · 실제 실행 감지 아님");
@@ -419,7 +423,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
   for (const [label, hint, done] of [
     ["시작", "시작 저장됨", true],
     ["진행 기록", progress ? "변경·진행 보고 있음" : "아직 없음", progress],
-    [task.state === "interrupted" ? "중단" : "종료", task.state === "active" ? "마감되지 않음" : "마감 저장됨", task.state !== "active"],
+    [task.state === "interrupted" ? "중단" : "종료", task.state === "active" ? "종료 보고 대기" : "종료 보고 저장", task.state !== "active"],
   ]) {
     const step = element("div", `flow-step${done ? " done" : ""}`);
     if (task.state === "active" && flowIndex === (progress ? 1 : 0)) { step.className += " current"; step.setAttribute("aria-current", "step"); }
@@ -427,12 +431,11 @@ function renderDetail(task, counts = {}, animateNew = true) {
     step.append(element("span", "flow-point"), document.createTextNode(label), element("small", "", hint));
     flow.append(step);
   }
-  panel.append(flow, element("p", "flow-caption", task.state === "active" ? "마감 대기 · 저장된 단계의 흐름 표시이며 실제 실행 감지가 아닙니다." : "저장된 단계 · 종료된 기록은 움직이지 않습니다."), element("p", "activity-note", task.state === "active"
-    ? "최근 활동은 5분 이내 기록이 저장됐다는 뜻입니다. 실시간 실행 여부는 수집하지 않으므로, 오래 갱신되지 않은 작업은 AI 채팅에서 확인하세요."
-    : "마감은 작업 상태를 뜻합니다. 기록 내용의 정확성이나 테스트 성공을 자동 검증한 것은 아닙니다."));
+  panel.append(flow, element("p", "flow-caption", task.state === "active" ? "진행중으로 저장된 작업입니다. 실제 실행 여부는 AI 채팅에서 확인하세요." : "종료 보고가 저장됐습니다. 검사 성공 여부는 아래 결과와 구분합니다."));
+  if (task.task_recording?.interruption) panel.append(element("p", "recording-interrupt", "중단 이력이 있어요. ‘작업 정보 · 저장 이력’에서 마지막 저장 지점을 볼 수 있습니다."));
   panel.append(renderValidationEvidence({ checks: state.records.flatMap(record => record.report?.checks ?? []),
     executions: executionData, partial: state.nextRecords !== null }, element));
-  panel.append(renderExecutions(executionData, { element, date, more: async () => {
+  const executionsPanel = renderExecutions(executionData, { element, date, more: async () => {
     const project = state.project, run = state.run, request = detailRequest;
     try {
       const page = await api(`/api/runs/${run}/executions?project=${project}&offset=${executionData.next_offset}`);
@@ -440,9 +443,11 @@ function renderDetail(task, counts = {}, animateNew = true) {
       executionData = { ...page, items: [...new Map([...executionData.items, ...page.items].map(item => [item.id, item])).values()] };
       detailPaged = true; executionsPaged = true; renderDetail(task, counts, false);
     } catch (error) { showError(error); }
-  } }));
+  } });
+  executionsPanel.open = panelExpanded.get("executions") ?? false;
+  panel.append(executionsPanel, information);
   const heading = element("div", "timeline-heading");
-  heading.append(element("h3", "", "기록 타임라인"), element("span", "", "최근 저장 순 · 원문과 보고"));
+  heading.append(element("h3", "", "작업이 이렇게 진행됐어요"), element("span", "", "최근 기록부터"));
   panel.append(heading);
   if (historyGap) panel.append(element("p", "catalog-note", "새 기록이 많아 이전 페이지와 최신 기록 사이에 미조회 구간이 있을 수 있습니다. 상단 새로고침으로 최신부터 다시 읽어 주세요."));
   if (!state.records.length) panel.append(empty("아직 상세 기록이 없습니다", "작업 시작만 저장됐습니다. 변경·종료 보고가 들어오면 나타납니다."));
@@ -469,9 +474,9 @@ function renderDetail(task, counts = {}, animateNew = true) {
         element("code", "feature-source", `SHA-256 ${source.sha256}`), element("small", "", "호스트가 전달한 원문 · 파일 경로의 실제 출처는 자동 확인하지 않았습니다."));
     }
     if (record.report) {
-      details.append(element("p", "report-label", "사람용 요약"));
+      details.append(element("p", "report-label", "작업 요약"));
       details.append(element("p", "report-summary", record.report.summary));
-      for (const [label, entries] of [["핵심 변화", record.report.changes], ["제약·확인 필요", record.report.limitations], ["다음 작업", record.report.next_steps]]) {
+      for (const [label, entries] of [["달라진 점", record.report.changes], ["알아둘 점", record.report.limitations], ["다음 할 일", record.report.next_steps]]) {
         if (!entries?.length) continue;
         const section = element("section", "report-section"); section.append(element("h4", "", label));
         const list = element("ul"); entries.forEach(entry => list.append(element("li", "", entry)));
@@ -516,6 +521,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
     panel.append(more);
   }
   panel.append(element("p", "record-id", `작업 ${task.id}`));
+  for (const disclosure of panel.querySelectorAll("details")) if (disclosure.dataset.panel) disclosure.open = panelExpanded.get(disclosure.dataset.panel) ?? false;
   $("#detail").replaceChildren(panel);
 }
 function renderRecovery(status) {
@@ -590,7 +596,7 @@ $("#pause-factory").addEventListener("click", () => {
   simpleDashboard.setPaused(factoryPaused || document.hidden || !simpleMode);
   $("#simple-dashboard").classList.toggle("motion-paused", factoryPaused || document.hidden);
   $("#pause-factory").setAttribute("aria-pressed", String(factoryPaused));
-  $("#pause-factory").textContent = factoryPaused ? "애니메이션 재개" : "애니메이션 멈추기";
+  $("#pause-factory").textContent = factoryPaused ? "움직임 재생" : "움직임 멈추기";
 });
 async function refresh(automatic = false) {
   if (refreshing) { refreshPending = true; pendingAutomatic = pendingAutomatic && automatic; return; }

@@ -518,3 +518,56 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
 .knowledge-evidence { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e4e6ed; overflow-wrap: anywhere; }
 .knowledge-evidence .button { margin-top: 10px; }
 .knowledge-conflicts { padding-left: 18px; overflow-wrap: anywhere; }
+
+/* The overview is a map; the lower pane is the place to read. */
+.service-panel { padding:18px 26px 12px; background:#fbfcff; }
+.service-panel .project-header h2 { font-size:22px; }
+.service-panel .project-header > p:last-child { font-size:11px; margin:5px 0 12px; color:var(--muted); }
+.work-panel { background:#fafbfe; }
+.detail-panel { background:#fff; padding-top:24px; }
+.detail-top { margin-bottom:12px; }
+.detail-title { margin-bottom:12px; font-size:22px; }
+.work-brief { margin:22px 0; padding:20px 22px; background:#f6f4fc; border:1px solid #e9e4f4; border-radius:12px; }
+.work-brief .eyebrow { color:#807092; font-size:10px; }
+.brief-summary { font-size:15px; line-height:1.95; margin:8px 0 14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.brief-group h3 { font-size:11px; color:var(--muted); margin:15px 0 6px; }
+.brief-group ul { padding-left:18px; margin:0; font-size:12px; line-height:1.9; overflow-wrap:anywhere; }
+.brief-source { display:block; margin-top:15px; color:var(--muted); font-size:10px; }
+.validation-evidence { padding:15px 0; margin:14px 0; border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:transparent; }
+.validation-heading { align-items:center; }
+.validation-heading h3 { font-size:12px; }
+.validation-evidence > p { font-size:12px; line-height:1.8; color:var(--muted); margin:8px 0; }
+.validation-label { font-size:11px; }
+.validation-evidence > .validation-result { color:var(--ink); font-weight:550; }
+.validation-evidence > .validation-result.has-failures { color:var(--attention); }
+.validation-counts { display:block; color:var(--muted); font-size:10px; }
+.validation-counts summary { cursor:pointer; }
+.validation-counts > span { margin-right:10px; }
+.validation-counts small { display:block; margin-top:8px; }
+.task-information,.execution-observations { margin:10px 0; padding:0; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+.task-information > summary,.execution-observations > summary { padding:12px 15px; font-size:12px; color:var(--muted); cursor:pointer; background:#fafbfe; }
+.task-information > :not(summary),.execution-observations > :not(summary) { margin-left:16px; margin-right:16px; }
+.task-information .metadata { padding:16px 0; }
+.execution-observations .timeline-heading { margin-top:18px; }
+.execution-version { margin-top:14px; background:#f8f9fb; color:var(--muted); padding:10px 12px; border:1px solid var(--line); }
+.execution-version summary { cursor:pointer; font-size:11px; font-weight:500; }
+.execution-version p { font-size:11px; line-height:1.8; }
+.flow { margin:22px 0 12px; }
+.flow-caption { margin-top:8px; font-size:10px; color:var(--muted); }
+.timeline-heading { margin-top:28px; }
+.timeline-heading h3 { font-size:14px; }
+@media(min-width:851px) { .service-panel:not([data-density="expanded"]) .component-strip { grid-auto-columns:minmax(180px,1fr); } }
+.classification-help { font-size:10px; color:var(--muted); margin:8px 0 12px; }
+.classification-help summary { cursor:pointer; }
+.classification-help .classification-note { margin:8px 0; }
+.scope-filters { margin-top:12px; }
+@media(min-width:851px) { .workspace:not(.custom-dashboard) .service-panel { max-height:min(280px,32dvh); } }
+@media(min-width:601px) and (max-width:850px) {
+  body { height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
+  .topbar,.connection-error { flex-shrink:0; }
+  .workspace { flex:1; min-height:0; grid-template-rows:auto auto minmax(0,1fr); }
+  .projects-panel { padding:10px 18px; }
+  .projects-panel .panel-heading { display:none; }
+  .service-panel { max-height:220px; overflow-y:auto; align-content:start; }
+  .work-panel,.detail-panel { min-height:0; overflow-y:auto; }
+}

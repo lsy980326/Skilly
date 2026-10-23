@@ -178,7 +178,7 @@ export class SqliteViewer {
     })), offset);
   }
 
-  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string; unreviewed?: boolean } = {}) {
+  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string; unreviewed?: boolean; completedWithinHour?: boolean } = {}) {
     this.requireProject(projectId);
     const offset = pageOffset(options.offset ?? 0);
     const query = options.query ?? "";
@@ -187,9 +187,15 @@ export class SqliteViewer {
       throw new ViewerError("invalid_input", "검색어나 상태 필터를 확인해 주세요.");
     }
     if (options.unreviewed && state !== "completed") throw new ViewerError("invalid_input", "미확인 보관함은 완료 작업만 조회합니다.");
+    if (options.completedWithinHour && state !== "completed") throw new ViewerError("invalid_input", "최근 완료 시간은 완료 작업만 조회합니다.");
     this.requireFilters(options);
+    // Terminal runs cannot receive checkpoints; updated_at is their saved completion time.
+    const now = this.now();
     const result = this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
-      ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) }, { unreviewed: options.unreviewed === true });
+      ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) }, {
+        unreviewed: options.unreviewed === true,
+        ...(options.completedWithinHour ? { completedBetween: [new Date(now - 3_600_000).toISOString(), new Date(now).toISOString()] as const } : {}),
+      });
     if (Array.isArray(result["items"])) {
       const items = result["items"].map(item => {
         if (!item || typeof item !== "object" || Array.isArray(item) || typeof item["id"] !== "string") throw new ViewerError("unavailable", "작업 목록을 확인하지 못했습니다.");
