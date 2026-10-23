@@ -8,9 +8,13 @@ import { loadProjectBinding } from "./binding.js";
 import { fingerprintWorktree } from "./worktree-fingerprint.js";
 
 function git(root: string, args: string[]) {
+  // File inventories grow with repository size, unlike scalar HEAD/root responses.
+  // Keep both bounded: a failed/truncated listing must never establish equality.
+  const listing = args[0] === "status" || args[0] === "ls-files";
   const r = spawnSync("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root, ...args],
-    { encoding: "utf8", timeout: 1500, maxBuffer: 128 * 1024, windowsHide: true });
-  if (r.error || r.status !== 0) throw new Error("Git metadata unavailable");
+    { encoding: "utf8", timeout: 1500, maxBuffer: (listing ? 2048 : 128) * 1024, windowsHide: true });
+  if (r.error || r.status !== 0 || (listing && r.stdout && !r.stdout.endsWith("\0")))
+    throw new Error("Git metadata unavailable");
   return r.stdout;
 }
 export function observeSource(root: string, binding: ProjectBinding): SourceObservation {

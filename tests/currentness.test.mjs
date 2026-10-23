@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {join} from 'node:path';
-import {mkdirSync,writeFileSync,realpathSync,readFileSync,existsSync} from 'node:fs';
+import {mkdirSync,writeFileSync,realpathSync,readFileSync,existsSync,renameSync} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import {fixture,project,run} from './helpers.mjs';
 import {observeSource,sourceProvider} from '../dist/adapters/project/source-version.js';
@@ -92,9 +92,55 @@ const args=process.argv.slice(2);
 if(args.includes('--show-toplevel'))console.log(${JSON.stringify(f.root)});
 else if(args.includes('rev-parse'))console.log('a'.repeat(40));
 else if(args.includes('status'))process.stdout.write(' M source.js\\0');
-else if(args.includes('ls-files')){require('fs').writeFileSync(${JSON.stringify(marker)},'read');process.stdout.write('H hidden-path\\0'.repeat(20000));}
+else if(args.includes('ls-files')){require('fs').writeFileSync(${JSON.stringify(marker)},'read');process.stdout.write('H hidden-path\\0'.repeat(200000));}
 `;
  writeFileSync(join(bin,'git'),fake,{mode:0o700});const originalPath=process.env.PATH;
  try {process.env.PATH=bin+':'+originalPath;const observation=observeSource(f.root,f.binding);assert.equal(observation.status,'unavailable');assert.equal(observation.commit,null);assert.equal(observation.reason,'git_unavailable');assert.equal(existsSync(marker),true);assert.equal(compareExecutionSource(observation,observation,observation).status,'unknown');}
  finally {if(originalPath===undefined)delete process.env.PATH;else process.env.PATH=originalPath;}
+});
+
+test('large complete Git listings preserve same/changed/unknown through fresh MCP and authenticated HTTP',async t=>{
+ const f=await setupGit(t),assets=join('assets','a'.repeat(100),'b'.repeat(100));mkdirSync(join(f.root,assets),{recursive:true});
+ // Long public asset paths exercise the metadata budget without reading asset contents.
+ for(let i=0;i<650;i++)writeFileSync(join(f.root,assets,`part-${String(i).padStart(4,'0')}.png`),'fixture');
+ commit(f.root);
+ const size=Buffer.byteLength(git(f.root,'ls-files','-v','-z'));assert.ok(size>128*1024&&size<2*1024*1024);
+ writeFileSync(join(f.root,'source.js'),'export const value = 2;\n');
+ const receipt=await execute(f),saved=list(f).items[0].code_version;
+ assert.equal(saved.before.status,'dirty');assert.equal(saved.before.worktree.status,'collected');
+ assert.equal(saved.before.worktree.excluded,652); // assets, binding JSON and .gitignore are outside the source policy
+ const client=new Client({name:'large-listing-fixture',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:[main,'serve','--db',realpathSync(f.path),'--project',f.root],stderr:'pipe'});
+ transport.stderr.on('data',()=>{});await client.connect(transport);t.after(()=>client.close());
+ const viewer=await startViewer({db:realpathSync(f.path),sourceProjects:[f.root]});t.after(()=>viewer.close());
+ const token=new URLSearchParams(new URL(viewer.url).hash.slice(1)).get('token');
+ const both=async(status,reason)=>{
+  const mcp=JSON.parse((await client.callTool({name:'memory_list_executions',arguments:{project_id:f.pid,run_id:f.rid}})).content[0].text);
+  const http=await fetch(`${viewer.origin}/api/runs/${f.rid}/executions?project=${f.pid}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());
+  for(const result of [mcp,http]){const row=result.items.find(x=>x.id===receipt.execution_id);assert.equal(row.code_version.comparison.status,status);assert.equal(row.code_version.comparison.reason,reason);assert.equal(row.code_version.comparison.claims_verified,false);assert.deepEqual(row.code_version.before,saved.before);}
+ };
+ await both('same_version','matching_source_fingerprints');
+ writeFileSync(join(f.root,'source.js'),'export const value = 3;\n');await both('changed','source_fingerprint_changed');
+ const tail=join(assets,'part-0649.png');
+ for(const flag of ['assume-unchanged','skip-worktree']){
+  git(f.root,'update-index',`--${flag}`,tail);await both('unknown','source_unavailable');
+  assert.equal(observeSource(f.root,f.binding).reason,'index_entries_unobserved');git(f.root,'update-index',`--no-${flag}`,tail);
+ }
+ // A large status listing is still incomplete evidence if excluded files changed.
+ renameSync(join(f.root,assets),join(realpathSync(f.directory),'retained-assets'));
+ assert.ok(Buffer.byteLength(git(f.root,'status','--porcelain=v1','-z','--untracked-files=all'))>128*1024);
+ const excluded=observeSource(f.root,f.binding);assert.equal(excluded.status,'dirty');assert.equal(excluded.worktree.reason,'excluded_changes');
+ await both('unknown','fingerprint_excluded_changes');
+});
+
+test('an incomplete NUL Git listing is not accepted as a source observation',async t=>{
+ const f=await setupGit(t),bin=join(realpathSync(f.directory),'git-bin');mkdirSync(bin);
+ writeFileSync(join(bin,'git'),`#!${process.execPath}
+const args=process.argv.slice(2);
+if(args.includes('--show-toplevel'))console.log(${JSON.stringify(f.root)});
+else if(args.includes('rev-parse'))console.log('a'.repeat(40));
+else if(args.includes('status'))process.stdout.write(' M source.js');
+else process.exit(1);
+`,{mode:0o700});const originalPath=process.env.PATH;
+ try{process.env.PATH=bin+':'+originalPath;const observation=observeSource(f.root,f.binding);assert.equal(observation.status,'unavailable');assert.equal(compareExecutionSource(observation,observation,observation).status,'unknown');}
+ finally{if(originalPath===undefined)delete process.env.PATH;else process.env.PATH=originalPath;}
 });
