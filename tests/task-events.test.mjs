@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { openLocal } from '../dist/runtime/local/app.js';
 import { recordLifecycle } from '../dist/adapters/storage/sqlite/lifecycle.js';
 import { SqliteViewer } from '../dist/adapters/storage/sqlite/viewer.js';
+import { startViewer } from '../dist/transport/viewer/server.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const binding={version:1,key:'event-link-test',name:'테스트 서비스',repository:'web',environment:'development'};
 async function fixture(t) {
@@ -73,8 +76,8 @@ test('forks, other roots and scopes do not inherit task associations',async t=>{
   await assert.rejects(f.call('memory_link_task_events',{project_id:'00000000-0000-4000-8000-000000000000',run_id:r,observation_id:fork}),e=>e.code==='scope_mismatch');
 });
 
-test('stale anchors and closed tasks are rejected; later events never attach to closed work',async t=>{
-  const f=await fixture(t),r=await f.begin('a'),old=f.event();f.event();
+test('boundary-crossing anchors and closed tasks are rejected; later events never attach to closed work',async t=>{
+  const f=await fixture(t),r=await f.begin('a'),old=f.event();f.event('Stop');f.event();
   await assert.rejects(f.link(r,old),e=>e.code==='stale_anchor');
   await assert.rejects(f.link(r,f.event('Stop')),e=>e.code==='stale_anchor');
   await f.link(r,f.event());f.event('Interrupt');await f.finish(r);
@@ -82,6 +85,60 @@ test('stale anchors and closed tasks are rejected; later events never attach to 
   assert.equal((await f.status(r)).events.length,before);
   const other=await f.begin('b');await f.finish(other);
   await assert.rejects(f.link(other,f.event('SessionStart','other-session',{source:'startup'})),e=>e.code==='run_closed');
+});
+
+test('delayed explicit anchors survive tool progress but never capture intervening events',async t=>{
+  const f=await fixture(t),r=await f.begin('a');
+  const anchor=f.event('PostToolUse','session-a',{turn_id:'host-tool-group-1'});
+  const intervening=f.event('PostToolUse','session-a',{turn_id:'host-tool-group-2'});
+  f.event('PreCompact');f.event('Stop','another-session');
+  const raw=new DatabaseSync(f.path+'.events.sqlite',{readOnly:true});
+  const watermark=Number(raw.prepare('SELECT max(seq) n FROM events').get().n)+1;raw.close();
+  const linked=await f.link(r,anchor);assert.equal(linked.status,'persisted');
+  assert.equal(linked.from_event_seq,watermark);
+  assert.equal((await f.status(r)).events.length,0);
+  const saved=await f.note(r,'after-delayed-link'),interrupt=f.event('Interrupt');
+  const status=await f.status(r);
+  assert.equal(status.interruption.observation_id,interrupt);
+  assert.equal(status.interruption.saved_during_event.record_id,saved.record_id);
+  assert.ok(!status.events.some(x=>x.observation_id===anchor||x.observation_id===intervening));
+  assert.deepEqual(await f.link(r,anchor),linked); // Stable retry even after a closing event; no new association.
+});
+
+test('every closing/restart boundary invalidates an earlier anchor even after later tool events',async t=>{
+  for(const event of ['Stop','Interrupt','SessionEnd','SessionStart','Unknown']){
+    const f=await fixture(t),r=await f.begin('a'),anchor=f.event();
+    const boundary=f.event(event==='Unknown'?'PostToolUse':event);f.event();
+    if(event==='Unknown'){
+      const malformed=new DatabaseSync(f.path+'.events.sqlite');
+      try{malformed.prepare('UPDATE events SET event=? WHERE id=?').run('Unknown',boundary);}finally{malformed.close();}
+    }
+    await assert.rejects(f.link(r,anchor),e=>e.code==='stale_anchor');
+    if(event!=='SessionStart')await assert.rejects(f.link(r,boundary),e=>e.code==='stale_anchor');
+    assert.equal((await f.status(r)).linkage,'not_linked');
+    const fresh=f.event();assert.equal((await f.link(r,fresh)).status,'persisted');
+  }
+});
+
+test('fresh MCP accepts a delayed anchor and HTTP preserves the synthetic interruption saved point',async t=>{
+  const f=await fixture(t),r=await f.begin('mcp');
+  const anchor=f.event('PostToolUse','session-a',{turn_id:'first-host-group'});
+  f.event('PostToolUse','session-a',{turn_id:'next-host-group'});
+  const client=new Client({name:'delayed-anchor-test',version:'1'}),transport=new StdioClientTransport({command:process.execPath,
+    args:[realpathSync('dist/runtime/local/main.js'),'serve','--db',f.path,'--project',f.root],stderr:'pipe'});
+  transport.stderr.on('data',()=>{});await client.connect(transport);t.after(()=>client.close());
+  const call=async(name,args)=>{const response=await client.callTool({name,arguments:args});assert.notEqual(response.isError,true);return JSON.parse(response.content[0].text);};
+  const identity=await call('memory_resolve_project',{});assert.equal(identity.project.id,f.p);
+  const link=await call('memory_link_task_events',{project_id:f.p,run_id:r,observation_id:anchor});assert.equal(link.status,'persisted');
+  const before=await f.note(r,'before-interruption'),interrupt=f.event('Interrupt');
+  const after=await f.note(r,'after-resume');
+  const ai=(await call('memory_get_status',{project_id:f.p,run_id:r})).task_recording;
+  assert.equal(ai.interruption.observation_id,interrupt);assert.equal(ai.interruption.saved_during_event.record_id,before.record_id);
+  assert.equal(ai.last_saved.record_id,after.record_id);
+  const viewer=await startViewer({db:f.path,sourceProjects:[f.root]});t.after(()=>viewer.close());
+  const token=new URLSearchParams(new URL(viewer.url).hash.slice(1)).get('token');
+  const http=await fetch(`${viewer.origin}/api/runs/${r}?project=${f.p}`,{headers:{Authorization:`Bearer ${token}`}}).then(x=>x.json());
+  assert.deepEqual(http.run.task_recording,ai);
 });
 
 test('start-only save and pending writes are not promoted to saved changes',async t=>{

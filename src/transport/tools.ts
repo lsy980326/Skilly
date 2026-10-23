@@ -133,7 +133,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
   }
   if (taskEvents && bound) {
     tools["memory_link_task_events"] = define(
-      "Explicitly link this active task to the current hook observation's session. Only FUTURE events are associated; never guess an observation from time or another chat. Existing active-task links cannot be taken over. Same-session same-task retry returns the saved link. This writes local event-link metadata, not a work report; failures are not queued. Read memory_get_status.task_recording for linkage, interruption observations and the last confirmed saved record. Does not close tasks or verify claims.",
+      "Explicitly link this active task to the current hook observation's session. Tool progress may follow the supplied observation, but a later stored stop, interruption or session restart invalidates an unlinked anchor. Opaque turn IDs do not prove user-turn boundaries. Only events received AFTER the link is saved are associated; never select a replacement observation from time, a DB list or another chat. Existing active-task links cannot be taken over. Same-session same-task retry returns the saved link. This writes local event-link metadata, not a work report; failures are not queued. Read memory_get_status.task_recording for linkage, interruption observations and the last confirmed saved record. Missing hook boundaries remain unobservable. Does not close tasks or verify claims.",
       false, z.strictObject({ ...runId, observation_id: z.string().regex(/^(?:[a-f0-9]{64}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i) }),
       input => taskEvents.link(input.project_id, input.run_id, input.observation_id));
   }

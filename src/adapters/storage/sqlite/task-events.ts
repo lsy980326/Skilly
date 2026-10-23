@@ -46,10 +46,14 @@ export class SqliteTaskEvents implements TaskEvents {
           const old = this.db.prepare("SELECT state FROM runs WHERE project_id=? AND id=?").get(text(prior, "project_id"), text(prior, "run_id"));
           if (!old || old["state"] === "active") throw new MemoryError("link_conflict", "This session is already linked to an unfinished task. Do not take it over.");
         }
-        const latest = events.prepare("SELECT max(seq) n FROM events WHERE session_hash=? AND root_hash=? AND project_key=? AND repository=? AND environment=?")
-          .get(text(anchor, "session_hash"), rootHash, text(run, "project_key"), text(run, "repository"), text(run, "environment"));
-        if (anchor["seq"] !== latest?.["n"] || ["Interrupt", "SessionEnd", "Stop"].includes(text(anchor, "event"))) {
-          throw new MemoryError("stale_anchor", "Use the current hook observation, not an earlier or ended turn's event.");
+        // The host may deliver another PostToolUse before this MCP call arrives.
+        // Only a session/turn boundary invalidates the supplied anchor; turn_hash
+        // is opaque host metadata and may also change between ordinary tool calls.
+        const boundary = events.prepare(`SELECT 1 FROM events WHERE session_hash=? AND root_hash=? AND project_key=? AND repository=? AND environment=?
+          AND seq>? AND event NOT IN ('PostToolUse','PreCompact') LIMIT 1`)
+          .get(text(anchor, "session_hash"), rootHash, text(run, "project_key"), text(run, "repository"), text(run, "environment"), anchor["seq"]!);
+        if (boundary || !["SessionStart", "PostToolUse", "PreCompact"].includes(text(anchor, "event"))) {
+          throw new MemoryError("stale_anchor", "Use an explicit observation from the current open session segment, after any interruption, stop or session restart.");
         }
         if (Number(events.prepare("SELECT count(*) n FROM task_links").get()?.["n"]) >= 10_000) throw new MemoryError("link_store_full", "Link capacity reached; no existing data was removed.");
         const from = Number(events.prepare("SELECT coalesce(max(seq),0)+1 n FROM events").get()?.["n"]);

@@ -397,7 +397,12 @@ unavailable observations do not prove zero omissions. Current hook metadata has
 `work_record_linkage: not_observed` in the raw feed; do not invent a linkage from timestamps.
 When the hook supplies the current `observation_id` and `memory_link_task_events`
 is exposed, explicitly link that observation to your own persisted active task.
-Only later events are associated. Never take an ID from another chat, infer it
+Intervening tool events do not invalidate that supplied ID. A stored stop,
+interruption or session restart does; never search for a replacement anchor in
+the DB. Opaque host turn IDs do not prove user-turn boundaries, and missing
+hook boundaries remain unobservable. Only events received after the link is
+saved are associated; intervening events are never backfilled.
+Never take an ID from another chat, infer it
 from the latest project event, or bypass a conflicting active-task link. A failed
 link is not queued; report it and inspect status before an identical retry.
 Read `memory_get_status.task_recording` after reconnecting: it separates the latest
