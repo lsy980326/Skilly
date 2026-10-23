@@ -182,3 +182,5 @@ Skilly/
 승인된 로컬 명령은 `skilly exec`로 실행해 종료 코드·소요 시간 등을 AI 보고와 분리할 수 있습니다. 작업·기능 화면과 조회 전용 MCP에서 확인하며, 정상 종료를 기능 검증 완료로 승격하지 않습니다. [실행 결과 수집 범위와 사용법](docs/execution-results.md)
 
 첫 설치·연결 문제는 `npm run doctor -- --project /absolute/project --db /absolute/memory.sqlite`로 로컬 준비 상태부터 확인하세요. 설정 파일 내용을 읽거나 기존 파일을 고치지 않으며, 현재 채팅의 연결 성공을 대신 판정하지 않습니다. [설치·재연결 안내](docs/codex-integration.md#첫-설치와-연결-문제-진단)
+
+계획대로 어디까지 진행했는지는 **계획** 탭과 `memory_query_plans`로 확인합니다. 선택 MD·대화 계획, 항목별 완료 조건, 작업·검사 근거 연결은 [계획·체크리스트 안내](docs/plans.md)를 참고하세요.

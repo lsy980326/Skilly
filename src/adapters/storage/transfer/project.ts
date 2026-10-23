@@ -1,3 +1,4 @@
+import { validatePlanData } from "../sqlite/plans.js";
 import { validateSkillData } from "../sqlite/skills.js";
 import { validateExecutionData } from "../sqlite/executions.js";
 import { validateFeatureDiscoveryData } from "../sqlite/feature-discovery.js";
@@ -21,7 +22,7 @@ function select(table: Table): string {
   const where = table === "run_actors" ? "t.run_id IN (SELECT id FROM runs WHERE project_id = ?)"
     : table === "receipts" ? "(t.scope = ?1 OR (t.scope = 'registration' AND json_extract(t.result_json, '$.project.id') = ?1))"
     : table === "projects" ? "t.id = ?" : "t.project_id = ?";
-  return `SELECT ${fields} FROM ${table} t WHERE ${where} ORDER BY ${(table === "records" || table === "skill_observations") ? "t.seq" : table === "skill_versions" ? "t.rowid" : columns(table).map(name => `t."${name}"`).join(",")}`;
+  return `SELECT ${fields} FROM ${table} t WHERE ${where} ORDER BY ${(table === "records" || table === "skill_observations" || table === "plan_item_updates") ? "t.seq" : table === "skill_versions" ? "t.rowid" : columns(table).map(name => `t."${name}"`).join(",")}`;
 }
 function parsedRow(table: Table, value: unknown, projectId: string, runs: Set<string>): Row {
   const parsed = rowSchemas[table].safeParse(value);
@@ -57,6 +58,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (table.startsWith("plan_") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 11) continue;
         if ((table === "feature_aliases" || table === "feature_code_paths") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 10) continue;
         if (table === "run_acknowledgements" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 9) continue;
         if (table === "execution_test_details" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 7) continue;
@@ -117,6 +119,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (manifest.schema_version < 7 && table === "execution_test_details") fail("invalid_bundle", "Test details require schema v7.");
     if (manifest.schema_version < 8 && table === "execution_sources") fail("invalid_bundle", "Execution source observations require schema v8.");
     if (manifest.schema_version < 6 && table === "executions") fail("invalid_bundle", "Execution rows require schema v6.");
+    if (manifest.schema_version < 11 && table.startsWith("plan_")) fail("invalid_bundle", "Plan data requires schema v11.");
     const row = parsedRow(table, entry.row, manifest.project_id, runs);
     if (table === "projects") projects++;
     visit(table, row);
@@ -144,6 +147,7 @@ export async function importProject(input: string, output: string, base?: string
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 7) main.exec(readFileSync(new URL("../../../../migrations/008-execution-source.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 8) main.exec(readFileSync(new URL("../../../../migrations/009-run-acknowledgements.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 9) main.exec(readFileSync(new URL("../../../../migrations/010-feature-discovery.sql", import.meta.url), "utf8"));
+      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 10) main.exec(readFileSync(new URL("../../../../migrations/011-plans.sql", import.meta.url), "utf8"));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {
@@ -165,6 +169,7 @@ export async function importProject(input: string, output: string, base?: string
         validateSkillData(main);
         validateExecutionData(main);
         validateFeatureDiscoveryData(main);
+        validatePlanData(main);
         checkFile(data, manifest.files.main);
         main.exec("COMMIT"); journal.exec("COMMIT");
       } catch (error) {

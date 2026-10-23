@@ -1,3 +1,4 @@
+import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
 import { createSimpleDashboard } from "./simple-dashboard.js";
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
@@ -15,6 +16,7 @@ const state = { projects: [], project: null, run: null, view: "runs", filter: "a
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
 state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; state.unreviewed = false;
 let lastSkill = "";
+let selectedPlan = null, selectedPlanVersion, lastPlan = "", planRequest = 0, planRemainingOnly = false;
 let executionData = { items: [], next_offset: null };
 let featureKey = null, lastFeature = "";
 let featureSearchQuery = "", featureSearchPage = {items:[],next_offset:null}, featureSearchRequest = 0;
@@ -146,6 +148,7 @@ async function selectProject(id) {
   if (state.project === id) return;
   navigationEpoch++;
   componentsPaged = false; featuresPaged = false; executionsPaged = false; historyGap = false;
+  selectedPlan = null; selectedPlanVersion = undefined; lastPlan = ""; planRequest++;
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all"; state.unreviewed = false;
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
   featureKey = null; lastFeature = "";
@@ -256,6 +259,19 @@ async function loadList(more = false) {
     if(request!==listRequest||project!==state.project||state.view!=="features")return;
     showFeature(featureKey || (featureSearchQuery ? null : state.features[0]?.key)); renderFeatures(); return;
   }
+  if (view === "plans") {
+    const data = await api(`/api/plans?project=${project}&offset=${more?state.nextItems:0}`);
+    if(request!==listRequest||project!==state.project||state.view!=="plans")return;
+    if(data.schema_supported===false){$("#tasks").replaceChildren(empty("계획을 읽을 수 없는 DB 버전입니다","새 Skilly 쓰기 연결에서 버전을 확인해 주세요. 이 화면은 기존 DB를 변경하지 않습니다."));$("#detail").replaceChildren(empty("이전 DB 원본을 유지합니다","계획 기능은 DB v11 이상에서 사용할 수 있습니다."));$("#more-tasks").hidden=true;$("#list-count").textContent="미지원";return;}
+    state.items=more?[...new Map([...state.items,...data.items].map(p=>[planIdentity(p),p])).values()]:data.items;
+    state.nextItems=data.next_offset;
+    $("#list-count").textContent=`${state.items.length}${data.next_offset!==null?"+":""}개`;
+    $("#more-tasks").hidden=data.next_offset===null;$("#more-tasks").textContent="계획 더 보기";
+    const chosen=selectedPlan?state.items.find(p=>planIdentity(p)===planIdentity(selectedPlan))||selectedPlan:state.items[0];
+    renderPlans();
+    if(chosen)await openPlan(chosen,selectedPlanVersion);else $("#detail").replaceChildren(empty("계획을 등록해 보세요","AI가 MD나 대화 계획을 등록하면 항목별 진행과 남은 일을 여기에서 볼 수 있습니다."));
+    return;
+  }
   const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0) });
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
   if (view === "runs" && state.unreviewed) params.set("review", "unread");
@@ -280,6 +296,25 @@ async function loadList(more = false) {
       state.run = state.items[0].id; renderTasks(); await loadDetail();
     }
   } else renderRecovery(data.status);
+}
+function renderPlans() {
+  renderPlanList($("#tasks"),state.items,selectedPlan?planIdentity(selectedPlan):null,{element,onSelect:p=>{lastPlan="";selectedPlanVersion=undefined;planRemainingOnly=false;void openPlan(p).catch(showError);}});
+}
+async function openPlan(plan,version) {
+  const project=state.project,request=++planRequest,epoch=navigationEpoch;
+  const newSelection=!selectedPlan||planIdentity(selectedPlan)!==planIdentity(plan)||selectedPlanVersion!==version;
+  selectedPlan=plan;selectedPlanVersion=version;state.run=null;detailRequest++;
+  const params=new URLSearchParams({project,plan:plan.plan_key,repository:plan.repository,environment:plan.environment});if(version!==undefined)params.set("version",String(version));
+  const data=await api(`/api/plans?${params}`);
+  if(project!==state.project||state.view!=="plans"||request!==planRequest||epoch!==navigationEpoch)return;
+  renderPlans();const fingerprint=JSON.stringify(data);if(lastPlan===fingerprint)return;lastPlan=fingerprint;
+  const previous=new Set([...$("#detail").querySelectorAll("details[open]")].map(n=>n.className));
+  const node=renderPlanDetail(data,{element,remainingOnly:planRemainingOnly,onRemaining:value=>{planRemainingOnly=value;},onVersion:v=>{lastPlan="";void openPlan(plan,v).catch(showError);},onTask:id=>{void (async()=>{const project=state.project,loading=changeView("runs"),epoch=navigationEpoch;await loading;if(project===state.project&&state.view==="runs"&&epoch===navigationEpoch)await openRun(id);})().catch(showError);}});
+  for(const details of node.querySelectorAll("details"))details.open=previous.has(details.className);
+  const focusedControl=document.activeElement?.dataset?.planControl;
+  $("#detail").replaceChildren(node);
+  if(newSelection)$(".detail-panel").scrollTop=0;
+  if(focusedControl)node.querySelector(`[data-plan-control="${focusedControl}"]`)?.focus();
 }
 async function openSkill(key, version, installationOffset = 0) {
   const request = ++detailRequest, project = state.project;
@@ -611,6 +646,7 @@ async function refresh(automatic = false) {
         await loadCatalog(undefined, automatic);
         if (!automatic || !listPaged || (state.view === "features" && !featureSearchQuery)) await loadList();
       }
+      if (state.view === "plans" && selectedPlan && automatic && listPaged) await openPlan(selectedPlan,selectedPlanVersion);
       if (state.run) await loadDetail(false, automatic && detailPaged);
     }
     showSynced();
@@ -651,6 +687,8 @@ $("#more-tasks").addEventListener("click", async () => {
 async function changeView(view) {
     navigationEpoch++;
     state.view = view; listPaged = false; state.items = [];
+    planRequest++; selectedPlan=null; selectedPlanVersion=undefined;lastPlan="";planRemainingOnly=false;
+    state.run=null;detailRequest++;lastDetail="";
     if (view === "features") { state.run = null; detailRequest++; lastFeature = ""; }
     if (view === "skills" || state.skillKey) { state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; detailRequest++;
       $("#detail").replaceChildren(empty("항목을 선택하세요", "선택한 항목의 상세 내용을 확인하세요.")); }
@@ -658,15 +696,15 @@ async function changeView(view) {
     $("#run-controls").hidden = view !== "runs";
     $("#feature-search-controls").hidden = view !== "features";
     if(view!=="features")featureSearchRequest++;
-    $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : view === "skills" ? "프로젝트 스킬" : "복구 요청";
-    for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"]]) {
+    $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : view === "skills" ? "프로젝트 스킬" : view === "plans" ? "계획 · 체크리스트" : "복구 요청";
+    for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"], ["#show-plans", "plans"]]) {
       const node = $(id), selected = view === target;
       node.classList.toggle("selected", selected); node.setAttribute("aria-pressed", String(selected));
     }
     $("#tasks").replaceChildren(element("p", "loading", "기록을 불러오는 중…"));
     await loadList();
 }
-for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"]]) {
+for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"], ["#show-plans", "plans"]]) {
   $(id).addEventListener("click", () => { void changeView(view).catch(showError); });
 }
 $("#more-components").addEventListener("click", async () => {

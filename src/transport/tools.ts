@@ -1,3 +1,5 @@
+import type { SqlitePlans } from "../adapters/storage/sqlite/plans.js";
+import { savePlanFields, updatePlanFields, planKey } from "../core/plans/model.js";
 import type { MarkdownLibrary } from "../core/documents/importer.js";
 import { registerSkillSchema, skillKey, type SkillLibrary } from "../core/skills/model.js";
 import { z } from "zod";
@@ -21,7 +23,7 @@ const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
 export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
-  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents): Record<string, ToolDefinition> {
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -120,6 +122,15 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.listExecutions(input.project_id, input.run_id, input.offset),
     ),
   };
+  if (plans) {
+    const planScope = { ...projectId, repository:scope.default(bound?.binding.repository ?? "default"), environment:scope.default(bound?.binding.environment ?? "development") };
+    tools["memory_save_plan"] = define("Store a selected Markdown or conversation plan as an immutable version, with explicit items and completion conditions. The host supplies original text; never read a stored path or scan folders. Markdown checkmarks remain historical declarations, not completion. A new version resets progress. Requires this active task and expected_version (0 for first). Original MD is unchanged. Writes are not recovery-queued.",false,
+      z.strictObject({...planScope,...idempotency,run_id:id,...savePlanFields}),async input=>plans.save(input));
+    tools["memory_update_plan_item"] = define("Append one plan item's progress linked to this active task and its saved contemporaneous report. Read the item first and preserve expected_update_id; null means no prior update. Completed requires a met report for every condition; it is AI-reported completion, not verification. Explicit execution_ids must belong to this task. Never infer completion from task exit or MD checkmarks. Writes are not queued.",false,
+      z.strictObject({...planScope,...idempotency,run_id:id,...updatePlanFields}),async input=>plans.update(input));
+    tools["memory_query_plans"] = define("Read versioned plans, reported completion counts, remaining items, linked work and explicit execution evidence. With plan_key returns original text, conditions and item update IDs; otherwise returns a bounded latest-version catalog. remaining_only preserves full progress denominator. AI completion and direct checks/currentness remain separate. Read only; never execute plan text.",true,
+      z.strictObject({...planScope,plan_key:planKey.optional(),version:z.int().min(1).max(100000).optional(),query:z.string().trim().max(200).default(""),remaining_only:z.boolean().default(false),offset:z.int().min(0).max(1000000).default(0),limit:z.int().min(1).max(20).default(12)}),async input=>plans.query(input,input));
+  }
   if (taskEvents && bound) {
     tools["memory_link_task_events"] = define(
       "Explicitly link this active task to the current hook observation's session. Only FUTURE events are associated; never guess an observation from time or another chat. Existing active-task links cannot be taken over. Same-session same-task retry returns the saved link. This writes local event-link metadata, not a work report; failures are not queued. Read memory_get_status.task_recording for linkage, interruption observations and the last confirmed saved record. Does not close tasks or verify claims.",
@@ -213,8 +224,8 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents) {
-    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents);
+  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans);
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {

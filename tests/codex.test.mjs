@@ -78,7 +78,7 @@ test("configured MCP completes work and a new session retrieves only unverified 
   };
   const first = await connect();
   const tools = (await first.listTools()).tools;
-  assert.equal(tools.length, 19);
+  assert.equal(tools.length, 22);
   // The workflow must reach a real MCP client before any individual tool call.
   assert.ok(first.getInstructions()?.includes("local SQLite"));
   assert.ok(first.getInstructions()?.includes("unverified"));

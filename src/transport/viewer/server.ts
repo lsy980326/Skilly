@@ -20,6 +20,7 @@ const assets = new Map([
   ["/skills.js", { file: "skills.js", type: "text/javascript; charset=utf-8" }],
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
+  ["/plans.js", { file: "plans.js", type: "text/javascript; charset=utf-8" }],
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
   ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
@@ -91,12 +92,16 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if(url.pathname === "/api/plans") {
+        const version=url.searchParams.get("version");if(version!==null&&!/^[1-9]\d{0,5}$/.test(version))throw new ViewerError("invalid_input","계획 버전을 확인해 주세요.");
+        json(response,200,reader.plans(project,{offset:offset(url),query:url.searchParams.get("query")??"",...(url.searchParams.has("plan")?{plan_key:url.searchParams.get("plan")!}:{}),...(url.searchParams.has("repository")?{repository:url.searchParams.get("repository")!}:{}),...(url.searchParams.has("environment")?{environment:url.searchParams.get("environment")!}:{}),...(version?{version:Number(version)}:{})}));return;
+      }
       if(url.pathname === "/api/documents") { json(response,200,reader.importedDocuments(project,{offset:offset(url),query:url.searchParams.get("query")??""}));return; }
       if(url.pathname === "/api/document") {
         const id=url.searchParams.get("document");if(!id) throw new ViewerError("invalid_input","문서를 선택해 주세요.");

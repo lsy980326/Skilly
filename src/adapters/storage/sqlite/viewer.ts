@@ -1,3 +1,6 @@
+import { planKey } from "../../../core/plans/model.js";
+import { SqlitePlans } from "./plans.js";
+import { MemoryError } from "../../../core/memory/model.js";
 import { unreviewedRunSql } from "./run-reviews.js";
 import { SqliteSkills } from "./skills.js";
 import { SqliteDocuments } from "./documents.js";
@@ -61,6 +64,18 @@ export class SqliteViewer {
   }
   close(): void { this.db.close(); }
 
+  plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number}={}) {
+    this.requireProject(projectId);
+    pageOffset(options.offset??0);
+    if((options.query??"").length>200 || (options.plan_key!==undefined&&!planKey.safeParse(options.plan_key).success)
+      || (options.version!==undefined&&(!Number.isSafeInteger(options.version)||options.version<1||options.version>100000))
+      || [options.repository,options.environment].some(x=>x!==undefined&&(!x.trim()||x!==x.trim()||x.length>100||/[\u0000-\u001f\u007f]/.test(x))))
+      throw new ViewerError("invalid_input","계획 키·검색어·범위·버전을 확인해 주세요.");
+
+    try { return new SqlitePlans(this.db,this.sources).query({project_id:projectId,...(options.repository!==undefined?{repository:options.repository}:{}),...(options.environment!==undefined?{environment:options.environment}:{})},options); }
+    catch(error) { if(error instanceof MemoryError)throw new ViewerError(error.code==="not_found"?"not_found":"invalid_input",error.code==="not_found"?"선택한 계획을 찾지 못했습니다.":"계획 조회 범위를 확인해 주세요."); throw error; }
+  }
+
   importedDocuments(projectId: string, options: {id?:string;version?:string;compare?:string;offset?:number;query?:string} = {}) {
     this.requireProject(projectId);
     if(this.version()<7) return {items:[],next_offset:null,unavailable:"가져온 문서 보관함은 DB v7에서 지원합니다. 기존 파일은 변경하지 않았습니다."};
@@ -113,8 +128,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v10)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v11)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }

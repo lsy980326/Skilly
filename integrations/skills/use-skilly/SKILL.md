@@ -190,6 +190,36 @@ and use service coverage only when intended. If fields are absent in the current
 connection, keep existing tools working and report the schema limitation; a
 fresh supported MCP connection is needed to register new fields.
 
+### Plan and checklist progress
+
+When the user asks to work from a selected Markdown checklist or conversation
+plan, use the exposed plan tools as part of ordinary work, without a separate
+recording request. Query `memory_query_plans` before implementing to recall the
+plan's latest version, completion conditions and remaining items. Save this
+task's start first. For a new authorized plan use `memory_save_plan`: send only
+the selected original text, source_kind/ref and explicit item/criterion keys.
+For a Markdown checklist, omitting items parses checkboxes; source checkmarks
+are historical declarations and do not mark items complete. Conversation plans
+require explicit items. Preserve source MD; do not scan folders or create MD
+journals. Register known component/feature keys before linking them to items.
+
+Keep each item update tied to the exact plan version and your active task. Save
+a readable checkpoint first; pass its record_id to `memory_update_plan_item`.
+Read and preserve expected_update_id (null only for a new item). Report pending,
+in_progress or blocked as appropriate. For completed, report every declared
+condition in criteria_results with a concrete explanation. Add only actual
+execution_ids from this task; a passing test or a finished task does not itself
+satisfy all conditions. Progress is reported completion, never verified feature
+correctness. Missing evidence/currentness stays unknown. Reconstructed or
+superseded reports cannot establish a new completion report.
+
+A changed plan creates a new version with expected_version; progress never
+carries over automatically. Never silently edit conditions to force 100%.
+After meaningful progress and at handoff re-query the plan and explain remaining
+items and blocked/unchecked conditions. Query with remaining_only when useful.
+Plan writes are not recovery-queued: on failure disclose it, preserve the original
+input/key, and do not claim saved/queued or switch to a fallback journal.
+
 ### Readable notes and changes
 
 Apply the report format to **notes and changes as well as the final handoff**.

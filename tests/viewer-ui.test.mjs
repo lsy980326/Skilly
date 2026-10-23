@@ -21,10 +21,13 @@ class Element {
   replaceChild(fresh, old) { this.children[this.children.indexOf(old)] = fresh; }
   insertBefore(node, next) { this.children = this.children.filter(x => x !== node); const index = next ? this.children.indexOf(next) : this.children.length; this.children.splice(index, 0, node); }
   removeChild(node) { this.children = this.children.filter(x => x !== node); }
-  setAttribute() {}
+  attributes = new Map();
+  setAttribute(name,value) { this.attributes.set(name,String(value)); }
+  getAttribute(name) { return this.attributes.get(name)??null; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelectorAll(selector) {
     const matches = node => selector.startsWith(".") ? node.className.split(" ").includes(selector.slice(1))
+      : selector === "details[open]" ? node.tagName === "DETAILS" && node.open
       : selector === "[data-relative-time]" ? node.dataset.relativeTime !== undefined
       : node.tagName === selector.toUpperCase();
     return this.children.filter(child => child instanceof Element)
@@ -35,7 +38,7 @@ class Element {
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
-  recovery = { status: "available", items: [], next_offset: null }, featureDetail = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
+  recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0, hangNext = false;
   const deadlines = new Set();
@@ -72,12 +75,13 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  const plans = readFileSync(new URL("../ui/plans.js", import.meta.url), "utf8").replaceAll("export ", "");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -99,6 +103,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
       const data = path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
+        : path.startsWith("/api/plans?") ? (new URLSearchParams(path.split('?')[1]).has('plan') ? planData : {items:planRows??(planData?[{...planData.plan,progress:planData.progress}]:[]),next_offset:null,schema_supported:plansSupported})
         : path.startsWith("/api/recovery?") ? recovery
         : path.startsWith("/api/skills?") ? { items: [{ skill_key: "sample", name: "샘플 스킬", versions: 2, installations: [{ repository: "web", version: "1.0", state: "modified" }], installations_total: 1 }], next_offset: null }
         : path.startsWith("/api/skill?") ? { skill: { ...sampleSkill, ...(path.includes("version=1.0") ? { version: "1.0", body: "이전 버전 전문" } : {}) }, versions: [{ version: "2.0" }, { version: "1.0" }], installations: [], installation_offset: 0, next_installation_offset: null }
@@ -624,4 +629,24 @@ test('feature knowledge distinguishes current stale conflict unknown and keeps A
   await app.node('#show-features').listeners.click();
   assert.match(app.node('#detail').textContent,new RegExp(label));assert.match(app.node('#detail').textContent,/AI 完了|AI 완료 보고/);assert.match(app.node('#detail').textContent,/승격하지 않습니다/);assert.match(app.node('#detail').textContent,/evidence<script>/);
  }
+});
+
+
+test("plans separate completion reports from source checkmarks and checks, and retain selection/filter on refresh",async()=>{
+ const data={plan:{plan_key:'release',title:'출시 계획 <script>원문</script>',version:1,repository:'main',environment:'development',source_kind:'markdown',source_ref:'docs/plan.md',source_body:'- [x] 알림'},
+   progress:{required:2,completed_reported:1,remaining:1,blocked:0,status:'in_progress'},versions:[{version:1}],items:[
+   {key:'one',title:'알림',required:true,state:'completed',source_checked:true,criteria:[{key:'ready',text:'알림 저장'}],criteria_results:[{key:'ready',met:true,detail:'구현 보고'}],run_id:'run',evidence:{linked:0}},
+   {key:'two',title:'설정',required:true,state:'pending',criteria:[{key:'ready',text:'설정 저장'}],criteria_results:[],evidence:{linked:0}}]};
+ const rows=[{...data.plan,progress:data.progress}],app=await viewer({planData:data,planRows:rows});
+ app.node('#show-plans').listeners.click();await new Promise(setImmediate);
+ assert.match(app.node('#detail').textContent,/필수 항목 완료 보고/);assert.match(app.node('#detail').textContent,/원문에는 체크됨/);assert.match(app.node('#detail').textContent,/연결한 직접 검사 근거 없음/);
+ assert.equal(app.node('#detail').querySelectorAll('script').length,0);
+ let filter=app.node('#detail').querySelector('.plan-controls').children[1];filter.listeners.click();assert.equal(app.node('#detail').querySelector('.plan-items').children[0].hidden,true);
+ rows.length=0;data.items[1].note='갱신된 진행 보고';await app.tick();
+ assert.match(app.node('#detail').textContent,/갱신된 진행 보고/);assert.equal(app.node('#detail').querySelector('.plan-items').children[0].hidden,true);
+ app.node('#show-runs').listeners.click();await new Promise(setImmediate);assert.match(app.node('#detail').textContent,/시간 표시/);
+});
+test("plans distinguish an unsupported legacy database from an empty catalog",async()=>{
+ const app=await viewer({plansSupported:false});app.node('#show-plans').listeners.click();await new Promise(setImmediate);
+ assert.match(app.node('#tasks').textContent,/계획을 읽을 수 없는 DB 버전/);assert.equal(app.node('#list-count').textContent,'미지원');
 });

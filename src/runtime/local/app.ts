@@ -33,7 +33,7 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
     binding && projectRoot ? () => readLifecycle(path, binding, projectRoot) : undefined);
   const skills = new SkillLibrary(store.skills, context, projectRoot ? new LocalSkillObserver(projectRoot) : undefined);
   const documents = projectRoot ? new SubmittedMarkdownLibrary(binding?.component ? "component:" + binding.component.key : "root:" + createHash("sha256").update(projectRoot).digest("hex"), new DocumentImporter(store, context)) : undefined;
-  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills, documents, store.taskEvents(projectRoot));
+  const dispatcher = new ToolDispatcher(service, binding ? new BoundMemory(service, binding) : undefined, recovery, skills, documents, store.taskEvents(projectRoot), store.plans);
   let closing: Promise<void> | undefined;
   return {
     dispatcher,

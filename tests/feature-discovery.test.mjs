@@ -85,7 +85,7 @@ test('v9 reads do not migrate or classify history; v10 upgrade preserves origina
  const original=db.prepare('SELECT * FROM runs').all();db.close();const bytes=readFileSync(path);
  const reader=new SqliteViewer(path);assert.equal(reader.overview(pid,'features',0,{query:'과거'}).items.length,1);reader.close();assert.deepEqual(readFileSync(path),bytes);
  const app=openLocal(path);await app.close();const after=new DatabaseSync(path,{readOnly:true});t.after(()=>after.close());
- assert.equal(after.prepare('PRAGMA user_version').get().user_version,10);assert.deepEqual(after.prepare('SELECT * FROM runs').all(),original);
+ assert.equal(after.prepare('PRAGMA user_version').get().user_version,11);assert.deepEqual(after.prepare('SELECT * FROM runs').all(),original);
  assert.equal(after.prepare('SELECT count(*) AS n FROM run_components').get().n,0);assert.equal(after.prepare('SELECT count(*) AS n FROM feature_aliases').get().n,0);
 });
 

@@ -330,3 +330,7 @@ acceptance_criteria:
 verification: [변경 diff 확인, 로컬 링크·문서 형식·예제 JSON 확인, git 상태 확인]
 required_user_decisions: []
 ```
+
+## 계획·체크리스트 모듈
+
+`core/plans`는 항목·완료 조건 검증, 선택 MD 체크리스트 파싱, 진행률 계산을 담당한다. `adapters/storage/sqlite/plans`는 불변 버전·진행 이력·범위 검사·멱등 영수증·원자 저장을 제공한다. MCP와 읽기 전용 viewer가 같은 계획 조회를 사용하며 작업·실행 근거 모듈을 대체하지 않는다. 원문/버전과 현재 진행 투영을 분리한다. [계약](plans.md)을 따른다.
