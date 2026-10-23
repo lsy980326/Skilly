@@ -1,5 +1,6 @@
 const states={pending:"시작 전",in_progress:"진행중",blocked:"막힘",completed:"완료 보고",needs_review:"다시 확인"};
 const knowledge={current:"현재 코드의 검사 근거",stale:"코드가 바뀐 검사",conflict:"검사 결과 충돌",unknown:"현재 코드 비교 불가"};
+const taskStates={active:"미완료 기록",completed:"작업 종료 기록 있음",interrupted:"중단 보고"};
 export const planIdentity=plan=>JSON.stringify([plan.repository,plan.environment,plan.plan_key]);
 function progressView(progress,element) {
   const box=element("div","plan-progress");
@@ -24,6 +25,20 @@ export function renderPlanDetail(data,{element,onVersion,onTask,remainingOnly=fa
   panel.append(element("p","eyebrow",`PLAN / VERSION ${plan.version}`),element("h2","",plan.title),progressView(p,element),
     element("p","plan-summary",p.status==="completed_reported"?"모든 필수 항목에 완료 보고가 있습니다.":`아직 ${p.remaining}개 항목이 남아 있어요.`),
     element("p","catalog-note","진행률은 항목별 완료 조건에 대한 AI 보고입니다. 검사 통과와 기능 전체의 검증 완료를 뜻하지 않습니다."));
+  if(data.linked_tasks) {
+    const linked=element("section","plan-linked-tasks");linked.append(element("h3","",`연결된 작업 ${data.linked_tasks.total}개`));
+    linked.append(element("p","catalog-note","이 계획 버전의 진행 기록에 연결한 작업입니다. 이전 작업도 포함하며, 상태는 저장된 기록 기준입니다."));
+    const names=new Map(data.items.map(item=>[item.key,item.title]));
+    for(const task of data.linked_tasks.items) {
+      const button=element("button","plan-linked-task");button.append(element("strong","",task.title),
+        element("span","catalog-note",[taskStates[task.state]||"상태 확인 필요",task.actor||"작성자 미수집",`연결 보고 ${task.report_count}개`].join(" · ")),
+        element("span","plan-task-items",task.item_keys.map(key=>names.get(key)||key).join(" · ")));
+      button.addEventListener("click",()=>onTask(task.id));linked.append(button);
+    }
+    if(!data.linked_tasks.total)linked.append(element("p","catalog-note","아직 진행 기록에 연결된 작업이 없습니다."));
+    if(data.linked_tasks.truncated)linked.append(element("p","catalog-note",`최근 연결한 작업 ${data.linked_tasks.items.length}개만 표시합니다. 이전 작업은 작업 목록에서 확인하세요.`));
+    panel.append(linked);
+  }
   const controls=element("div","plan-controls"),label=element("label","","계획 버전 "),select=element("select","");select.setAttribute("aria-label","계획 버전");select.dataset.planControl="version";
   const versions=data.versions.some(v=>v.version===plan.version)?data.versions:[{version:plan.version},...data.versions];
   for(const version of versions){const option=element("option","",`v${version.version}`);option.value=String(version.version);option.selected=version.version===plan.version;select.append(option);}
@@ -47,7 +62,8 @@ export function renderPlanDetail(data,{element,onVersion,onTask,remainingOnly=fa
         const c=observation.counts;card.append(element("p","catalog-note",c?`수집된 검사 ${c.tests}개 · 통과 ${c.passed} · 실패 ${c.failed} · 건너뜀 ${c.skipped}`:"검사 상세 미수집 · 성공 여부를 추정하지 않습니다."));
       }
     }else card.append(element("p","catalog-note","연결한 직접 검사 근거 없음"));
-    if(item.run_id){const button=element("button","button quiet","연결 작업 보기");button.addEventListener("click",()=>onTask(item.run_id));card.append(button);}
+    if(item.run_id){const button=element("button","button quiet plan-item-task",item.task?`진행한 작업 · ${item.task.title}`:"연결 작업 보기");button.addEventListener("click",()=>onTask(item.run_id));card.append(button);
+      if(item.task)card.append(element("p","catalog-note",[taskStates[item.task.state]||"상태 확인 필요",item.task.actor||"작성자 미수집"].join(" · ")));}
     list.append(card);
   }
   const none=element("p","catalog-note","남은 항목이 없습니다. 선택한 계획 버전의 필수 완료 보고와 근거를 확인하세요.");none.hidden=true;

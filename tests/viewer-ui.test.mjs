@@ -650,3 +650,15 @@ test("plans distinguish an unsupported legacy database from an empty catalog",as
  const app=await viewer({plansSupported:false});app.node('#show-plans').listeners.click();await new Promise(setImmediate);
  assert.match(app.node('#tasks').textContent,/계획을 읽을 수 없는 DB 버전/);assert.equal(app.node('#list-count').textContent,'미지원');
 });
+
+test("plan shows linked work names and saved states, escapes titles and opens the selected task",async()=>{
+ const task={id:'run',title:'이전 구현 <script>literal</script>',state:'completed',actor:'Codex',item_keys:['one'],report_count:2};
+ const data={plan:{plan_key:'work',title:'연결 작업 계획',version:1,repository:'main',environment:'test',source_kind:'conversation',source_ref:'대화',source_body:'원문'},
+  progress:{required:1,completed_reported:1,remaining:0,status:'completed_reported'},versions:[{version:1}],
+  linked_tasks:{items:[task],total:21,truncated:true},items:[{key:'one',title:'설정 구현',required:true,state:'completed',criteria:[],criteria_results:[],run_id:'run',task,evidence:{linked:0}}]};
+ const app=await viewer({planData:data});app.node('#show-plans').listeners.click();await new Promise(setImmediate);
+ const detail=app.node('#detail');assert.match(detail.textContent,/연결된 작업 21개/);assert.match(detail.textContent,/작업 종료 기록 있음 · Codex · 연결 보고 2개/);
+ assert.match(detail.textContent,/진행한 작업 · 이전 구현 <script>literal<\/script>/);assert.match(detail.textContent,/설정 구현/);assert.match(detail.textContent,/최근 연결한 작업 1개만 표시/);assert.equal(detail.querySelectorAll('script').length,0);
+ detail.querySelector('.plan-linked-task').listeners.click();await new Promise(setImmediate);await new Promise(setImmediate);
+ assert.ok(app.requests.some(path=>path.startsWith('/api/runs/run?')));assert.match(app.node('#detail').textContent,/시간 표시/);
+});

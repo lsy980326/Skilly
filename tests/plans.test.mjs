@@ -112,3 +112,31 @@ test('escaped condition reports cannot create live rows that backup/import would
  assert.equal((await query(f)).progress.completed_reported,0);
  const db=new DatabaseSync(f.path,{readOnly:true});try{validatePlanData(db);}finally{db.close();}
 });
+
+test('linked tasks retain earlier contributors with names and saved states, without mixing scopes or versions',async t=>{
+ const f=await setup(t);await save(f);assert.equal((await query(f)).linked_tasks.total,0);
+ const first=await report(f),u=await update(f,first);
+ await f.call('memory_finish_task',{project_id:f.pid,run_id:f.rid,summary:'첫 작업 종료',outcome:'completed',idempotency_key:'first-finish'});
+ const next=await run(f.call,f.pid,{idempotency_key:'next-task',title:'후속 알림 작업 <script>',actor:'Codex'}),second={...f,rid:next};
+ const secondReport=await report(second,'second-report');await update(second,secondReport,{expected_update_id:u.update_id,idempotency_key:'second-update'});
+ const other=await run(f.call,f.pid,{repository:'other',idempotency_key:'other-task'}),otherTask={...f,rid:other};
+ await save(otherTask,{repository:'other',idempotency_key:'other-plan'});
+ await update(otherTask,await report(otherTask,'other-report'),{repository:'other',idempotency_key:'other-update'});
+ const data=await query(f);assert.equal(data.linked_tasks.total,2);assert.equal(data.linked_tasks.truncated,false);
+ assert.deepEqual(data.linked_tasks.items.map(t=>t.id),[next,f.rid]);
+ assert.equal(data.linked_tasks.items[0].title,'후속 알림 작업 <script>');assert.equal(data.linked_tasks.items[0].actor,'Codex');assert.equal(data.linked_tasks.items[0].state,'active');
+ assert.deepEqual(data.linked_tasks.items[0].item_keys,['item-1']);assert.equal(data.linked_tasks.items[0].report_count,1);
+ assert.equal(data.linked_tasks.items[1].state,'completed');assert.equal(data.items[0].task.id,next);assert.equal(data.items[0].task.title,'후속 알림 작업 <script>');
+ assert.equal((await query(f,{remaining_only:true})).linked_tasks.total,2);
+ await save(second,{expected_version:1,idempotency_key:'new-version'});
+ assert.equal((await query(f)).linked_tasks.total,0);assert.equal((await query(f,{version:1})).linked_tasks.total,2);
+});
+
+test('linked task output is bounded and discloses the complete count and omitted history',async t=>{
+ const f=await setup(t);await save(f);let prior=null,last;
+ for(let i=0;i<22;i++){
+  const rid=await run(f.call,f.pid,{idempotency_key:'bounded-task-'+i}),task={...f,rid};last=rid;
+  const r=await report(task,'bounded-report-'+i),u=await update(task,r,{expected_update_id:prior,idempotency_key:'bounded-update-'+i});prior=u.update_id;
+ }
+ const data=await query(f);assert.equal(data.linked_tasks.total,22);assert.equal(data.linked_tasks.items.length,20);assert.equal(data.linked_tasks.truncated,true);assert.equal(data.linked_tasks.items[0].id,last);
+});

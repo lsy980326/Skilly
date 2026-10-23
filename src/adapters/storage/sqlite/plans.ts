@@ -102,14 +102,32 @@ export class SqlitePlans {
     });
   }
   private item(row:Row,item:PlanItem,withEvidence:boolean,current=new Map<string,SourceObservation|undefined>()) {
-    const update=this.db.prepare(`SELECT u.*,r.superseded_by FROM plan_item_updates u JOIN records r ON r.project_id=u.project_id AND r.id=u.record_id
+    const update=this.db.prepare(`SELECT u.*,r.superseded_by,coalesce(d.title,t.goal) AS task_title,t.state AS task_state,a.actor AS task_actor,t.updated_at AS task_updated_at
+      FROM plan_item_updates u JOIN records r ON r.project_id=u.project_id AND r.id=u.record_id
+      JOIN runs t ON t.project_id=u.project_id AND t.id=u.run_id AND t.repository=u.repository AND t.environment=u.environment
+      LEFT JOIN run_details d ON d.project_id=t.project_id AND d.run_id=t.id LEFT JOIN run_actors a ON a.run_id=t.id
       WHERE u.project_id=? AND u.repository=? AND u.environment=? AND u.plan_key=? AND u.version=? AND u.item_key=? ORDER BY u.seq DESC LIMIT 1`)
       .get(row["project_id"]!,row["repository"]!,row["environment"]!,row["plan_key"]!,row["version"]!,item.key);
     const state=update?.["state"]==="completed"&&update["superseded_by"]!==null?"needs_review":String(update?.["state"]??"pending");
     return { ...item,state,update_id:update?.["id"]??null,run_id:update?.["run_id"]??null,record_id:update?.["record_id"]??null,
       note:update?.["note"]??null,updated_at:update?.["created_at"]??null,
       criteria_results:update?criterionResultsSchema.parse(JSON.parse(String(update["criteria_json"]))):[],
-      ...(withEvidence?{evidence:this.evidence(update?String(update["id"]):undefined,current)}:{}),claims_verified:false };
+      ...(withEvidence?{task:update?{id:update["run_id"],title:String(update["task_title"]).slice(0,200),state:update["task_state"],actor:update["task_actor"]??null,updated_at:update["task_updated_at"]}:null,
+        evidence:this.evidence(update?String(update["id"]):undefined,current)}:{}),claims_verified:false };
+  }
+  private linkedTasks(row:Row) {
+    const args=[row["project_id"]!,row["repository"]!,row["environment"]!,row["plan_key"]!,row["version"]!];
+    // Include earlier contributors even when a later task replaces an item's latest report.
+    const rows=this.db.prepare(`SELECT t.id,coalesce(d.title,t.goal) AS title,t.state,a.actor,t.updated_at,u.item_keys,u.report_count,u.linked_at,
+      count(*) OVER () AS total FROM (
+        SELECT run_id,MAX(seq) AS last_seq,MAX(created_at) AS linked_at,group_concat(DISTINCT item_key) AS item_keys,count(DISTINCT record_id) AS report_count
+        FROM plan_item_updates WHERE project_id=? AND repository=? AND environment=? AND plan_key=? AND version=? GROUP BY run_id
+      ) u JOIN runs t ON t.id=u.run_id AND t.project_id=? AND t.repository=? AND t.environment=?
+      LEFT JOIN run_details d ON d.project_id=t.project_id AND d.run_id=t.id LEFT JOIN run_actors a ON a.run_id=t.id
+      ORDER BY u.last_seq DESC,t.id LIMIT 20`).all(...args,row["project_id"]!,row["repository"]!,row["environment"]!);
+    return {items:rows.map(r=>({id:r["id"],title:String(r["title"]).slice(0,200),state:r["state"],actor:r["actor"]??null,updated_at:r["updated_at"],
+      item_keys:String(r["item_keys"]).split(","),report_count:Number(r["report_count"]),linked_at:r["linked_at"]})),
+      total:Number(rows[0]?.["total"]??0),truncated:Number(rows[0]?.["total"]??0)>rows.length};
   }
   private evidence(updateId:string|undefined,current:Map<string,SourceObservation|undefined>) {
     const rows=updateId?this.db.prepare(`SELECT e.*,r.repository,r.environment FROM plan_update_executions l JOIN executions e ON e.id=l.execution_id AND e.project_id=l.project_id
@@ -142,7 +160,7 @@ export class SqlitePlans {
       const versions=this.db.prepare("SELECT version,title,source_hash,created_at FROM plan_versions WHERE project_id=? AND repository=? AND environment=? AND plan_key=? ORDER BY version DESC LIMIT 21")
         .all(scope.project_id,scope.repository,scope.environment,options.plan_key);
       return json({plan:{...row,items_json:undefined},items:options.remaining_only?all.filter(i=>i.state!=="completed"):all,
-        progress:planProgress(all),versions:versions.slice(0,20),versions_truncated:versions.length>20,
+        progress:planProgress(all),linked_tasks:this.linkedTasks(row),versions:versions.slice(0,20),versions_truncated:versions.length>20,
         source_path_verified:false,claims_verified:false,completion_meaning:"Reported completion of this version's declared conditions, not verified feature correctness."});
     }
     const term=options.query??"",offset=options.offset??0,limit=options.limit??12;
