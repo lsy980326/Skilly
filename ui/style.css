@@ -10,6 +10,9 @@
 }
 .view-tabs { overflow-x: auto; flex-shrink: 0; }
 .view-tabs .view-tab { flex-shrink: 0; }
+.list-sort { display: flex; align-items: center; gap: 12px; padding: 12px 24px 4px; font-size: 12px; color: var(--muted); }
+.list-sort select { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font: inherit; }
+.sort-note { padding: 0 24px; margin: 4px 0 8px; font-size: 11px; }
 .plan-card .eyebrow { font-size: 10px; letter-spacing: .12em; }
 .plan-progress { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: baseline; margin: 12px 0; }
 .plan-progress strong { font: 600 25px var(--display); letter-spacing: -.04em; }

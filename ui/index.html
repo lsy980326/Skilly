@@ -53,6 +53,8 @@
         </div>
       </div>
       <div id="feature-search-controls" hidden><label class="search"><span aria-hidden="true">⌕</span><input id="feature-search" type="search" maxlength="200" placeholder="기능 이름·별칭·코드 경로" aria-label="기능 이름 별칭 코드 경로 검색"></label><p class="catalog-note" id="feature-search-note">선택한 프로젝트의 기능을 찾습니다. 검색은 기존 작업을 재분류하지 않습니다.</p></div>
+          <label class="list-sort">정렬<select id="list-sort" aria-label="목록 정렬"><option id="sort-active" value="active">진행중 우선 · 최신순</option><option value="latest">날짜 · 최신순</option><option value="oldest">날짜 · 오래된순</option><option value="name">이름 · 가나다순</option><option value="name_desc">이름 · 역순</option></select></label>
+      <p id="sort-note" class="catalog-note sort-note"></p>
       <div class="list-heading"><span id="list-label">저장된 작업</span><span id="list-count"></span></div>
       <div id="tasks" class="task-list"></div>
       <button id="more-tasks" class="button more" hidden>작업 더 보기</button>

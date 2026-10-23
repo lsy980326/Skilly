@@ -76,12 +76,13 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
   const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const plans = readFileSync(new URL("../ui/plans.js", import.meta.url), "utf8").replaceAll("export ", "");
+  const sorting=readFileSync(new URL("../ui/list-sorting.js",import.meta.url),"utf8").replaceAll("export ","");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -111,7 +112,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
         : path.startsWith("/api/overview") ? { summary: { total: 1, unfinished: 0, unclassified: 0 },
           items: path.includes("view=components") ? [{ key: "web", name: "Web", total: 1, unfinished: 0 }]
             : manyFeatures ? (path.includes("offset=40") ? [{ key: lateFeatureKey, name: "마지막 기능", total: 1, unfinished: 0 }]
-              : Array.from({ length: 40 }, (_, n) => ({ key: `feature-${n}`, name: `기능 ${n}`, total: 1, unfinished: 0 })))
+              : Array.from({ length: 40 }, (_, n) => ({ key: `feature-${n}`, name: `기능 ${n}`, total: 1, unfinished: 0,...featureDetail })))
             : [{ key: "clock", name: "상대 시간", total: 1, unfinished: 0, ...featureDetail }],
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
         : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
@@ -145,6 +146,46 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     },
   };
 }
+
+test('all detailed tabs request their saved sort, preserve selection and keep it after reload',async()=>{
+ const storage=new Map(),app=await viewer({storage});
+ const sort=async value=>{app.node('#list-sort').value=value;app.node('#list-sort').listeners.change({target:{value}});await new Promise(setImmediate);};
+ await sort('name');assert.ok(app.requests.some(p=>p.startsWith('/api/runs?')&&p.includes('sort=name')));assert.match(app.node('#detail').textContent,/시간 표시/);
+ for(const [tab,path]of[['features','/api/overview?'],['skills','/api/skills?'],['plans','/api/plans?'],['recovery','/api/recovery?']]){
+  app.node(`#show-${tab}`).listeners.click();await new Promise(setImmediate);assert.equal(app.node('#list-sort').value,'active');
+  if(['skills','recovery'].includes(tab))assert.equal(app.node('#sort-active').textContent,'최신순 (기본)');
+  const before=app.requests.length;await sort('oldest');assert.ok(app.requests.slice(before).some(p=>p.startsWith(path)&&p.includes('sort=oldest')));
+ }
+ app.node('#show-runs').listeners.click();await new Promise(setImmediate);assert.equal(app.node('#list-sort').value,'name');
+ const restored=await viewer({storage});assert.equal(restored.node('#list-sort').value,'name');assert.ok(restored.requests.some(p=>p.startsWith('/api/runs?')&&p.includes('sort=name')));
+});
+
+test('feature sorting resets pagination, preserves an open off-page detail and applies to alias search',async()=>{
+ const app=await viewer({manyFeatures:true});app.node('#show-features').listeners.click();await new Promise(setImmediate);
+ await app.node('#more-tasks').listeners.click();await new Promise(setImmediate);
+ const selected=app.node('#tasks').querySelectorAll('button').find(n=>n.textContent.includes('마지막 기능'));assert.ok(selected);selected.listeners.click();await new Promise(setImmediate);
+ assert.match(app.node('#detail').textContent,/마지막 기능/);
+ app.node('#list-sort').listeners.change({target:{value:'name_desc'}});await new Promise(setImmediate);
+ assert.match(app.node('#detail').textContent,/마지막 기능/);
+ await app.featureSearch('별칭');assert.ok(app.requests.some(p=>p.startsWith('/api/overview?')&&p.includes('query=')&&p.includes('sort=name_desc')));
+ assert.doesNotMatch(app.node('#detail').textContent,/마지막 기능/);
+});
+
+test('a delayed feature sort cannot reload a tab selected while it was pending',async()=>{
+ const app=await viewer();app.node('#show-features').listeners.click();await new Promise(setImmediate);
+ app.holdNext();app.node('#list-sort').listeners.change({target:{value:'name'}});await new Promise(setImmediate);
+ app.node('#show-skills').listeners.click();await new Promise(setImmediate);const count=app.requests.length;
+ app.releaseRequest();await new Promise(setImmediate);assert.equal(app.requests.length,count);assert.match(app.node('#detail').textContent,/샘플 스킬/);
+});
+
+test('polling after more features refreshes known item content without reordering or losing later pages',async()=>{
+ const data={latest_activity:{report:{summary:'이전 기능 보고'}},latest_report:{update:{state:'in_progress',summary:'이전 기능 보고'}}},app=await viewer({manyFeatures:true,featureDetail:data});
+ app.node('#show-features').listeners.click();await new Promise(setImmediate);await app.node('#more-tasks').listeners.click();await new Promise(setImmediate);
+ const before=app.node('#tasks').querySelectorAll('button').map(n=>n.textContent);
+ app.updateFeature({latest_activity:{report:{summary:'새 기능 보고'}},latest_report:{update:{state:'implemented',summary:'새 기능 보고'}}});await app.tick();
+ const buttons=app.node('#tasks').querySelectorAll('button');assert.equal(buttons.length,before.length);assert.match(buttons[0].textContent,/새 기능 보고/);assert.match(buttons.at(-1).textContent,/마지막 기능/);
+ assert.match(app.node('#detail').textContent,/새 기능 보고/);
+});
 
 test("a new UI page without a token link restores the authorized connection", async () => {
   const storage = new Map();

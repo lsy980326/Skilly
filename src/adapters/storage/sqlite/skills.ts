@@ -69,12 +69,13 @@ export class SqliteSkills implements SkillRepository {
       this.db.exec("COMMIT"); return result;
     } catch (error) { if (this.db.isTransaction) this.db.exec("ROLLBACK"); throw error; }
   }
-  list(projectId: string, offset: number, limit: number, query: string): JsonObject {
+  list(projectId: string, offset: number, limit: number, query: string, sort?: ListSort): JsonObject {
     this.project(projectId);
     if (!this.supported()) return { items: [], next_offset: null, schema_supported: false };
+    const order=listOrder(sort,{name:"name",date:"registered_at",active:"0=1",tie:"skill_key",fallback:"skill_key"});
     const rows = this.db.prepare(`SELECT skill_key,name,source,count(*) AS versions,max(created_at) AS registered_at
       FROM skill_versions WHERE project_id=? AND (instr(lower(name),lower(?))>0 OR instr(lower(skill_key),lower(?))>0)
-      GROUP BY skill_key ORDER BY skill_key LIMIT ? OFFSET ?`).all(projectId, query, query, limit + 1, offset);
+      GROUP BY skill_key ORDER BY ${order} LIMIT ? OFFSET ?`).all(projectId, query, query, limit + 1, offset);
     return { items: rows.slice(0, limit).map(row => ({ ...row,
       installations: this.installations(projectId, String(row["skill_key"])).slice(0, 3).map(i => ({ id: i["id"]!, version: i["version"]!, repository: i["repository"]!, tool: i["tool"]!, folder: i["folder"]!, state: i["state"]!, observed_at: i["observed_at"] ?? null })),
       installations_total: this.db.prepare("SELECT count(*) AS n FROM skill_installations WHERE project_id=? AND skill_key=?").get(projectId, row["skill_key"]!)?.["n"] ?? 0,
@@ -129,3 +130,5 @@ export function validateSkillData(db: DatabaseSync): void {
     }
   }
 }
+import { listOrder } from "./list-sort.js";
+import type { ListSort } from "../../../core/viewer/sorting.js";

@@ -1,4 +1,5 @@
 import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
+import { createListSorting } from "./list-sorting.js";
 import { createSimpleDashboard } from "./simple-dashboard.js";
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
@@ -12,13 +13,14 @@ import { renderTaskRecording } from "./task-recording.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
+const listSorting=createListSorting(()=>localStorage);
 const state = { projects: [], project: null, run: null, view: "runs", filter: "all", query: "", items: [], records: [], nextProjects: null, nextItems: null, nextRecords: null,
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
 state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; state.unreviewed = false;
 let lastSkill = "";
 let selectedPlan = null, selectedPlanVersion, lastPlan = "", planRequest = 0, planRemainingOnly = false;
 let executionData = { items: [], next_offset: null };
-let featureKey = null, lastFeature = "";
+let featureKey = null, lastFeature = "", selectedFeature = null;
 let featureSearchQuery = "", featureSearchPage = {items:[],next_offset:null}, featureSearchRequest = 0;
 const visibleFeatures = () => featureSearchQuery ? featureSearchPage.items : state.features;
 let navigationEpoch = 0;
@@ -151,7 +153,7 @@ async function selectProject(id) {
   selectedPlan = null; selectedPlanVersion = undefined; lastPlan = ""; planRequest++;
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all"; state.unreviewed = false;
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
-  featureKey = null; lastFeature = "";
+  featureKey = null; lastFeature = "";selectedFeature=null;
   featureSearchQuery=""; featureSearchPage={items:[],next_offset:null};featureSearchRequest++;$("#feature-search").value="";
   state.overviewTasks = []; state.overviewPartial = false;
   state.summary = {}; state.nextComponents = null; state.nextFeatures = null;
@@ -181,7 +183,7 @@ async function loadCatalog(moreView, preserve = false) {
   const request = ++catalogRequest, project = state.project;
   const views = moreView ? [moreView] : ["components", "features"];
   const responses = await Promise.all([
-    ...views.map(view => api(`/api/overview?project=${project}&view=${view}&offset=${moreView ? (view === "components" ? state.nextComponents : state.nextFeatures) : 0}`)),
+    ...views.map(view => api(`/api/overview?project=${project}&view=${view}&offset=${moreView ? (view === "components" ? state.nextComponents : state.nextFeatures) : 0}${view==="features"?`&sort=${listSorting.get("features")}`:""}`)),
     ...(!moreView ? [api(`/api/runs?project=${project}&state=active&offset=0`)] : []),
   ]);
   if (request !== catalogRequest || project !== state.project) return;
@@ -189,7 +191,8 @@ async function loadCatalog(moreView, preserve = false) {
     const data = responses[index];
     const preserveView = preserve && (view === "components" ? componentsPaged : featuresPaged);
     state.summary = data.summary;
-    state[view] = moreView ? [...new Map([...state[view], ...data.items].map(item => [item.key, item])).values()] : preserveView ? [...new Map([...data.items, ...state[view].filter(old => !data.items.some(item => item.key === old.key))].map(item => [item.key, item])).values()] : data.items;
+    const refreshed=new Map(data.items.map(item=>[item.key,item]));
+    state[view] = moreView ? [...new Map([...state[view], ...data.items].map(item => [item.key, item])).values()] : preserveView ? state[view].map(item=>refreshed.get(item.key)||item) : data.items;
     if (!preserveView || moreView) {
       if (view === "components") state.nextComponents = data.next_offset;
       else state.nextFeatures = data.next_offset;
@@ -252,6 +255,7 @@ function renderFilters() {
 }
 async function loadList(more = false) {
   if (!state.project) return;
+  renderListSort();
   const request = ++listRequest;
   const project = state.project, view = state.view;
   if (view === "features") {
@@ -260,7 +264,7 @@ async function loadList(more = false) {
     showFeature(featureKey || (featureSearchQuery ? null : state.features[0]?.key)); renderFeatures(); return;
   }
   if (view === "plans") {
-    const data = await api(`/api/plans?project=${project}&offset=${more?state.nextItems:0}`);
+    const data = await api(`/api/plans?project=${project}&offset=${more?state.nextItems:0}&sort=${listSorting.get(view)}`);
     if(request!==listRequest||project!==state.project||state.view!=="plans")return;
     if(data.schema_supported===false){$("#tasks").replaceChildren(empty("계획을 읽을 수 없는 DB 버전입니다","새 Skilly 쓰기 연결에서 버전을 확인해 주세요. 이 화면은 기존 DB를 변경하지 않습니다."));$("#detail").replaceChildren(empty("이전 DB 원본을 유지합니다","계획 기능은 DB v11 이상에서 사용할 수 있습니다."));$("#more-tasks").hidden=true;$("#list-count").textContent="미지원";return;}
     state.items=more?[...new Map([...state.items,...data.items].map(p=>[planIdentity(p),p])).values()]:data.items;
@@ -272,7 +276,7 @@ async function loadList(more = false) {
     if(chosen)await openPlan(chosen,selectedPlanVersion);else $("#detail").replaceChildren(empty("계획을 등록해 보세요","AI가 MD나 대화 계획을 등록하면 항목별 진행과 남은 일을 여기에서 볼 수 있습니다."));
     return;
   }
-  const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0) });
+  const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0),sort:listSorting.get(view) });
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
   if (view === "runs" && state.unreviewed) params.set("review", "unread");
   if (view === "runs") $("#list-label").textContent = state.unreviewed ? "미확인 완료 · 상태 필터를 누르면 전체 기록 조회" : "작업 현황";
@@ -359,7 +363,7 @@ async function openRun(id) {
 }
 async function loadFeatureSearch(more=false) {
   const ticket=++featureSearchRequest,project=state.project,query=featureSearchQuery;
-  const params=new URLSearchParams({project,view:"features",query,offset:String(more?featureSearchPage.next_offset:0)});
+  const params=new URLSearchParams({project,view:"features",query,offset:String(more?featureSearchPage.next_offset:0),sort:listSorting.get("features")});
   const data=await api(`/api/overview?${params}`);
   if(ticket!==featureSearchRequest||project!==state.project||query!==featureSearchQuery||state.view!=="features")return;
   featureSearchPage={items:more?[...new Map([...featureSearchPage.items,...data.items].map(x=>[x.key,x])).values()]:data.items,next_offset:data.next_offset};
@@ -378,7 +382,7 @@ function renderFeatures() {
     } });
 }
 function showFeature(key) {
-  const feature = visibleFeatures().find(item => item.key === key);
+  const feature = visibleFeatures().find(item => item.key === key)||(selectedFeature?.key===key?selectedFeature:null);
   if (!feature) {
     lastFeature = "";
     $("#detail").replaceChildren(empty("기능을 선택하세요", "목록에서 기능을 선택하거나 기능 더 보기로 찾아보세요.")); return;
@@ -386,7 +390,7 @@ function showFeature(key) {
   const fingerprint = JSON.stringify(feature);
   if (key === featureKey && fingerprint === lastFeature) return;
   if (key !== featureKey) { navigationEpoch++; $(".detail-panel").scrollTop = 0; }
-  featureKey = key; lastFeature = fingerprint;
+  featureKey = key; lastFeature = fingerprint;selectedFeature=feature;
   const featureTasks=()=>{
     state.query="";state.component="";state.filter="all";state.unreviewed=false;
     $("#search").value="";$("#component-filter").value="";renderFilters();
@@ -704,6 +708,21 @@ async function changeView(view) {
     $("#tasks").replaceChildren(element("p", "loading", "기록을 불러오는 중…"));
     await loadList();
 }
+function renderListSort() {
+  $("#list-sort").value=listSorting.get(state.view);
+  $("#sort-active").textContent=["skills","recovery"].includes(state.view)?"최신순 (기본)":"진행중 우선 · 최신순";
+  const notes={runs:"작업 보고가 저장된 날짜 기준 · 진행중은 미완료 기록",features:"연결된 미완료 작업 우선 · 날짜는 연결 작업의 최근 저장일",plans:"진행 기록이 있는 미완료 계획 우선 · 날짜는 계획·항목의 최근 저장일",skills:"날짜는 최근 버전 등록일 · 진행중 상태 없이 최신순",recovery:"날짜는 요청 접수일 · 진행중 상태 없이 최신순"};
+  $("#sort-note").textContent=notes[state.view];
+}
+$("#list-sort").addEventListener("change",event=>{void(async()=>{
+  if(!listSorting.set(state.view,event.target.value))return;
+  navigationEpoch++;listRequest++;catalogRequest++;featureSearchRequest++;
+  const epoch=navigationEpoch,view=state.view,project=state.project;
+  listPaged=false;featuresPaged=false;state.nextItems=null;state.nextFeatures=null;
+  if(view==="features")await loadCatalog();
+  if(epoch!==navigationEpoch||view!==state.view||project!==state.project)return;
+  await loadList();
+})().catch(showError);});
 for (const [id, view] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"], ["#show-plans", "plans"]]) {
   $(id).addEventListener("click", () => { void changeView(view).catch(showError); });
 }
@@ -727,7 +746,7 @@ $("#search").addEventListener("input", () => {
 });
 $("#feature-search").addEventListener("input",()=>{
   featureSearchQuery=$("#feature-search").value.trim();featureSearchRequest++;listRequest++;
-  featureSearchPage={items:[],next_offset:null};featureKey=null;lastFeature="";featuresPaged=false;
+  featureSearchPage={items:[],next_offset:null};featureKey=null;lastFeature="";selectedFeature=null;featuresPaged=false;
   clearTimeout(searchTimer);searchTimer=setTimeout(()=>{void loadList().catch(showError);},200);
 });
 document.addEventListener("keydown", event => {

@@ -145,7 +145,7 @@ export class SqlitePlans {
     return {linked:rows.length,status:verdict.status,reason:verdict.reason,counts:verdict.counts,
       observations:verdict.evidence.map(e=>({execution_id:e.execution_id,run_id:e.run_id,result:e.result,status:e.status,reason:e.reason,counts:e.counts})),claims_verified:false};
   }
-  query(scope:PlanScope,options:{plan_key?:string|undefined;version?:number|undefined;query?:string|undefined;offset?:number|undefined;limit?:number|undefined;remaining_only?:boolean|undefined}={}):JsonObject {
+  query(scope:PlanScope,options:{plan_key?:string|undefined;version?:number|undefined;query?:string|undefined;offset?:number|undefined;limit?:number|undefined;remaining_only?:boolean|undefined;sort?:ListSort|undefined}={}):JsonObject {
     this.project(scope.project_id);
     if(options.version!==undefined&&!options.plan_key)throw new MemoryError("invalid_input","A plan key is required for a version.");
     if(!Number.isSafeInteger(options.offset??0)||(options.offset??0)<0||(options.offset??0)>1000000||(options.query??"").length>200)throw new MemoryError("invalid_input","Invalid plan query.");
@@ -166,7 +166,15 @@ export class SqlitePlans {
     const term=options.query??"",offset=options.offset??0,limit=options.limit??12;
     filters.push("p.version=(SELECT MAX(v.version) FROM plan_versions v WHERE v.project_id=p.project_id AND v.repository=p.repository AND v.environment=p.environment AND v.plan_key=p.plan_key)");
     filters.push("(instr(lower(p.title),lower(?))>0 OR instr(lower(p.plan_key),lower(?))>0 OR instr(lower(p.items_json),lower(?))>0)");params.push(term,term,term,limit+1,offset);
-    const rows=this.db.prepare(`SELECT p.* FROM plan_versions p WHERE ${filters.join(" AND ")} ORDER BY COALESCE((SELECT MAX(seq) FROM plan_item_updates u WHERE u.project_id=p.project_id AND u.repository=p.repository AND u.environment=p.environment AND u.plan_key=p.plan_key AND u.version=p.version),0) DESC,p.created_at DESC,p.plan_key LIMIT ? OFFSET ?`).all(...params);
+    const updateScope="u.project_id=p.project_id AND u.repository=p.repository AND u.environment=p.environment AND u.plan_key=p.plan_key AND u.version=p.version";
+    const itemState=`coalesce((SELECT CASE WHEN u.state='completed' AND r.superseded_by IS NOT NULL THEN 'needs_review' ELSE u.state END
+      FROM plan_item_updates u JOIN records r ON r.project_id=u.project_id AND r.id=u.record_id WHERE ${updateScope} AND u.item_key=json_extract(j.value,'$.key') ORDER BY u.seq DESC LIMIT 1),'pending')`;
+    const required="coalesce(json_extract(j.value,'$.required'),1)=1";
+    const active=`EXISTS(SELECT 1 FROM json_each(p.items_json) j WHERE ${required} AND ${itemState}<>'pending')
+      AND EXISTS(SELECT 1 FROM json_each(p.items_json) j WHERE ${required} AND ${itemState}<>'completed')`;
+    const order=listOrder(options.sort,{name:"p.title",date:`max(p.created_at,coalesce((SELECT max(u.created_at) FROM plan_item_updates u WHERE ${updateScope}),p.created_at))`,active,
+      tie:"p.repository,p.environment,p.plan_key",fallback:`COALESCE((SELECT MAX(seq) FROM plan_item_updates u WHERE ${updateScope}),0) DESC,p.created_at DESC,p.repository,p.environment,p.plan_key`});
+    const rows=this.db.prepare(`SELECT p.* FROM plan_versions p WHERE ${filters.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...params);
     return json({items:rows.slice(0,limit).map(row=>({plan_key:row["plan_key"],version:row["version"],title:row["title"],repository:row["repository"],environment:row["environment"],source_kind:row["source_kind"],created_at:row["created_at"],progress:planProgress(planItemsSchema.parse(JSON.parse(String(row["items_json"]))).map(i=>this.item(row,i,false)))})),next_offset:rows.length>limit?offset+limit:null,schema_supported:true,claims_verified:false});
   }
 }
@@ -198,3 +206,5 @@ export function validatePlanData(db:DatabaseSync):void {
   if(db.prepare(`SELECT 1 FROM plan_update_executions l JOIN plan_item_updates u ON u.id=l.update_id JOIN executions e ON e.id=l.execution_id
     WHERE l.project_id!=u.project_id OR l.project_id!=e.project_id OR u.run_id!=e.run_id LIMIT 1`).get())throw new MemoryError("scope_mismatch","Imported execution evidence scope mismatch.");
 }
+import { listOrder } from "./list-sort.js";
+import type { ListSort } from "../../../core/viewer/sorting.js";

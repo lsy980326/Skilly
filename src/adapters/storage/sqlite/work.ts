@@ -1,4 +1,6 @@
 import { featureKnowledge } from "./feature-knowledge.js";
+import { listOrder } from "./list-sort.js";
+import type { ListSort } from "../../../core/viewer/sorting.js";
 import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { unreviewedRunSql, SqliteRunReviews } from "./run-reviews.js";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
@@ -56,7 +58,7 @@ export class SqliteWorkReader implements WorkReader {
     return row ? { ...row, verified: false } : null;
   }
 
-  overview(input: OverviewQuery, options: { unreviewed?: boolean; completedBetween?: readonly [string, string] } = {}): JsonObject {
+  overview(input: OverviewQuery, options: { unreviewed?: boolean; completedBetween?: readonly [string, string]; sort?: ListSort } = {}): JsonObject {
     const { project_id: pid, view, offset, limit } = input;
     const version = this.version();
     const discovery = new FeatureDiscovery(this.db, version);
@@ -102,9 +104,11 @@ export class SqliteWorkReader implements WorkReader {
         if (matched) values.push(...matched.params);
       }
       if (options.completedBetween) filteredTotal = Number(this.db.prepare(`SELECT count(*) AS total FROM runs r WHERE ${filters.join(" AND ")}`).get(...values)?.["total"]);
+      const taskName=version>=4?"coalesce((SELECT d.title FROM run_details d WHERE d.project_id=r.project_id AND d.run_id=r.id),r.goal)":"r.goal";
+      const order=listOrder(options.sort,{name:taskName,date:"r.updated_at",active:"r.state='active'",tie:"r.id DESC",fallback:"r.updated_at DESC,r.id DESC"});
       rows = this.db.prepare(`SELECT r.*${version >= 3 ? ", a.actor" : ", NULL AS actor"} FROM runs r
         ${version >= 3 ? "LEFT JOIN run_actors a ON a.run_id = r.id" : ""}
-        WHERE ${filters.join(" AND ")} ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`).all(...values, limit + 1, offset);
+        WHERE ${filters.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...values, limit + 1, offset);
     } else if (version < 4) rows = [];
     else {
       const table = view === "components" ? "components" : "features";
@@ -112,14 +116,17 @@ export class SqliteWorkReader implements WorkReader {
       const key = view === "components" ? "component_key" : "feature_key";
       const scoped = Boolean(input.repository || input.environment || input.component || input.feature);
       const matched = view === "features" && input.query ? discovery.predicate("c",input) : null;
+      const date=options.sort?`,(SELECT max(r.updated_at) FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id
+        WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where}) AS sort_date`:"";
+      const order=listOrder(options.sort,{name:"c.name",date:"sort_date",active:"unfinished>0",tie:"c.key",fallback:"c.key"});
       rows = this.db.prepare(`SELECT c.*, (SELECT count(*) FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id
           WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where}) AS total,
         (SELECT count(*) FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id
           WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where} AND r.state='active') AS unfinished
-        FROM ${table} c WHERE c.project_id = ?
+        ${date} FROM ${table} c WHERE c.project_id = ?
         ${scoped ? `AND EXISTS (SELECT 1 FROM ${links} x JOIN runs r ON r.project_id=x.project_id AND r.id=x.run_id WHERE x.project_id=c.project_id AND x.${key}=c.key AND ${where})` : ""}
         ${matched ? `AND ${matched.sql}` : ""}
-        ORDER BY c.key LIMIT ? OFFSET ?`).all(...params, ...params, pid, ...(scoped ? params : []), ...(matched?.params ?? []), limit + 1, offset);
+        ORDER BY ${order} LIMIT ? OFFSET ?`).all(...params, ...params, ...(options.sort?params:[]), pid, ...(scoped ? params : []), ...(matched?.params ?? []), limit + 1, offset);
     }
     const items: JsonObject[] = [];
     const response: JsonObject = { project_id: pid, view, summary: json(summary), items, next_offset: null,

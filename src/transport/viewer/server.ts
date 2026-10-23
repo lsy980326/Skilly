@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, lstatSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { ViewerError } from "../../core/viewer/model.js";
+import { listSort } from "../../core/viewer/sorting.js";
 import { SqliteViewer } from "../../adapters/storage/sqlite/viewer.js";
 import { MemoryError } from "../../core/memory/model.js";
 import { documentBody, ViewerDocuments } from "./documents.js";
@@ -21,6 +22,7 @@ const assets = new Map([
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
   ["/plans.js", { file: "plans.js", type: "text/javascript; charset=utf-8" }],
+  ["/list-sorting.js", { file: "list-sorting.js", type: "text/javascript; charset=utf-8" }],
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
   ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
@@ -92,15 +94,16 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan", "sort"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      const sort=listSort(url.searchParams.has("sort")?url.searchParams.get("sort"):undefined),sorting=sort?{sort}:{};
       if(url.pathname === "/api/plans") {
         const version=url.searchParams.get("version");if(version!==null&&!/^[1-9]\d{0,5}$/.test(version))throw new ViewerError("invalid_input","계획 버전을 확인해 주세요.");
-        json(response,200,reader.plans(project,{offset:offset(url),query:url.searchParams.get("query")??"",...(url.searchParams.has("plan")?{plan_key:url.searchParams.get("plan")!}:{}),...(url.searchParams.has("repository")?{repository:url.searchParams.get("repository")!}:{}),...(url.searchParams.has("environment")?{environment:url.searchParams.get("environment")!}:{}),...(version?{version:Number(version)}:{})}));return;
+        json(response,200,reader.plans(project,{...sorting,offset:offset(url),query:url.searchParams.get("query")??"",...(url.searchParams.has("plan")?{plan_key:url.searchParams.get("plan")!}:{}),...(url.searchParams.has("repository")?{repository:url.searchParams.get("repository")!}:{}),...(url.searchParams.has("environment")?{environment:url.searchParams.get("environment")!}:{}),...(version?{version:Number(version)}:{})}));return;
       }
       if(url.pathname === "/api/documents") { json(response,200,reader.importedDocuments(project,{offset:offset(url),query:url.searchParams.get("query")??""}));return; }
       if(url.pathname === "/api/document") {
@@ -109,7 +112,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       if (url.pathname === "/api/documents/targets") { json(response, 200, reader.documentTargets(project)); return; }
       if (url.pathname === "/api/skills") {
-        json(response, 200, reader.skills(project, { offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
+        json(response, 200, reader.skills(project, { ...sorting,offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
       }
       if (url.pathname === "/api/skill") {
         const key = url.searchParams.get("skill");
@@ -118,17 +121,17 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       if (url.pathname === "/api/overview") {
         const filters = Object.fromEntries(["query","component","feature","repository","environment"].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)!]));
-        json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url),filters)); return;
+        json(response, 200, reader.overview(project, url.searchParams.get("view") ?? "components", offset(url),{...filters,...sorting})); return;
       }
       if (url.pathname === "/api/runs") {
         if (url.searchParams.has("review") && url.searchParams.get("review") !== "unread") throw new ViewerError("invalid_input", "확인 상태를 다시 선택해 주세요.");
         if (url.searchParams.has("completed_within") && url.searchParams.get("completed_within") !== "1h") throw new ViewerError("invalid_input", "완료 시간 범위를 다시 선택해 주세요.");
-        json(response, 200, reader.runs(project, { offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all", unreviewed: url.searchParams.get("review") === "unread",
+        json(response, 200, reader.runs(project, { ...sorting,offset: offset(url), query: url.searchParams.get("query") ?? "", state: url.searchParams.get("state") ?? "all", unreviewed: url.searchParams.get("review") === "unread",
           completedWithinHour: url.searchParams.get("completed_within") === "1h",
           ...(url.searchParams.has("component") ? { component: url.searchParams.get("component")! } : {}),
           ...(url.searchParams.has("feature") ? { feature: url.searchParams.get("feature")! } : {}) })); return;
       }
-      if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url))); return; }
+      if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url),sort)); return; }
       const detail = /^\/api\/runs\/([^/]+)$/.exec(url.pathname);
       const executions = /^\/api\/runs\/([^/]+)\/executions$/.exec(url.pathname);
       if (executions?.[1]) { json(response, 200, reader.executions(project, executions[1], offset(url))); return; }

@@ -64,7 +64,7 @@ export class SqliteViewer {
   }
   close(): void { this.db.close(); }
 
-  plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number}={}) {
+  plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number;sort?:ListSort}={}) {
     this.requireProject(projectId);
     pageOffset(options.offset??0);
     if((options.query??"").length>200 || (options.plan_key!==undefined&&!planKey.safeParse(options.plan_key).success)
@@ -160,7 +160,7 @@ export class SqliteViewer {
     };
   }
 
-  skills(projectId: string, options: { key?: string; version?: string; offset?: number; query?: string } = {}) {
+  skills(projectId: string, options: { key?: string; version?: string; offset?: number; query?: string; sort?:ListSort } = {}) {
     this.requireProject(projectId);
     const reader = new SqliteSkills(this.db);
     try {
@@ -169,7 +169,7 @@ export class SqliteViewer {
         return reader.detail(projectId, options.key, options.version, pageOffset(options.offset ?? 0));
       }
       if ((options.query?.length ?? 0) > 200) throw new ViewerError("invalid_input", "검색어가 너무 깁니다.");
-      return reader.list(projectId, pageOffset(options.offset ?? 0), 12, options.query ?? "");
+      return reader.list(projectId, pageOffset(options.offset ?? 0), 12, options.query ?? "",options.sort);
     } catch (error) {
       if (error instanceof ViewerError) throw error;
       if (error instanceof Error && "code" in error && error.code === "not_found") throw new ViewerError("not_found", "해당 스킬 버전이 없습니다.");
@@ -193,7 +193,7 @@ export class SqliteViewer {
     })), offset);
   }
 
-  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string; unreviewed?: boolean; completedWithinHour?: boolean } = {}) {
+  runs(projectId: string, options: { offset?: number; query?: string; state?: string; component?: string; feature?: string; unreviewed?: boolean; completedWithinHour?: boolean; sort?:ListSort } = {}) {
     this.requireProject(projectId);
     const offset = pageOffset(options.offset ?? 0);
     const query = options.query ?? "";
@@ -209,6 +209,7 @@ export class SqliteViewer {
     const result = this.work.overview({ project_id: projectId, view: "tasks", offset, limit: PAGE_SIZE, query, state,
       ...(options.component ? { component: options.component } : {}), ...(options.feature ? { feature: options.feature } : {}) }, {
         unreviewed: options.unreviewed === true,
+        ...(options.sort?{sort:options.sort}:{}),
         ...(options.completedWithinHour ? { completedBetween: [new Date(now - 3_600_000).toISOString(), new Date(now).toISOString()] as const } : {}),
       });
     if (Array.isArray(result["items"])) {
@@ -224,12 +225,13 @@ export class SqliteViewer {
     return result;
   }
 
-  overview(projectId: string, view: string, offset = 0, options: {query?:string;component?:string;feature?:string;repository?:string;environment?:string} = {}) {
+  overview(projectId: string, view: string, offset = 0, options: {query?:string;component?:string;feature?:string;repository?:string;environment?:string;sort?:ListSort} = {}) {
     this.requireProject(projectId); pageOffset(offset);
     if (view !== "components" && view !== "features") throw new ViewerError("invalid_input", "조회 종류를 확인해 주세요.");
     this.requireFilters(options);
     if ((options.query?.length ?? 0) > 200 || [options.repository,options.environment].some(value=>value!==undefined&&(!value.length||value.length>100||/[\u0000-\u001f]/.test(value)))) throw new ViewerError("invalid_input","검색 범위를 확인해 주세요.");
-    return this.work.overview({ project_id: projectId, view, offset, limit: PAGE_SIZE, ...options });
+    const {sort,...filters}=options;
+    return this.work.overview({ project_id: projectId, view, offset, limit: PAGE_SIZE, ...filters },sort?{sort}:{});
   }
 
   private requireFilters(options: { component?: string; feature?: string }) {
@@ -270,9 +272,10 @@ export class SqliteViewer {
     return new SqliteExecutions(this.db, this.sources).list(projectId, runId, offset);
   }
 
-  recovery(projectId: string, offset = 0) {
+  recovery(projectId: string, offset = 0, sort?:ListSort) {
     this.requireProject(projectId);
     pageOffset(offset);
+    const order=listOrder(sort,{name:"coalesce(nullif(substr(json_extract(input_json,'$.goal'),1,200),''),tool)",date:"received_at",active:"0=1",tie:"id DESC",fallback:"received_at DESC,id DESC"});
     let journal: DatabaseSync | undefined;
     try {
       journal = readOnly(`${this.path}.recovery.sqlite`);
@@ -284,7 +287,7 @@ export class SqliteViewer {
         received_at, last_error, input_json IS NOT NULL AS retained,
         json_extract(input_json, '$.run_id') AS run_id, substr(json_extract(input_json, '$.goal'), 1, 200) AS goal
         FROM requests WHERE project_id = ? AND (input_json IS NOT NULL OR last_error IS NOT NULL)
-        ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?`).all(projectId, PAGE_SIZE + 1, offset);
+        ORDER BY ${order} LIMIT ? OFFSET ?`).all(projectId, PAGE_SIZE + 1, offset);
       const items = rows.map(row => {
         const receipt = this.db.prepare("SELECT payload_hash FROM receipts WHERE scope = ? AND idempotency_key = ?")
           .get(projectId, text(row, "request_key"));
@@ -307,3 +310,5 @@ export class SqliteViewer {
     } finally { journal?.close(); }
   }
 }
+import { listOrder } from "./list-sort.js";
+import type { ListSort } from "../../../core/viewer/sorting.js";
