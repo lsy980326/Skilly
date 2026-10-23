@@ -623,6 +623,14 @@ test('code-version comparison is distinct from execution success and updates on 
  assert.match(app.node('#detail').querySelector('.execution-version').textContent,/기능 검증은 포함하지 않습니다/);
  row.code_version.comparison={status:'changed',reason:'different_commit'};await app.tick();assert.match(app.node('#detail').textContent,/검사 뒤 코드가 바뀌었어요/);
  row.code_version.comparison={status:'unknown',reason:'uncommitted_changes'};await app.tick();assert.match(app.node('#detail').textContent,/지금 코드에도 같은 결과일까요.*커밋되지 않은 수정/);
+ row.code_version.before.worktree={policy:'public_source_v1',status:'collected',sha256:'b'.repeat(64),files:3,bytes:1024,excluded:2};
+ row.code_version.comparison={status:'same_version',reason:'matching_source_fingerprints',scope:'bounded_public_source_v1'};
+ await app.tick();assert.match(app.node('#detail').textContent,/수집한 코드가 검사 때와 같아요.*공개 소스의 내용이 같습니다/);
+ assert.match(app.node('#detail').textContent,/공개 소스 3개.*제외 2개/);
+ row.code_version.comparison={status:'changed',reason:'source_changed_during_execution'};await app.tick();
+ assert.match(app.node('#detail').textContent,/검사 중 코드가 바뀌었어요.*어느 상태의 검사 결과인지 확정할 수 없습니다/);
+ row.code_version.comparison={status:'unknown',reason:'fingerprint_limit_exceeded'};await app.tick();
+ assert.match(app.node('#detail').textContent,/수집의 파일 수·크기·시간 한도/);
 });
 
 test('task summary comes first and technical panels remain folded or retain the readers choice', async()=>{

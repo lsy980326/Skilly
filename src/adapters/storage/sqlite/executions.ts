@@ -3,7 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { MemoryError } from "../../../core/memory/model.js";
 import { executionRowSchema, executionProjection, type ExecutionRow } from "../../../core/execution/model.js";
-import { executionSourceRowSchema, sourceObservationSchema, compareExecutionSource, type SourceObservation, type SourceProvider } from "../../../core/execution/currentness.js";
+import { executionSourceRowSchema, executionWorktreeRowSchema, sourceObservationSchema, sourceProjection, compareExecutionSource, type SourceObservation, type SourceProvider } from "../../../core/execution/currentness.js";
+import { readExecutionSources } from "./execution-sources.js";
 
 export function validateExecutionData(db: DatabaseSync): void {
   for (const row of db.prepare("SELECT * FROM executions").iterate()) {
@@ -31,6 +32,12 @@ export function validateExecutionData(db: DatabaseSync): void {
     if (db.prepare(`SELECT 1 FROM execution_test_details d JOIN executions e ON d.execution_id=e.id WHERE d.project_id != e.project_id LIMIT 1`).get())
       throw new MemoryError("scope_mismatch", "Test details belong to another project.");
   }
+  if (Number(db.prepare("PRAGMA user_version").get()?.["user_version"]) >= 12) {
+    for (const row of db.prepare("SELECT * FROM execution_worktrees").iterate()) executionWorktreeRowSchema.parse(row);
+    if (db.prepare(`SELECT 1 FROM execution_worktrees w JOIN execution_sources s ON s.execution_id=w.execution_id
+      WHERE w.project_id!=s.project_id OR (w.after_json IS NOT NULL AND s.after_json IS NULL) LIMIT 1`).get())
+      throw new MemoryError("scope_mismatch", "Fingerprint source scope mismatch.");
+  }
   if (db.prepare(`SELECT 1 FROM executions e JOIN records r ON r.project_id=e.project_id AND r.id=e.record_id
     WHERE e.run_id != r.run_id LIMIT 1`).get()) throw new MemoryError("scope_mismatch", "Execution record belongs to another task.");
 }
@@ -54,8 +61,11 @@ export class SqliteExecutions {
       const id = randomUUID();
       this.db.prepare(`INSERT INTO executions (id,project_id,run_id,record_id,source,executable,command_hash,started_at,outcome)
         VALUES (?,?,?,?,'local_runner',?,?,?,'unconfirmed')`).run(id, input.project_id, input.run_id, input.record_id ?? null, input.executable, input.command_hash, new Date().toISOString());
-      if (input.source_observation) this.db.prepare("INSERT INTO execution_sources VALUES(?,?,?,NULL)")
-        .run(id, input.project_id, JSON.stringify(sourceObservationSchema.parse(input.source_observation)));
+      if (input.source_observation) {
+        const { worktree, ...metadata } = sourceObservationSchema.parse(input.source_observation);
+        this.db.prepare("INSERT INTO execution_sources VALUES(?,?,?,NULL)").run(id, input.project_id, JSON.stringify(metadata));
+        if (worktree) this.db.prepare("INSERT INTO execution_worktrees VALUES(?,?,?,NULL)").run(id, input.project_id, JSON.stringify(worktree));
+      }
       this.db.exec("COMMIT");
       return id;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
@@ -81,8 +91,12 @@ export class SqliteExecutions {
         const detailRow = testDetailsRowSchema.parse({ execution_id: id, project_id: row["project_id"], details_json: JSON.stringify(details) });
         this.db.prepare("INSERT INTO execution_test_details (execution_id,project_id,details_json) VALUES (?,?,?)").run(id, detailRow.project_id, detailRow.details_json);
       }
-      if (sourceAfter) this.db.prepare("UPDATE execution_sources SET after_json=? WHERE execution_id=?")
-        .run(JSON.stringify(sourceObservationSchema.parse(sourceAfter)), id);
+      if (sourceAfter) {
+        const { worktree, ...metadata } = sourceObservationSchema.parse(sourceAfter);
+        this.db.prepare("UPDATE execution_sources SET after_json=? WHERE execution_id=?").run(JSON.stringify(metadata), id);
+        if (worktree) this.db.prepare(`INSERT INTO execution_worktrees VALUES(?,?,NULL,?)
+          ON CONFLICT(execution_id) DO UPDATE SET after_json=excluded.after_json`).run(id, row["project_id"]!, JSON.stringify(worktree));
+      }
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
@@ -99,15 +113,12 @@ export class SqliteExecutions {
       ORDER BY started_at DESC,id DESC LIMIT 21 OFFSET ?`).all(projectId, runId, ...(recordId ? [recordId] : []), offset);
     const current = new Map<string, SourceObservation | undefined>();
     return { items: rows.slice(0, 20).map(row => {
-      const source = Number(this.db.prepare("PRAGMA user_version").get()?.["user_version"]) >= 8
-        ? this.db.prepare("SELECT * FROM execution_sources WHERE execution_id=? AND project_id=?").get(row["id"]!, projectId) : undefined;
-      const parsed = source ? executionSourceRowSchema.parse(source) : undefined;
-      const before = parsed ? sourceObservationSchema.parse(JSON.parse(parsed.before_json)) : undefined;
-      const after = parsed?.after_json ? sourceObservationSchema.parse(JSON.parse(parsed.after_json)) : undefined;
+      const {before,after} = Number(this.db.prepare("PRAGMA user_version").get()?.["user_version"]) >= 8
+        ? readExecutionSources(this.db, projectId, String(row["id"])) : {};
       if (before && !current.has(before.root_hash)) current.set(before.root_hash, this.sources?.(before));
       const now = before ? current.get(before.root_hash) : undefined;
       return { ...executionProjection(executionRowSchema.parse(row)), test_details: this.details(String(row["id"]), row["outcome"] === "unconfirmed"),
-        code_version: { before: before ?? null, after: after ?? null, current: now ?? null, comparison: compareExecutionSource(before, after, now) } };
+        code_version: { before: sourceProjection(before), after: sourceProjection(after), current: sourceProjection(now), comparison: compareExecutionSource(before, after, now) } };
     }),
       next_offset: rows.length > 20 ? offset + 20 : null, coverage: "explicit_runner_only", claims_verified: false };
   }

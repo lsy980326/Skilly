@@ -71,7 +71,7 @@ test("reader supports legacy schemas without migration; writer upgrade preserves
   }
   const oldRows = db.prepare("SELECT * FROM runs").all();
   const app = openLocal(path);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 11);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 12);
   assert.deepEqual(db.prepare("SELECT * FROM runs").all(), oldRows);
   db.prepare("INSERT INTO runs VALUES (?, ?, '구형 실행 SQL', 'change', 'test', 'main', 'active', ?, ?)").run(randomUUID(), pid, date, date);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
@@ -236,7 +236,7 @@ test("viewer never creates, migrates or follows a linked database", async t => {
   assert.throws(() => new SqliteViewer("relative.sqlite"), { code: "invalid_input" });
   const path = join(f.directory, "future.sqlite");
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version=12; PRAGMA application_id=1397446988;"); db.close();
+  db.exec("PRAGMA user_version=13; PRAGMA application_id=1397446988;"); db.close();
   const before = readFileSync(path);
   assert.throws(() => new SqliteViewer(path), { code: "unavailable" });
   assert.deepEqual(readFileSync(path), before);

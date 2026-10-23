@@ -5,6 +5,7 @@ import { isAbsolute } from "node:path";
 import type { ProjectBinding } from "../../core/memory/binding.js";
 import type { SourceObservation, SourceProvider } from "../../core/execution/currentness.js";
 import { loadProjectBinding } from "./binding.js";
+import { fingerprintWorktree } from "./worktree-fingerprint.js";
 
 function git(root: string, args: string[]) {
   const r = spawnSync("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", root, ...args],
@@ -20,14 +21,17 @@ export function observeSource(root: string, binding: ProjectBinding): SourceObse
       return { ...base, status: "unavailable", commit: null, reason: "not_repository_root" };
     const before = git(root, ["rev-parse", "--verify", "HEAD"]).trim();
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(before)) throw new Error("Invalid commit");
-    const dirty = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"]);
-    // Git status can hide tracked edits under these index flags. Never equate that with clean source.
-    // Dirty already means unknown; avoid enumerating a potentially large index in that case.
-    if (!dirty && git(root, ["ls-files", "-v", "-z"]).split("\0").some(entry => /^[a-zS]/.test(entry)))
+    const dirty = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"]);
+    // Hidden/unmerged index entries cannot establish a complete public-source comparison.
+    const hidden = () => git(root, ["ls-files", "-v", "-z"]).split("\0").some(entry => /^[a-zSM]/.test(entry));
+    if (hidden())
       return { ...base, status: "unavailable", commit: null, reason: "index_entries_unobserved" };
+    const worktree = fingerprintWorktree(root, dirty, args => git(root, args));
     const after = git(root, ["rev-parse", "--verify", "HEAD"]).trim();
+    if (hidden()) return { ...base, status: "unavailable", commit: null, reason: "index_entries_unobserved" };
     return { ...base, status: dirty || before !== after ? "dirty" : "clean", commit: after,
-      reason: dirty || before !== after ? "working_tree_changed" : null };
+      reason: dirty || before !== after ? "working_tree_changed" : null,
+      worktree: before === after ? worktree : { policy: "public_source_v1", status: "unavailable", reason: "unstable" } };
   } catch { return { ...base, status: "unavailable", commit: null, reason: "git_unavailable" }; }
 }
 

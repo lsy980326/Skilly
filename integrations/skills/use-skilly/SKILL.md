@@ -351,10 +351,12 @@ reporting counts. Limits and correctness disclaimers match Node test details.
 
 When `code_version` is returned by execution reads, distinguish its
 `comparison.status`: `same_version`, `changed`, or `unknown`. Read the reason and
-before/after/current observations. `same_version` means matching clean Git
-metadata at the observed endpoints, never verified feature behavior or unchanged
-runtime/dependencies/ignored files. Dirty or hidden index entries, missing source
-observations and unconfigured comparison roots remain unknown; never repair that
+before/after/current observations, scope and fingerprint exclusions. `same_version`
+means either matching legacy clean Git metadata or three matching collected public-source
+fingerprints (including uncommitted edits) at the observed endpoints, never verified feature
+behavior or unchanged runtime/dependencies/ignored or excluded files. Legacy dirty records,
+excluded changes, collection limits, hidden index entries, missing source observations
+and unconfigured comparison roots remain unknown; never repair that
 by asserting success or rerunning a command solely to create evidence. Changed
 commits require a relevant new authorized check before reusing an old result.
 Legacy observations remain unchanged. Use only the configured project root;

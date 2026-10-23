@@ -111,14 +111,28 @@ export function renderExecutions(data, { element, date, more }) {
     const versionLabels = { same_version: "검사 때와 같은 코드예요", changed: "검사 뒤 코드가 바뀌었어요", unknown: "지금 코드에도 같은 결과일까요?" };
     const versionReasons = { legacy_not_collected: "이전 기록에는 검사 당시 코드 정보가 없습니다. 검사 실패라는 뜻은 아닙니다.", execution_unfinished: "실행 종료 시점의 코드 버전을 확인하지 못했습니다.",
       source_unavailable: "Git 버전 정보를 확인할 수 없습니다.", execution_scope_mismatch: "실행 전후의 프로젝트 범위가 다릅니다.",
-      changed_during_execution: "실행 도중 커밋이 바뀌었습니다.", uncommitted_changes: "저장소에 커밋되지 않은 수정이 있어 검사 때와 같은 코드인지 판단하지 않습니다. 검사 실패라는 뜻은 아닙니다.",
+      changed_during_execution: "실행 도중 커밋이 바뀌었습니다.", uncommitted_changes: "이전 기록에는 커밋되지 않은 수정의 내용 지문이 없어 같은 코드인지 판단할 수 없습니다. 검사 실패라는 뜻은 아닙니다.",
+      matching_source_fingerprints: "검사 전·후와 지금 수집한 공개 소스의 내용이 같습니다. 커밋 전 수정도 포함해 비교했습니다.",
+      source_fingerprint_changed: "검사 이후 공개 소스 내용이 달라졌습니다. 이전 검사 결과를 현재 코드의 결과로 쓰지 마세요.",
+      source_changed_during_execution: "검사를 실행하는 동안 공개 소스가 바뀌었습니다. 어느 상태의 검사 결과인지 확정할 수 없습니다.",
+      fingerprint_limit_exceeded: "코드 수집의 파일 수·크기·시간 한도를 넘어 비교하지 못했습니다.",
+      fingerprint_excluded_changes: "수집 대상에서 제외하는 파일에 변경이 있습니다. 환경·인증 파일과 지원하지 않는 파일은 읽지 않습니다.",
+      fingerprint_unsafe_entry: "심볼릭 링크나 일반 파일이 아닌 항목이 있어 안전하게 비교하지 못했습니다.",
+      fingerprint_unstable: "내용 지문을 수집하는 중 파일이 바뀌어 비교를 보류했습니다.",
+      fingerprint_read_failed: "코드 내용 지문을 끝까지 읽지 못했습니다.",
       comparison_root_not_configured: "현재 코드와 비교할 프로젝트 폴더가 지정되지 않았습니다.", comparison_scope_mismatch: "비교 대상 프로젝트 범위가 다릅니다.",
       different_commit: "검사 당시와 현재 커밋이 다릅니다.", matching_clean_observations: "실행 전·후와 조회 시점에 변경 없는 같은 커밋을 관측했습니다." };
-    versionPanel.append(element("summary", "", versionLabels[comparison?.status] ?? versionLabels.unknown),
+    versionPanel.append(element("summary", "", comparison?.reason === "source_changed_during_execution" ? "검사 중 코드가 바뀌었어요"
+      : comparison?.scope === "bounded_public_source_v1" && comparison.status === "same_version" ? "수집한 코드가 검사 때와 같아요"
+      : versionLabels[comparison?.status] ?? versionLabels.unknown),
       element("p", "", versionReasons[comparison?.reason] ?? "버전 비교 정보가 없습니다."));
     if (version?.before?.commit) versionPanel.append(element("code", "", `검사 전 ${version.before.commit.slice(0, 12)} · 검사 후 ${version.after?.commit?.slice(0, 12) ?? "미확인"} · 현재 ${version.current?.commit?.slice(0, 12) ?? "미확인"}`));
     if (comparison?.checked_at) versionPanel.append(element("small", "", `비교 시각 ${date(comparison.checked_at)}`));
-    versionPanel.append(element("small", "", "Git 버전의 관측 비교입니다. 무시된 파일·의존성·실행환경과 기능 검증은 포함하지 않습니다."));
+    if (version?.before?.worktree?.status === "collected") {
+      const snapshot = version.before.worktree;
+      versionPanel.append(element("small", "", `공개 소스 ${snapshot.files}개 · ${(snapshot.bytes / 1024).toFixed(1)} KB · 제외 ${snapshot.excluded}개 · 내용 지문 ${snapshot.sha256.slice(0, 12)}`));
+    }
+    versionPanel.append(element("small", "", "관측 시점의 Git 버전·수집한 공개 소스 비교입니다. 제외·무시된 파일·의존성·실행환경과 기능 검증은 포함하지 않습니다. 중간 변경 후 되돌림은 알 수 없습니다."));
 
     card.append(element("small", "", `관측한 출력 ${item.stdout_bytes}B / 오류 출력 ${item.stderr_bytes}B · 원문 미보관`));
     if (item.output_complete === 0) card.append(element("p", "catalog-note", "출력 스트림을 끝까지 확인하지 못했습니다. 크기·해시는 관측한 범위만 나타냅니다."));

@@ -19,12 +19,15 @@ export function assessFeatureKnowledge(observations: KnowledgeObservation[], tru
       if (row.exit_code === 0 && details.suite_success && details.counts.passed > 0 && details.counts.failed === 0) result = "passed";
       else if (row.exit_code !== null && row.exit_code !== 0 && !details.suite_success && details.counts.failed > 0) result = "failed";
     }
-    const uncertainSource = [row.before, row.after, row.current].some(source => source && source.status !== "clean");
+    const sourceSamples = [row.before, row.after, row.current];
+    const uncertainSource = sourceSamples.some(source => source && source.status !== "clean")
+      && !sourceSamples.every(source => source?.worktree?.status === "collected");
     const status: "current" | "stale" | "unknown" = result === "unknown" || uncertainSource ? "unknown"
       : comparison.status === "changed" ? "stale" : comparison.status === "same_version" ? "current" : "unknown";
     return { execution_id: row.id, run_id: row.run_id, record_id: row.record_id,
       repository: row.repository, environment: row.environment, command_hash: row.command_hash,
       commit: row.before?.commit ?? null, current_commit: row.current?.commit ?? null, root_hash: row.before?.root_hash ?? null,
+      source_fingerprint: row.before?.worktree?.status === "collected" ? row.before.worktree.sha256 : null,
       status, result, reason: result === "unknown" ? "test_verdict_unavailable" : uncertainSource ? "source_not_clean" : comparison.reason,
       counts: details.status === "collected" ? details.counts : null,
       comparison, claims_verified: false };

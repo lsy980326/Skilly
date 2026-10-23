@@ -118,6 +118,9 @@ const knowledgeReasons = {
 };
 const evidenceReasons = { source_not_clean: "코드가 dirty 또는 관측 불가 상태", matching_clean_observations: "현재 커밋과 일치", different_commit: "현재 커밋이 달라짐",
   changed_during_execution: "실행 중 커밋 변경", uncommitted_changes: "미커밋 변경으로 비교 불가",
+  matching_source_fingerprints: "수집한 소스 내용 일치", source_fingerprint_changed: "검사 후 소스 변경", source_changed_during_execution: "검사 중 소스 변경",
+  fingerprint_limit_exceeded: "소스 수집 한도 초과", fingerprint_excluded_changes: "제외 파일 변경으로 확인 필요", fingerprint_unsafe_entry: "안전하게 읽을 수 없는 항목",
+  fingerprint_unstable: "수집 중 소스 변경", fingerprint_read_failed: "소스 지문 읽기 실패",
   comparison_root_not_configured: "비교할 프로젝트 경로 미설정", legacy_not_collected: "당시 코드 정보 없음",
   execution_unfinished: "실행 종료·코드 정보 불완전", test_verdict_unavailable: "검사 상세·정상 종료 근거 부족",
   source_unavailable: "코드 관측 불가", execution_scope_mismatch: "실행 범위 불일치", comparison_scope_mismatch: "현재 비교 범위 불일치" };

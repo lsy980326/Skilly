@@ -58,6 +58,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (table === "execution_worktrees" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 12) continue;
         if (table.startsWith("plan_") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 11) continue;
         if ((table === "feature_aliases" || table === "feature_code_paths") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 10) continue;
         if (table === "run_acknowledgements" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 9) continue;
@@ -119,6 +120,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (manifest.schema_version < 7 && table === "execution_test_details") fail("invalid_bundle", "Test details require schema v7.");
     if (manifest.schema_version < 8 && table === "execution_sources") fail("invalid_bundle", "Execution source observations require schema v8.");
     if (manifest.schema_version < 6 && table === "executions") fail("invalid_bundle", "Execution rows require schema v6.");
+    if (manifest.schema_version < 12 && table === "execution_worktrees") fail("invalid_bundle", "Worktree fingerprints require schema v12.");
     if (manifest.schema_version < 11 && table.startsWith("plan_")) fail("invalid_bundle", "Plan data requires schema v11.");
     const row = parsedRow(table, entry.row, manifest.project_id, runs);
     if (table === "projects") projects++;
@@ -148,6 +150,7 @@ export async function importProject(input: string, output: string, base?: string
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 8) main.exec(readFileSync(new URL("../../../../migrations/009-run-acknowledgements.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 9) main.exec(readFileSync(new URL("../../../../migrations/010-feature-discovery.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 10) main.exec(readFileSync(new URL("../../../../migrations/011-plans.sql", import.meta.url), "utf8"));
+      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 11) main.exec(readFileSync(new URL("../../../../migrations/012-execution-worktrees.sql", import.meta.url), "utf8"));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {

@@ -24,6 +24,8 @@ test('current, stale, conflict and unknown refer only to comparable direct test 
  assert.equal(assessFeatureKnowledge([observation({current:{...before,commit:'d'.repeat(40),status:'dirty',reason:'working_tree_changed'}})]).status,'unknown');
  assert.equal(assessFeatureKnowledge([observation({after:{...before,commit:'d'.repeat(40),status:'dirty',reason:'working_tree_changed'}})]).status,'unknown');
  const conflict=assessFeatureKnowledge([good,bad]);assert.equal(conflict.status,'conflict');assert.deepEqual(conflict.conflicts[0].execution_ids,[good.id,bad.id]);
+ const sampled={...before,worktree:{policy:'public_source_v1',status:'collected',sha256:'e'.repeat(64),files:1,bytes:1,excluded:0}};
+ assert.equal(assessFeatureKnowledge([bad,observation({before:sampled,after:sampled,current:sampled})]).status,'conflict');
  const separate=assessFeatureKnowledge([good,{...bad,command_hash:'d'.repeat(64)}]);assert.equal(separate.status,'current');assert.equal(separate.counts.failed,1);assert.equal(separate.conflicts.length,0);
  for(const other of [{repository:'other'},{environment:'stage'},{before:{...before,root_hash:'d'.repeat(64)},after:{...before,root_hash:'d'.repeat(64)},current:{...before,root_hash:'d'.repeat(64)}}])assert.equal(assessFeatureKnowledge([good,{...bad,...other}]).conflicts.length,0);
  assert.equal(assessFeatureKnowledge([good],true).status,'unknown');assert.equal(assessFeatureKnowledge([good],true).reason,'observation_limit_exceeded');

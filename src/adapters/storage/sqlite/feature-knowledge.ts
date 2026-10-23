@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OverviewQuery } from "../../../core/work/model.js";
 import { assessFeatureKnowledge, type KnowledgeObservation } from "../../../core/work/knowledge.js";
-import { executionSourceRowSchema, sourceObservationSchema, type SourceProvider, type SourceObservation } from "../../../core/execution/currentness.js";
+import { type SourceProvider, type SourceObservation } from "../../../core/execution/currentness.js";
+import { readExecutionSources } from "./execution-sources.js";
 import { testDetailsRowSchema, type TestDetails } from "../../../core/execution/test-details.js";
 import { featureScope } from "./feature-status.js";
 
@@ -17,10 +18,7 @@ export function featureKnowledge(db: DatabaseSync, input: OverviewQuery, key: st
     WHERE ${filters.join(" AND ")} ORDER BY e.started_at DESC,e.id DESC LIMIT ?`).all(...params, LIMIT + 1);
   const current = new Map<string, SourceObservation | undefined>();
   const observations: KnowledgeObservation[] = rows.slice(0, LIMIT).map(row => {
-    const source = version >= 8 ? db.prepare("SELECT * FROM execution_sources WHERE execution_id=? AND project_id=?").get(row["id"]!, input.project_id) : undefined;
-    const parsed = source ? executionSourceRowSchema.parse(source) : undefined;
-    const before = parsed ? sourceObservationSchema.parse(JSON.parse(parsed.before_json)) : undefined;
-    const after = parsed?.after_json ? sourceObservationSchema.parse(JSON.parse(parsed.after_json)) : undefined;
+    const {before,after} = version >= 8 ? readExecutionSources(db, input.project_id, String(row["id"])) : {};
     const cacheKey = before ? JSON.stringify([before.root_hash,before.project_key,before.repository,before.environment]) : "";
     if (before && !current.has(cacheKey)) current.set(cacheKey, sources?.(before));
     const details = version >= 7 ? db.prepare("SELECT * FROM execution_test_details WHERE execution_id=? AND project_id=?").get(row["id"]!, input.project_id) : undefined;

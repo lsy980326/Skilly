@@ -36,7 +36,7 @@ test('clean matching versions, dirty unknown, changed commit; fresh MCP and HTTP
  assert.equal(row.code_version.comparison.dependencies_and_runtime_verified,false);
  assert.equal(JSON.stringify(row).includes(f.root),false);
  writeFileSync(join(f.root,'.env'),'ignored private contents');assert.equal(list(f).items[0].code_version.comparison.status,'same_version');
- writeFileSync(join(f.root,'source.js'),'export const value = 2;\n');assert.equal(list(f).items[0].code_version.comparison.reason,'uncommitted_changes');
+ writeFileSync(join(f.root,'source.js'),'export const value = 2;\n');assert.equal(list(f).items[0].code_version.comparison.reason,'source_fingerprint_changed');
  commit(f.root);assert.equal(list(f).items[0].code_version.comparison.reason,'different_commit');
  const client=new Client({name:'currentness-fixture',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:[main,'serve','--db',realpathSync(f.path),'--project',f.root],stderr:'pipe'});
  transport.stderr.on('data',()=>{});await client.connect(transport);t.after(()=>client.close());
@@ -74,7 +74,7 @@ test('during-run changes, untracked files, unavailable Git and scoped explicit r
  assert.equal(sourceProvider([])(clean),undefined);assert.throws(()=>sourceProvider(['.']),/absolute/);
  const sub=join(f.root,'sub');mkdirSync(sub);assert.equal(observeSource(sub,f.binding).reason,'not_repository_root');
  assert.equal(observeSource('/nonexistent/skilly-fixture',f.binding).status,'unavailable');
- await execute(f,`require('fs').writeFileSync('source.js','changed while running')`);assert.equal(list(f).items[0].code_version.comparison.reason,'uncommitted_changes');
+ await execute(f,`require('fs').writeFileSync('source.js','changed while running')`);assert.equal(list(f).items[0].code_version.comparison.reason,'fingerprint_excluded_changes');
 });
 test('hidden index flags cannot become matching code and invalid scope never persists',async t=>{
  const f=await setupGit(t);for(const flag of ['assume-unchanged','skip-worktree']){
@@ -85,7 +85,7 @@ test('hidden index flags cannot become matching code and invalid scope never per
  assert.equal(list(f).items.length,0);
 });
 
-test('a dirty observation avoids an oversized index scan without claiming source equality',async t=>{
+test('an oversized index remains unavailable rather than claiming dirty source equality',async t=>{
  const f=await setupGit(t),bin=join(realpathSync(f.directory),'git-bin'),marker=join(bin,'index-read');mkdirSync(bin);
  const fake=`#!${process.execPath}
 const args=process.argv.slice(2);
@@ -95,6 +95,6 @@ else if(args.includes('status'))process.stdout.write(' M source.js\\0');
 else if(args.includes('ls-files')){require('fs').writeFileSync(${JSON.stringify(marker)},'read');process.stdout.write('H hidden-path\\0'.repeat(20000));}
 `;
  writeFileSync(join(bin,'git'),fake,{mode:0o700});const originalPath=process.env.PATH;
- try {process.env.PATH=bin+':'+originalPath;const observation=observeSource(f.root,f.binding);assert.equal(observation.status,'dirty');assert.equal(observation.commit,'a'.repeat(40));assert.equal(observation.reason,'working_tree_changed');assert.equal(existsSync(marker),false);assert.equal(compareExecutionSource(observation,observation,observation).status,'unknown');}
+ try {process.env.PATH=bin+':'+originalPath;const observation=observeSource(f.root,f.binding);assert.equal(observation.status,'unavailable');assert.equal(observation.commit,null);assert.equal(observation.reason,'git_unavailable');assert.equal(existsSync(marker),true);assert.equal(compareExecutionSource(observation,observation,observation).status,'unknown');}
  finally {if(originalPath===undefined)delete process.env.PATH;else process.env.PATH=originalPath;}
 });

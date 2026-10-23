@@ -49,8 +49,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 11) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 11) return;
+    if (version > 12) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 12) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -78,6 +78,7 @@ export class SqliteMemoryStore implements MemoryStore {
       if (lockedVersion < 9) this.db.exec(readFileSync(new URL("../../../../migrations/009-run-acknowledgements.sql", import.meta.url), "utf8"));
       if (lockedVersion < 10) this.db.exec(readFileSync(new URL("../../../../migrations/010-feature-discovery.sql", import.meta.url), "utf8"));
       if (lockedVersion < 11) this.db.exec(readFileSync(new URL("../../../../migrations/011-plans.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 12) this.db.exec(readFileSync(new URL("../../../../migrations/012-execution-worktrees.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

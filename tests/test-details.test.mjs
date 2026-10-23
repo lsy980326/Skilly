@@ -100,7 +100,7 @@ test('v6 read-only databases remain unchanged and migration preserves their exac
   assert.equal(db.prepare('PRAGMA user_version').get().user_version,6);validateDatabase(db);db.close();
   const before=readFileSync(path);const viewer=new SqliteViewer(path);assert.equal(viewer.executions(f.pid,f.rid).items[0].test_details.reason,'unfinished');viewer.close();assert.deepEqual(readFileSync(path),before);
   const migrated=openLocal(path);await migrated.close();const check=new DatabaseSync(path,{readOnly:true});t.after(()=>check.close());
-  assert.equal(check.prepare('PRAGMA user_version').get().user_version,11);assert.deepEqual(check.prepare('SELECT * FROM executions').all(),original);validateDatabase(check);
+  assert.equal(check.prepare('PRAGMA user_version').get().user_version,12);assert.deepEqual(check.prepare('SELECT * FROM executions').all(),original);validateDatabase(check);
 });
 
 test('detail insertion failure rolls back finalization without replaying the process',async t=>{

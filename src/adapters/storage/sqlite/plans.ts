@@ -1,10 +1,11 @@
+import { readExecutionSources } from "./execution-sources.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/memory/model.js";
 import { completionAllowed, criterionResultsSchema, markdownItems, planItemsSchema, planProgress,
   planVersionRowSchema,planUpdateRowSchema,planExecutionLinkRowSchema, type PlanScope, type SavePlan, type UpdatePlan, type PlanItem } from "../../../core/plans/model.js";
 import { assessFeatureKnowledge, type KnowledgeObservation } from "../../../core/work/knowledge.js";
-import { sourceObservationSchema, type SourceProvider, type SourceObservation } from "../../../core/execution/currentness.js";
+import { type SourceProvider, type SourceObservation } from "../../../core/execution/currentness.js";
 import { testDetailsSchema } from "../../../core/execution/test-details.js";
 import { componentSelection } from "../../../core/viewer/components.js";
 import { componentProjection, componentWhere } from "./component-links.js";
@@ -135,9 +136,7 @@ export class SqlitePlans {
     const rows=updateId?this.db.prepare(`SELECT e.*,r.repository,r.environment FROM plan_update_executions l JOIN executions e ON e.id=l.execution_id AND e.project_id=l.project_id
       JOIN runs r ON r.project_id=e.project_id AND r.id=e.run_id WHERE l.update_id=? ORDER BY e.started_at,e.id LIMIT 4`).all(updateId):[];
     const observations:KnowledgeObservation[]=rows.map(row=>{
-      const source=this.db.prepare("SELECT before_json,after_json FROM execution_sources WHERE project_id=? AND execution_id=?").get(row["project_id"]!,row["id"]!);
-      const before=source?sourceObservationSchema.parse(JSON.parse(String(source["before_json"]))):undefined;
-      const after=source?.["after_json"]?sourceObservationSchema.parse(JSON.parse(String(source["after_json"]))):undefined;
+      const {before,after}=readExecutionSources(this.db,String(row["project_id"]),String(row["id"]));
       if(before&&!current.has(before.root_hash))current.set(before.root_hash,this.sources?.(before));
       const detail=this.db.prepare("SELECT details_json FROM execution_test_details WHERE project_id=? AND execution_id=?").get(row["project_id"]!,row["id"]!);
       return {id:String(row["id"]),run_id:String(row["run_id"]),record_id:row["record_id"]===null?null:String(row["record_id"]),repository:String(row["repository"]),environment:String(row["environment"]),command_hash:String(row["command_hash"]),outcome:String(row["outcome"]),exit_code:row["exit_code"]===null?null:Number(row["exit_code"]),output_complete:Number(row["output_complete"]),

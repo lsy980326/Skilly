@@ -21,7 +21,7 @@ export function inspectMemory({ project, db: path, limit = 5, run, attention = f
     db.exec("PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; BEGIN;");
     const version = db.prepare("PRAGMA user_version").get().user_version;
     const application = db.prepare("PRAGMA application_id").get().application_id;
-    if (application !== 1397446988 || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(version)) throw new Error("Expected an existing Skilly schema version 1–11 database.");
+    if (application !== 1397446988 || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(version)) throw new Error("Expected an existing Skilly schema version 1–12 database.");
     const identity = db.prepare("SELECT id, name FROM projects WHERE project_key = ?").get(binding.key);
     if (identity && identity.name !== binding.name) throw new Error("Project key/name mismatch.");
     const scope = { key: binding.key, repository: binding.repository, environment: binding.environment };

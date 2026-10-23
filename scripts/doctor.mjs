@@ -55,7 +55,7 @@ export async function diagnoseLocal({ project, db, installation }) {
     try {
       reader = new DatabaseSync(db,{readOnly:true});reader.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=250;');
       const version=reader.prepare('PRAGMA user_version').get().user_version;
-      if(reader.prepare('PRAGMA application_id').get().application_id !== 1397446988 || ![1,2,3,4,5,6,7,8,9,10,11].includes(version)) throw new Error('Unsupported DB');
+      if(reader.prepare('PRAGMA application_id').get().application_id !== 1397446988 || ![1,2,3,4,5,6,7,8,9,10,11,12].includes(version)) throw new Error('Unsupported DB');
       const row=binding ? reader.prepare('SELECT id,name FROM projects WHERE project_key=?').get(binding.key) : undefined;
       if(row && row.name !== binding.name) throw new Error('Project mismatch');
       database={status:'readable',schema_version:version,project_registered:Boolean(row)};
