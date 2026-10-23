@@ -6,6 +6,8 @@ import { completionAllowed, criterionResultsSchema, markdownItems, planItemsSche
 import { assessFeatureKnowledge, type KnowledgeObservation } from "../../../core/work/knowledge.js";
 import { sourceObservationSchema, type SourceProvider, type SourceObservation } from "../../../core/execution/currentness.js";
 import { testDetailsSchema } from "../../../core/execution/test-details.js";
+import { componentSelection } from "../../../core/viewer/components.js";
+import { componentProjection, componentWhere } from "./component-links.js";
 
 type Row=Record<string,SQLOutputValue>;
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -145,8 +147,9 @@ export class SqlitePlans {
     return {linked:rows.length,status:verdict.status,reason:verdict.reason,counts:verdict.counts,
       observations:verdict.evidence.map(e=>({execution_id:e.execution_id,run_id:e.run_id,result:e.result,status:e.status,reason:e.reason,counts:e.counts})),claims_verified:false};
   }
-  query(scope:PlanScope,options:{plan_key?:string|undefined;version?:number|undefined;query?:string|undefined;offset?:number|undefined;limit?:number|undefined;remaining_only?:boolean|undefined;sort?:ListSort|undefined}={}):JsonObject {
+  query(scope:PlanScope,options:{plan_key?:string|undefined;version?:number|undefined;query?:string|undefined;offset?:number|undefined;limit?:number|undefined;remaining_only?:boolean|undefined;sort?:ListSort|undefined;component?:string|undefined}={}):JsonObject {
     this.project(scope.project_id);
+    const component=componentSelection(options.component);
     if(options.version!==undefined&&!options.plan_key)throw new MemoryError("invalid_input","A plan key is required for a version.");
     if(!Number.isSafeInteger(options.offset??0)||(options.offset??0)<0||(options.offset??0)>1000000||(options.query??"").length>200)throw new MemoryError("invalid_input","Invalid plan query.");
     if(!this.supported())return {items:[],next_offset:null,schema_supported:false,claims_verified:false};
@@ -164,6 +167,9 @@ export class SqlitePlans {
         source_path_verified:false,claims_verified:false,completion_meaning:"Reported completion of this version's declared conditions, not verified feature correctness."});
     }
     const term=options.query??"",offset=options.offset??0,limit=options.limit??12;
+    const relation="SELECT 1 FROM json_each(p.items_json) j WHERE json_extract(j.value,'$.component_key') IS NOT NULL";
+    const selected=componentWhere(component,relation,"json_extract(j.value,'$.component_key')");
+    filters.push(selected.sql);params.push(...selected.params);
     filters.push("p.version=(SELECT MAX(v.version) FROM plan_versions v WHERE v.project_id=p.project_id AND v.repository=p.repository AND v.environment=p.environment AND v.plan_key=p.plan_key)");
     filters.push("(instr(lower(p.title),lower(?))>0 OR instr(lower(p.plan_key),lower(?))>0 OR instr(lower(p.items_json),lower(?))>0)");params.push(term,term,term,limit+1,offset);
     const updateScope="u.project_id=p.project_id AND u.repository=p.repository AND u.environment=p.environment AND u.plan_key=p.plan_key AND u.version=p.version";
@@ -175,7 +181,10 @@ export class SqlitePlans {
     const order=listOrder(options.sort,{name:"p.title",date:`max(p.created_at,coalesce((SELECT max(u.created_at) FROM plan_item_updates u WHERE ${updateScope}),p.created_at))`,active,
       tie:"p.repository,p.environment,p.plan_key",fallback:`COALESCE((SELECT MAX(seq) FROM plan_item_updates u WHERE ${updateScope}),0) DESC,p.created_at DESC,p.repository,p.environment,p.plan_key`});
     const rows=this.db.prepare(`SELECT p.* FROM plan_versions p WHERE ${filters.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...params);
-    return json({items:rows.slice(0,limit).map(row=>({plan_key:row["plan_key"],version:row["version"],title:row["title"],repository:row["repository"],environment:row["environment"],source_kind:row["source_kind"],created_at:row["created_at"],progress:planProgress(planItemsSchema.parse(JSON.parse(String(row["items_json"]))).map(i=>this.item(row,i,false)))})),next_offset:rows.length>limit?offset+limit:null,schema_supported:true,claims_verified:false});
+    return json({items:rows.slice(0,limit).map(row=>({plan_key:row["plan_key"],version:row["version"],title:row["title"],repository:row["repository"],environment:row["environment"],source_kind:row["source_kind"],created_at:row["created_at"],
+      ...componentProjection(this.db.prepare(`SELECT DISTINCT c.key,c.name FROM json_each(?) j JOIN components c ON c.project_id=? AND c.key=json_extract(j.value,'$.component_key') ORDER BY c.key LIMIT 13`).all(row["items_json"]!,scope.project_id),"plan_items"),
+      components_partial:planItemsSchema.parse(JSON.parse(String(row["items_json"]))).some(i=>!i.component_key),
+      progress:planProgress(planItemsSchema.parse(JSON.parse(String(row["items_json"]))).map(i=>this.item(row,i,false)))})),next_offset:rows.length>limit?offset+limit:null,schema_supported:true,claims_verified:false});
   }
 }
 

@@ -1,16 +1,18 @@
+import { renderComponentTags } from "./component-scope.js";
 const labels = { matches: "파일 일치", modified: "내용 변경", missing: "파일 없음", unavailable: "확인 불가", not_checked: "미확인" };
 function node(tag, cls, text) { const n = document.createElement(tag); n.className = cls; if (text !== undefined) n.textContent = text; return n; }
 function stamp(state) { return node("span", `skill-state ${state || "not_checked"}`, labels[state] || labels.not_checked); }
 export function renderSkillList(container, items, selected, choose) {
   container.replaceChildren();
   if (!items.length) {
-    const box = node("div", "empty"); box.append(node("h2", "", "등록된 스킬이 없습니다"), node("p", "", "연결된 AI에 스킬 등록을 요청하세요. 설치 파일을 자동 수집하거나 덮어쓰지 않습니다.")); container.append(box);
+    const box = node("div", "empty"); box.append(node("h2", "", "이 범위에 표시할 스킬이 없습니다"), node("p", "", "구성요소 선택이나 설치 연결 정보를 확인하세요. 설치 파일을 자동 수집하거나 덮어쓰지 않습니다.")); container.append(box);
   }
   for (const skill of items) {
     const card = node("button", `task-card skill-card${selected === skill.skill_key ? " selected" : ""}`);
     card.setAttribute("aria-pressed", String(selected === skill.skill_key));
     const top = node("span", "card-top"); top.append(node("span", "skill-monogram", "S"), node("span", "eyebrow", `${skill.versions}개 보존 버전`));
     card.append(top, node("span", "task-goal", skill.name), node("span", "skill-source", skill.skill_key));
+    card.append(renderComponentTags(skill,node));
     if (!skill.installations.length) card.append(stamp("not_checked"));
     for (const i of skill.installations) {
       const row = node("span", "skill-assignment-line"); row.append(node("span", "", `${i.repository} · ${i.version}`), stamp(i.state)); card.append(row);

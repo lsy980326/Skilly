@@ -1,5 +1,6 @@
 import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
 import { createListSorting } from "./list-sorting.js";
+import { renderComponentTags } from "./component-scope.js";
 import { createSimpleDashboard } from "./simple-dashboard.js";
 import { renderSkillList, renderSkillDetail } from "./skills.js";
 import { renderWorkstream } from "./workstream.js";
@@ -183,14 +184,14 @@ async function loadCatalog(moreView, preserve = false) {
   const request = ++catalogRequest, project = state.project;
   const views = moreView ? [moreView] : ["components", "features"];
   const responses = await Promise.all([
-    ...views.map(view => api(`/api/overview?project=${project}&view=${view}&offset=${moreView ? (view === "components" ? state.nextComponents : state.nextFeatures) : 0}${view==="features"?`&sort=${listSorting.get("features")}`:""}`)),
+    ...views.map(view => api(`/api/overview?project=${project}&view=${view}&offset=${moreView ? (view === "components" ? state.nextComponents : state.nextFeatures) : 0}${view==="features"?`&sort=${listSorting.get("features")}${state.component?`&component=${encodeURIComponent(state.component)}`:""}`:""}`)),
     ...(!moreView ? [api(`/api/runs?project=${project}&state=active&offset=0`)] : []),
   ]);
   if (request !== catalogRequest || project !== state.project) return;
   views.forEach((view, index) => {
     const data = responses[index];
     const preserveView = preserve && (view === "components" ? componentsPaged : featuresPaged);
-    state.summary = data.summary;
+    if(view==="components")state.summary = data.summary;
     const refreshed=new Map(data.items.map(item=>[item.key,item]));
     state[view] = moreView ? [...new Map([...state[view], ...data.items].map(item => [item.key, item])).values()] : preserveView ? state[view].map(item=>refreshed.get(item.key)||item) : data.items;
     if (!preserveView || moreView) {
@@ -228,12 +229,13 @@ function renderCatalog() {
   for (const [id, items, value, label] of [["component", state.components, state.component, "구성요소"], ["feature", state.features, state.feature, "기능"]]) {
     const select = $(`#${id}-filter`); select.replaceChildren();
     const all = element("option", "", `전체 ${label}`); all.value = ""; select.append(all);
-    if (id === "component") { const option = element("option", "", "미분류 기록"); option.value = "unclassified"; select.append(option); }
+    if (id === "component") { const option = element("option", "", "연결 정보 없음"); option.value = "unclassified"; select.append(option); }
     for (const item of items) { const option = element("option", "", item.name); option.value = item.key; select.append(option); }
     if (value && (id !== "component" || value !== "unclassified") && !items.some(item => item.key === value)) {
       const option = element("option", "", state.selectedNames[id] || value); option.value = value; select.append(option);
     }
     select.value = value;
+    select.classList.toggle("is-filtered",Boolean(value));
   }
 }
 async function applyScope(field, value) {
@@ -243,7 +245,13 @@ async function applyScope(field, value) {
   listRequest++; detailRequest++;
   state.records = []; $("#detail").replaceChildren(empty("작업을 선택하세요", "선택한 구성요소와 기능의 작업을 확인하세요."));
   renderCatalog();
-  if (state.view !== "runs") await changeView("runs");
+  if(field==="component") {
+    const project=state.project,view=state.view,epoch=navigationEpoch;
+    featureKey=null;selectedFeature=null;lastFeature="";featuresPaged=false;featureSearchPage={items:[],next_offset:null};featureSearchRequest++;
+    await loadCatalog();
+    if(project!==state.project||view!==state.view||epoch!==navigationEpoch)return;
+    await changeView(view);
+  } else if (state.view !== "runs") await changeView("runs");
   else await loadList();
 }
 function renderFilters() {
@@ -256,6 +264,8 @@ function renderFilters() {
 async function loadList(more = false) {
   if (!state.project) return;
   renderListSort();
+  const bases={runs:"작업에 저장된 연결",features:"연결된 작업 기준 · 공유 기능은 여러 구성요소에 표시",plans:"현재 버전의 계획 항목 지정 기준 · 진행률은 계획 전체",skills:"허용된 설치 경로의 연결 설정 기준 · 실제 스킬 실행은 미확인",recovery:"보관된 요청 선언 또는 같은 범위의 연결 작업 기준"};
+  $("#component-scope-note").textContent=`${state.component?(state.component==="unclassified"?"연결 정보 없음":state.selectedNames.component||state.component):"전체 구성요소"} · ${bases[state.view]}`;
   const request = ++listRequest;
   const project = state.project, view = state.view;
   if (view === "features") {
@@ -264,7 +274,7 @@ async function loadList(more = false) {
     showFeature(featureKey || (featureSearchQuery ? null : state.features[0]?.key)); renderFeatures(); return;
   }
   if (view === "plans") {
-    const data = await api(`/api/plans?project=${project}&offset=${more?state.nextItems:0}&sort=${listSorting.get(view)}`);
+    const data = await api(`/api/plans?project=${project}&offset=${more?state.nextItems:0}&sort=${listSorting.get(view)}${state.component?`&component=${encodeURIComponent(state.component)}`:""}`);
     if(request!==listRequest||project!==state.project||state.view!=="plans")return;
     if(data.schema_supported===false){$("#tasks").replaceChildren(empty("계획을 읽을 수 없는 DB 버전입니다","새 Skilly 쓰기 연결에서 버전을 확인해 주세요. 이 화면은 기존 DB를 변경하지 않습니다."));$("#detail").replaceChildren(empty("이전 DB 원본을 유지합니다","계획 기능은 DB v11 이상에서 사용할 수 있습니다."));$("#more-tasks").hidden=true;$("#list-count").textContent="미지원";return;}
     state.items=more?[...new Map([...state.items,...data.items].map(p=>[planIdentity(p),p])).values()]:data.items;
@@ -277,6 +287,7 @@ async function loadList(more = false) {
     return;
   }
   const params = new URLSearchParams({ project, offset: String(more ? state.nextItems : 0),sort:listSorting.get(view) });
+  if(state.component)params.set("component",state.component);
   if (view === "runs") { params.set("state", state.filter); params.set("query", state.query); }
   if (view === "runs" && state.unreviewed) params.set("review", "unread");
   if (view === "runs") $("#list-label").textContent = state.unreviewed ? "미확인 완료 · 상태 필터를 누르면 전체 기록 조회" : "작업 현황";
@@ -364,6 +375,7 @@ async function openRun(id) {
 async function loadFeatureSearch(more=false) {
   const ticket=++featureSearchRequest,project=state.project,query=featureSearchQuery;
   const params=new URLSearchParams({project,view:"features",query,offset:String(more?featureSearchPage.next_offset:0),sort:listSorting.get("features")});
+  if(state.component)params.set("component",state.component);
   const data=await api(`/api/overview?${params}`);
   if(ticket!==featureSearchRequest||project!==state.project||query!==featureSearchQuery||state.view!=="features")return;
   featureSearchPage={items:more?[...new Map([...featureSearchPage.items,...data.items].map(x=>[x.key,x])).values()]:data.items,next_offset:data.next_offset};
@@ -392,8 +404,8 @@ function showFeature(key) {
   if (key !== featureKey) { navigationEpoch++; $(".detail-panel").scrollTop = 0; }
   featureKey = key; lastFeature = fingerprint;selectedFeature=feature;
   const featureTasks=()=>{
-    state.query="";state.component="";state.filter="all";state.unreviewed=false;
-    $("#search").value="";$("#component-filter").value="";renderFilters();
+    state.query="";state.filter="all";state.unreviewed=false;
+    $("#search").value="";renderFilters();
     return applyScope("feature",key);
   };
   $("#detail").replaceChildren(renderFeatureDetail(feature, { element, badge, date, labels: featureStates,
@@ -587,6 +599,7 @@ function renderRecovery(status) {
       element("p", "", request.state === "saved" ? "본 DB의 저장 영수증이 있습니다. 보관함 상태가 정리되지 않은 요청입니다." : ["conflict", "blocked"].includes(request.state) ? "자동 재시도하지 마세요. 연결된 AI가 충돌·거절 사유를 확인해야 합니다. 원래 입력이나 키를 바꾸어 우회하지 않습니다." : request.original_input_retained ? "원래 요청이 보관돼 있습니다. 연결된 AI가 영수증부터 확인하고 허용된 같은 요청으로 복구할 수 있습니다. 아직 저장 완료는 아닙니다." : "원래 요청은 보관돼 있지 않습니다. 자동 복구를 보장할 수 없습니다."),
       element("p", "card-time", `${date(request.received_at)} · ${request.environment}`));
     if (request.last_error) card.append(element("code", "", `오류: ${request.last_error}`));
+    card.append(renderComponentTags(request,element));
     card.append(element("code", "", `요청 ${request.request_id}`));
     if (request.run_id) {
       const button = element("button", "button", "관련 작업 보기");
@@ -698,7 +711,11 @@ async function changeView(view) {
       $("#detail").replaceChildren(empty("항목을 선택하세요", "선택한 항목의 상세 내용을 확인하세요.")); }
     listRequest++;
     $("#run-controls").hidden = view !== "runs";
+    $("#filters").hidden = view !== "runs";
+    $("#quick-components").hidden = view !== "runs";
+    $("#feature-scope").hidden = view !== "runs";
     $("#feature-search-controls").hidden = view !== "features";
+    $("#feature-search-note").hidden = view !== "features";
     if(view!=="features")featureSearchRequest++;
     $("#list-label").textContent = view === "runs" ? "작업 현황" : view === "features" ? "기능 목록" : view === "skills" ? "프로젝트 스킬" : view === "plans" ? "계획 · 체크리스트" : "복구 요청";
     for (const [id, target] of [["#show-runs", "runs"], ["#show-features", "features"], ["#show-recovery", "recovery"], ["#show-skills", "skills"], ["#show-plans", "plans"]]) {
@@ -710,7 +727,7 @@ async function changeView(view) {
 }
 function renderListSort() {
   $("#list-sort").value=listSorting.get(state.view);
-  $("#sort-active").textContent=["skills","recovery"].includes(state.view)?"최신순 (기본)":"진행중 우선 · 최신순";
+  $("#sort-active").textContent=["skills","recovery"].includes(state.view)?"최신순 (기본)":"진행중 · 최신순";
   const notes={runs:"작업 보고가 저장된 날짜 기준 · 진행중은 미완료 기록",features:"연결된 미완료 작업 우선 · 날짜는 연결 작업의 최근 저장일",plans:"진행 기록이 있는 미완료 계획 우선 · 날짜는 계획·항목의 최근 저장일",skills:"날짜는 최근 버전 등록일 · 진행중 상태 없이 최신순",recovery:"날짜는 요청 접수일 · 진행중 상태 없이 최신순"};
   $("#sort-note").textContent=notes[state.view];
 }

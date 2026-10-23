@@ -74,15 +74,16 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const simple = readFileSync(new URL("../ui/simple-dashboard.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const board = readFileSync(new URL("../ui/workstream.js", import.meta.url), "utf8").replace("export function", "function");
   const session = readFileSync(new URL("../ui/session.js", import.meta.url), "utf8").replace("export function", "function");
-  const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
-  const plans = readFileSync(new URL("../ui/plans.js", import.meta.url), "utf8").replaceAll("export ", "");
+  const skills = readFileSync(new URL("../ui/skills.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
+  const plans = readFileSync(new URL("../ui/plans.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export ", "");
+  const componentUI=readFileSync(new URL("../ui/component-scope.js",import.meta.url),"utf8").replaceAll("export ","");
   const sorting=readFileSync(new URL("../ui/list-sorting.js",import.meta.url),"utf8").replaceAll("export ","");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${componentUI}\n${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -153,11 +154,39 @@ test('all detailed tabs request their saved sort, preserve selection and keep it
  await sort('name');assert.ok(app.requests.some(p=>p.startsWith('/api/runs?')&&p.includes('sort=name')));assert.match(app.node('#detail').textContent,/시간 표시/);
  for(const [tab,path]of[['features','/api/overview?'],['skills','/api/skills?'],['plans','/api/plans?'],['recovery','/api/recovery?']]){
   app.node(`#show-${tab}`).listeners.click();await new Promise(setImmediate);assert.equal(app.node('#list-sort').value,'active');
+  assert.equal(app.node('#filters').hidden,true);assert.equal(app.node('#quick-components').hidden,true);
   if(['skills','recovery'].includes(tab))assert.equal(app.node('#sort-active').textContent,'최신순 (기본)');
   const before=app.requests.length;await sort('oldest');assert.ok(app.requests.slice(before).some(p=>p.startsWith(path)&&p.includes('sort=oldest')));
  }
  app.node('#show-runs').listeners.click();await new Promise(setImmediate);assert.equal(app.node('#list-sort').value,'name');
+ assert.equal(app.node('#filters').hidden,false);assert.equal(app.node('#quick-components').hidden,false);
  const restored=await viewer({storage});assert.equal(restored.node('#list-sort').value,'name');assert.ok(restored.requests.some(p=>p.startsWith('/api/runs?')&&p.includes('sort=name')));
+});
+
+test('component selection stays in each detailed tab and accompanies sorting, paging and alias search',async()=>{
+ const app=await viewer({manyFeatures:true,featureDetail:{components:[{key:'web',name:'Web <script>표시</script>'}],component_source:'linked_tasks'}});
+ for(const [view,path]of[['features','/api/overview?'],['plans','/api/plans?'],['skills','/api/skills?'],['recovery','/api/recovery?']]){
+  app.node(`#show-${view}`).listeners.click();await new Promise(setImmediate);
+  app.node('#component-filter').listeners.change({target:{value:'web'}});await new Promise(setImmediate);
+  assert.equal(app.node(`#show-${view}`).getAttribute('aria-pressed'),'true');
+  assert.equal(app.node('#feature-scope').hidden,true);assert.match(app.node('#component-scope-note').textContent,/Web/);
+  assert.ok(app.requests.some(p=>p.startsWith(path)&&p.includes('component=web')));
+  const count=app.requests.length;app.node('#list-sort').listeners.change({target:{value:'oldest'}});await new Promise(setImmediate);
+  assert.ok(app.requests.slice(count).some(p=>p.startsWith(path)&&p.includes('component=web')&&p.includes('sort=oldest')));
+ }
+ app.node('#show-features').listeners.click();await new Promise(setImmediate);await app.featureSearch('별칭');
+ assert.ok(app.requests.some(p=>p.startsWith('/api/overview?')&&p.includes('query=')&&p.includes('component=web')));
+ assert.match(app.node('#tasks').textContent,/Web <script>표시<\/script>/);assert.equal(app.node('#tasks').querySelectorAll('script').length,0);
+ app.node('#component-filter').listeners.change({target:{value:'unclassified'}});await new Promise(setImmediate);
+ assert.match(app.node('#component-scope-note').textContent,/연결 정보 없음/);
+ assert.ok(app.requests.some(p=>p.includes('component=unclassified')));
+});
+
+test('a delayed component change cannot replace a newly selected tab',async()=>{
+ const app=await viewer();app.node('#show-features').listeners.click();await new Promise(setImmediate);
+ app.holdNext();app.node('#component-filter').listeners.change({target:{value:'web'}});await new Promise(setImmediate);
+ app.node('#show-skills').listeners.click();await new Promise(setImmediate);app.releaseRequest();await new Promise(setImmediate);
+ assert.equal(app.node('#show-skills').getAttribute('aria-pressed'),'true');assert.match(app.node('#detail').textContent,/샘플 스킬/);
 });
 
 test('feature sorting resets pagination, preserves an open off-page detail and applies to alias search',async()=>{

@@ -16,6 +16,9 @@ import { SqliteWorkReader } from "./work.js";
 import { recordingCoverage, recordingDelivery } from "../../../core/memory/recording-health.js";
 import { SqliteTaskEvents } from "./task-events.js";
 import type { SourceProvider } from "../../../core/execution/currentness.js";
+import { componentSelection, type InstallationComponent } from "../../../core/viewer/components.js";
+import { recoveryRows } from "./recovery-components.js";
+import { componentProjection } from "./component-links.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -57,15 +60,16 @@ function page<T>(rows: T[], offset: number) {
 export class SqliteViewer {
   private readonly db: DatabaseSync;
   private readonly work: SqliteWorkReader;
-  constructor(private readonly path: string, private readonly now: () => number = Date.now, private readonly sources?: SourceProvider) {
+  constructor(private readonly path: string, private readonly now: () => number = Date.now, private readonly sources?: SourceProvider, private readonly installationBindings:InstallationComponent[] = []) {
     this.db = readOnly(path);
     try { this.version(); } catch (error) { this.db.close(); throw error; }
     this.work = new SqliteWorkReader(this.db, now, sources);
   }
   close(): void { this.db.close(); }
 
-  plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number;sort?:ListSort}={}) {
+  plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number;sort?:ListSort;component?:string}={}) {
     this.requireProject(projectId);
+    componentSelection(options.component);
     pageOffset(options.offset??0);
     if((options.query??"").length>200 || (options.plan_key!==undefined&&!planKey.safeParse(options.plan_key).success)
       || (options.version!==undefined&&(!Number.isSafeInteger(options.version)||options.version<1||options.version>100000))
@@ -160,16 +164,17 @@ export class SqliteViewer {
     };
   }
 
-  skills(projectId: string, options: { key?: string; version?: string; offset?: number; query?: string; sort?:ListSort } = {}) {
+  skills(projectId: string, options: { key?: string; version?: string; offset?: number; query?: string; sort?:ListSort;component?:string } = {}) {
     this.requireProject(projectId);
-    const reader = new SqliteSkills(this.db);
+    componentSelection(options.component);
+    const reader = new SqliteSkills(this.db,this.installationBindings);
     try {
       if (options.key) {
         if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(options.key) || (options.version?.length ?? 0) > 80) throw new ViewerError("invalid_input", "잘못된 스킬 조회 조건입니다.");
         return reader.detail(projectId, options.key, options.version, pageOffset(options.offset ?? 0));
       }
       if ((options.query?.length ?? 0) > 200) throw new ViewerError("invalid_input", "검색어가 너무 깁니다.");
-      return reader.list(projectId, pageOffset(options.offset ?? 0), 12, options.query ?? "",options.sort);
+      return reader.list(projectId, pageOffset(options.offset ?? 0), 12, options.query ?? "",options.sort,options.component);
     } catch (error) {
       if (error instanceof ViewerError) throw error;
       if (error instanceof Error && "code" in error && error.code === "not_found") throw new ViewerError("not_found", "해당 스킬 버전이 없습니다.");
@@ -272,10 +277,10 @@ export class SqliteViewer {
     return new SqliteExecutions(this.db, this.sources).list(projectId, runId, offset);
   }
 
-  recovery(projectId: string, offset = 0, sort?:ListSort) {
+  recovery(projectId: string, offset = 0, sort?:ListSort, component?:string) {
     this.requireProject(projectId);
     pageOffset(offset);
-    const order=listOrder(sort,{name:"coalesce(nullif(substr(json_extract(input_json,'$.goal'),1,200),''),tool)",date:"received_at",active:"0=1",tie:"id DESC",fallback:"received_at DESC,id DESC"});
+    componentSelection(component);listSort(sort);
     let journal: DatabaseSync | undefined;
     try {
       journal = readOnly(`${this.path}.recovery.sqlite`);
@@ -283,11 +288,7 @@ export class SqliteViewer {
         || journal.prepare("PRAGMA user_version").get()?.["user_version"] !== 1) {
         throw new ViewerError("unavailable", "지원하지 않는 복구 보관함입니다.");
       }
-      const rows = journal.prepare(`SELECT id, tool, repository, environment, request_key, payload_hash,
-        received_at, last_error, input_json IS NOT NULL AS retained,
-        json_extract(input_json, '$.run_id') AS run_id, substr(json_extract(input_json, '$.goal'), 1, 200) AS goal
-        FROM requests WHERE project_id = ? AND (input_json IS NOT NULL OR last_error IS NOT NULL)
-        ORDER BY ${order} LIMIT ? OFFSET ?`).all(projectId, PAGE_SIZE + 1, offset);
+      const rows = recoveryRows(journal,this.path,this.version(),projectId,offset,PAGE_SIZE,sort,component);
       const items = rows.map(row => {
         const receipt = this.db.prepare("SELECT payload_hash FROM receipts WHERE scope = ? AND idempotency_key = ?")
           .get(projectId, text(row, "request_key"));
@@ -301,6 +302,7 @@ export class SqliteViewer {
           repository: text(row, "repository"), environment: text(row, "environment"),
           received_at: text(row, "received_at"), last_error: error, state, original_input_retained: retained,
           delivery_status: recordingDelivery(saved, retained, state),
+          ...componentProjection(JSON.parse(text(row,"component_json")),text(row,"component_source")),
         };
       });
       return { status: "available", recording_coverage: recordingCoverage(), ...page(items, offset) };
@@ -310,5 +312,5 @@ export class SqliteViewer {
     } finally { journal?.close(); }
   }
 }
-import { listOrder } from "./list-sort.js";
+import { listSort } from "../../../core/viewer/sorting.js";
 import type { ListSort } from "../../../core/viewer/sorting.js";

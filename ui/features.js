@@ -1,4 +1,5 @@
 import { renderValidationEvidence } from "./reports.js";
+import { renderComponentTags } from "./component-scope.js";
 
 export function renderMatchReasons(item, element) {
   const box=element("span","match-reasons");
@@ -20,6 +21,7 @@ export function renderFeatureList(container, features, selected, { element, badg
       element("p", "feature-description", feature.description || "기능 설명 미수집"),
       element("p", "feature-preview", feature.latest_activity?.report?.summary || "최근 변경 요약 없음"));
     card.append(renderMatchReasons(feature,element));
+    card.append(renderComponentTags(feature,element));
     const knowledge = feature.current_knowledge;
     card.append(badge(knowledgeLabels[knowledge?.status] || "근거 미확인", knowledge?.status === "conflict" ? "warning" : "feature"));
     const next = feature.latest_activity?.report?.next_steps;

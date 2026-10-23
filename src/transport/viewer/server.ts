@@ -7,6 +7,8 @@ import { listSort } from "../../core/viewer/sorting.js";
 import { SqliteViewer } from "../../adapters/storage/sqlite/viewer.js";
 import { MemoryError } from "../../core/memory/model.js";
 import { documentBody, ViewerDocuments } from "./documents.js";
+import { installationComponents } from "../../adapters/project/installation-components.js";
+import { componentSelection } from "../../core/viewer/components.js";
 import { sourceProvider } from "../../adapters/project/source-version.js";
 
 const assets = new Map([
@@ -23,12 +25,14 @@ const assets = new Map([
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
   ["/plans.js", { file: "plans.js", type: "text/javascript; charset=utf-8" }],
   ["/list-sorting.js", { file: "list-sorting.js", type: "text/javascript; charset=utf-8" }],
+  ["/component-scope.js", { file: "component-scope.js", type: "text/javascript; charset=utf-8" }],
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
   ["/layout.js", { file: "layout.js", type: "text/javascript; charset=utf-8" }],
   ["/documents.js", { file: "documents.js", type: "text/javascript; charset=utf-8" }],
   ["/document-batch.js", { file: "document-batch.js", type: "text/javascript; charset=utf-8" }],
   ["/document-library.js", { file: "document-library.js", type: "text/javascript; charset=utf-8" }],
   ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
+  ["/list-toolbar.css", { file: "list-toolbar.css", type: "text/css; charset=utf-8" }],
   ["/task-recording.js", { file: "task-recording.js", type: "text/javascript; charset=utf-8" }],
 ]);
 function json(response: ServerResponse, status: number, value: unknown) {
@@ -53,7 +57,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
   }]));
   let contents = loadContents();
   const sources = sourceProvider(options.sourceProjects ?? []);
-  let reader = new SqliteViewer(options.db, Date.now, sources);
+  const bindings=installationComponents(options.sourceProjects??[]);
+  let reader = new SqliteViewer(options.db, Date.now, sources,bindings);
   const documents = new ViewerDocuments(options.db, token);
   let origin = "";
   const server = createServer(async (request, response) => {
@@ -101,9 +106,10 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
       const sort=listSort(url.searchParams.has("sort")?url.searchParams.get("sort"):undefined),sorting=sort?{sort}:{};
+      const component=componentSelection(url.searchParams.has("component")?url.searchParams.get("component"):undefined),selection=component?{component}:{};
       if(url.pathname === "/api/plans") {
         const version=url.searchParams.get("version");if(version!==null&&!/^[1-9]\d{0,5}$/.test(version))throw new ViewerError("invalid_input","계획 버전을 확인해 주세요.");
-        json(response,200,reader.plans(project,{...sorting,offset:offset(url),query:url.searchParams.get("query")??"",...(url.searchParams.has("plan")?{plan_key:url.searchParams.get("plan")!}:{}),...(url.searchParams.has("repository")?{repository:url.searchParams.get("repository")!}:{}),...(url.searchParams.has("environment")?{environment:url.searchParams.get("environment")!}:{}),...(version?{version:Number(version)}:{})}));return;
+        json(response,200,reader.plans(project,{...sorting,...selection,offset:offset(url),query:url.searchParams.get("query")??"",...(url.searchParams.has("plan")?{plan_key:url.searchParams.get("plan")!}:{}),...(url.searchParams.has("repository")?{repository:url.searchParams.get("repository")!}:{}),...(url.searchParams.has("environment")?{environment:url.searchParams.get("environment")!}:{}),...(version?{version:Number(version)}:{})}));return;
       }
       if(url.pathname === "/api/documents") { json(response,200,reader.importedDocuments(project,{offset:offset(url),query:url.searchParams.get("query")??""}));return; }
       if(url.pathname === "/api/document") {
@@ -112,7 +118,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       if (url.pathname === "/api/documents/targets") { json(response, 200, reader.documentTargets(project)); return; }
       if (url.pathname === "/api/skills") {
-        json(response, 200, reader.skills(project, { ...sorting,offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
+        json(response, 200, reader.skills(project, { ...sorting,...selection,offset: offset(url), query: url.searchParams.get("query") ?? "" })); return;
       }
       if (url.pathname === "/api/skill") {
         const key = url.searchParams.get("skill");
@@ -131,7 +137,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
           ...(url.searchParams.has("component") ? { component: url.searchParams.get("component")! } : {}),
           ...(url.searchParams.has("feature") ? { feature: url.searchParams.get("feature")! } : {}) })); return;
       }
-      if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url),sort)); return; }
+      if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url),sort,component)); return; }
       const detail = /^\/api\/runs\/([^/]+)$/.exec(url.pathname);
       const executions = /^\/api\/runs\/([^/]+)\/executions$/.exec(url.pathname);
       if (executions?.[1]) { json(response, 200, reader.executions(project, executions[1], offset(url))); return; }
@@ -180,7 +186,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (closing) throw new Error("종료 중인 화면은 다시 열 수 없습니다.");
       // Stage both resources first so a failed reload leaves the authorized server usable.
       const nextContents = loadContents();
-      const nextReader = new SqliteViewer(options.db, Date.now, sources);
+      const nextReader = new SqliteViewer(options.db, Date.now, sources,bindings);
       try { nextReader.projects(0); } catch (error) { nextReader.close(); throw error; }
       const previous = reader;
       reader = nextReader; contents = nextContents;

@@ -1,6 +1,7 @@
 import { featureKnowledge } from "./feature-knowledge.js";
 import { listOrder } from "./list-sort.js";
 import type { ListSort } from "../../../core/viewer/sorting.js";
+import { componentProjection } from "./component-links.js";
 import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { unreviewedRunSql, SqliteRunReviews } from "./run-reviews.js";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
@@ -174,7 +175,10 @@ export class SqliteWorkReader implements WorkReader {
             : input.component ? "AND EXISTS (SELECT 1 FROM run_components rc WHERE rc.project_id=r.project_id AND rc.run_id=r.run_id AND rc.component_key=?)" : ""}
           ORDER BY r.observed_at DESC, r.seq DESC LIMIT 1`).get(pid, text(row, "key"),
             ...(input.repository ? [input.repository] : []), ...(input.environment ? [input.environment] : []), ...(input.feature ? [input.feature] : []), ...(input.component && input.component !== "unclassified" ? [input.component] : []));
-        item = json({ ...row, discovery: discovery.metadata(pid,text(row,"key"),input), match_reasons: discovery.reasons({key:text(row,"key"),name:text(row,"name"),description:text(row,"description")},input), latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
+        const components=this.db.prepare(`SELECT DISTINCT c.key,c.name FROM components c JOIN run_components rc ON rc.project_id=c.project_id AND rc.component_key=c.key
+          JOIN runs r ON r.project_id=rc.project_id AND r.id=rc.run_id JOIN run_features rf ON rf.project_id=r.project_id AND rf.run_id=r.id
+          WHERE rf.feature_key=? AND ${where} ORDER BY c.key LIMIT 13`).all(text(row,"key"),...params);
+        item = json({ ...row, ...componentProjection(components,"linked_tasks"), discovery: discovery.metadata(pid,text(row,"key"),input), match_reasons: discovery.reasons({key:text(row,"key"),name:text(row,"name"),description:text(row,"description")},input), latest_report: latest ? { ...latest, update: parseJsonObject(text(latest, "update_json")), update_json: undefined, verified: false } : null,
           latest_activity: featureActivity(this.db, input, text(row, "key")), execution_evidence: featureExecutions(this.db, input, text(row, "key")), current_knowledge: featureKnowledge(this.db, input, text(row, "key"), knowledgeSources) });
       } else item = json(row);
       items.push(item);

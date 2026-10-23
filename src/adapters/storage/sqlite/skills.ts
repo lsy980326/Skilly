@@ -2,9 +2,22 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { MemoryError, parseJsonObject, type JsonObject } from "../../../core/memory/model.js";
 import { registerSkillSchema, skillContentHash, observationFilesSchema, type Installation, type SkillChange, type SkillRepository, type SkillVersion } from "../../../core/skills/model.js";
+import { componentSelection, type InstallationComponent } from "../../../core/viewer/components.js";
+import { componentProjection, componentWhere } from "./component-links.js";
+
+const installationMatch="json_extract(b.value,'$.root')=i.project_root AND json_extract(b.value,'$.repository')=i.repository AND json_extract(b.value,'$.environment')=i.environment";
 
 export class SqliteSkills implements SkillRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync, private readonly bindings: InstallationComponent[] = []) {}
+  private componentBindings(projectId:string) {
+    const key=this.db.prepare("SELECT project_key FROM projects WHERE id=?").get(projectId)?.["project_key"];
+    return JSON.stringify(this.bindings.filter(b=>b.project_key===key));
+  }
+  private components(projectId:string,key:string) {
+    return componentProjection(this.db.prepare(`SELECT DISTINCT json_extract(b.value,'$.key') AS key,json_extract(b.value,'$.name') AS name
+      FROM skill_installations i JOIN json_each(?) b ON ${installationMatch} WHERE i.project_id=? AND i.skill_key=? ORDER BY key LIMIT 13`)
+      .all(this.componentBindings(projectId),projectId,key),"installation_binding");
+  }
   private project(id: string): void { if (!this.db.prepare("SELECT id FROM projects WHERE id=?").get(id)) throw new MemoryError("not_found", "Project not found."); }
   private supported(): boolean { return Number(this.db.prepare("PRAGMA user_version").get()?.["user_version"]) >= 5; }
   version(projectId: string, key: string, version: string): SkillVersion | undefined {
@@ -69,24 +82,28 @@ export class SqliteSkills implements SkillRepository {
       this.db.exec("COMMIT"); return result;
     } catch (error) { if (this.db.isTransaction) this.db.exec("ROLLBACK"); throw error; }
   }
-  list(projectId: string, offset: number, limit: number, query: string, sort?: ListSort): JsonObject {
+  list(projectId: string, offset: number, limit: number, query: string, sort?: ListSort, component?:string): JsonObject {
     this.project(projectId);
+    componentSelection(component);
     if (!this.supported()) return { items: [], next_offset: null, schema_supported: false };
+    const relation=`SELECT 1 FROM skill_installations i JOIN json_each(?) b ON ${installationMatch} WHERE i.project_id=v.project_id AND i.skill_key=v.skill_key`;
+    const selected=componentWhere(component,relation,"json_extract(b.value,'$.key')");
     const order=listOrder(sort,{name:"name",date:"registered_at",active:"0=1",tie:"skill_key",fallback:"skill_key"});
     const rows = this.db.prepare(`SELECT skill_key,name,source,count(*) AS versions,max(created_at) AS registered_at
-      FROM skill_versions WHERE project_id=? AND (instr(lower(name),lower(?))>0 OR instr(lower(skill_key),lower(?))>0)
-      GROUP BY skill_key ORDER BY ${order} LIMIT ? OFFSET ?`).all(projectId, query, query, limit + 1, offset);
-    return { items: rows.slice(0, limit).map(row => ({ ...row,
-      installations: this.installations(projectId, String(row["skill_key"])).slice(0, 3).map(i => ({ id: i["id"]!, version: i["version"]!, repository: i["repository"]!, tool: i["tool"]!, folder: i["folder"]!, state: i["state"]!, observed_at: i["observed_at"] ?? null })),
+      FROM skill_versions v WHERE project_id=? AND (instr(lower(name),lower(?))>0 OR instr(lower(skill_key),lower(?))>0) AND ${selected.sql}
+      GROUP BY skill_key ORDER BY ${order} LIMIT ? OFFSET ?`).all(projectId, query, query,...(component?[this.componentBindings(projectId),...selected.params]:[]), limit + 1, offset);
+    return { items: rows.slice(0, limit).map(row => ({ ...row, ...this.components(projectId,String(row["skill_key"])),
+      installations: this.installations(projectId, String(row["skill_key"]),0,3,component).slice(0, 3).map(i => ({ id: i["id"]!, version: i["version"]!, repository: i["repository"]!, tool: i["tool"]!, folder: i["folder"]!, state: i["state"]!, observed_at: i["observed_at"] ?? null })),
       installations_total: this.db.prepare("SELECT count(*) AS n FROM skill_installations WHERE project_id=? AND skill_key=?").get(projectId, row["skill_key"]!)?.["n"] ?? 0,
     })) as JsonObject[], next_offset: rows.length > limit ? offset + limit : null, schema_supported: true, loading_status: "unknown" };
   }
-  private installations(projectId: string, key: string, offset = 0, limit = 3): JsonObject[] {
+  private installations(projectId: string, key: string, offset = 0, limit = 3, component?:string): JsonObject[] {
+    const selected=componentWhere(component,`SELECT 1 FROM json_each(?) b WHERE ${installationMatch}`,"json_extract(b.value,'$.key')");
     return this.db.prepare(`SELECT i.*,o.id AS observation_id,o.observed_at,o.state,o.version AS observed_version,o.expected_hash
       FROM skill_installations i LEFT JOIN skill_observations o ON o.id=(SELECT id FROM skill_observations
         WHERE project_id=i.project_id AND installation_id=i.id ORDER BY observed_at DESC,seq DESC LIMIT 1)
-      WHERE i.project_id=? AND i.skill_key=? ORDER BY i.repository,i.tool,i.folder,i.id LIMIT ? OFFSET ?`)
-      .all(projectId, key, limit, offset).map(row => ({ ...row, state: row["observed_version"] === row["version"] ? row["state"] : "not_checked",
+      WHERE i.project_id=? AND i.skill_key=? AND ${selected.sql} ORDER BY i.repository,i.tool,i.folder,i.id LIMIT ? OFFSET ?`)
+      .all(projectId, key,...(component?[this.componentBindings(projectId),...selected.params]:[]), limit, offset).map(row => ({ ...row, state: row["observed_version"] === row["version"] ? row["state"] : "not_checked",
         evidence: "last_saved_file_observation", loading_status: "unknown", current_machine_verified: false })) as JsonObject[];
   }
   detail(projectId: string, key: string, version?: string, installationOffset = 0): JsonObject {

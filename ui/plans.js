@@ -1,3 +1,4 @@
+import { renderComponentTags } from "./component-scope.js";
 const states={pending:"시작 전",in_progress:"진행중",blocked:"막힘",completed:"완료 보고",needs_review:"다시 확인"};
 const knowledge={current:"현재 코드의 검사 근거",stale:"코드가 바뀐 검사",conflict:"검사 결과 충돌",unknown:"현재 코드 비교 불가"};
 const taskStates={active:"미완료 기록",completed:"작업 종료 기록 있음",interrupted:"중단 보고"};
@@ -11,13 +12,13 @@ function progressView(progress,element) {
 }
 export function renderPlanList(container,items,selected,{element,onSelect}) {
   container.replaceChildren();
-  if(!items.length){container.append(element("div","empty","아직 등록한 계획이 없습니다."),element("p","catalog-note","AI에게 ‘이 MD나 대화 계획을 Skilly 계획으로 등록하고 이어서 작업해줘’라고 요청하세요. 원본 MD는 그대로 보존합니다."));return;}
+  if(!items.length){container.append(element("div","empty","이 범위에 표시할 계획이 없습니다."),element("p","catalog-note","구성요소 선택을 바꾸거나 AI에게 계획 등록을 요청하세요. 원본 MD는 그대로 보존합니다."));return;}
   for(const item of items) {
     const button=element("button",`task-card plan-card${planIdentity(item)===selected?" selected":""}`);
     button.setAttribute("aria-pressed",String(planIdentity(item)===selected));
     button.append(element("span","eyebrow",`PLAN · v${item.version}`),element("strong","task-goal",item.title),progressView(item.progress,element),
       element("span","plan-remaining",`남은 ${item.progress.remaining}개${item.progress.blocked?` · 막힘 ${item.progress.blocked}개`:""}`),element("small","catalog-note",`${item.repository} · ${item.environment}`));
-    button.addEventListener("click",()=>onSelect(item));container.append(button);
+    button.append(renderComponentTags(item,element));button.addEventListener("click",()=>onSelect(item));container.append(button);
   }
 }
 export function renderPlanDetail(data,{element,onVersion,onTask,remainingOnly=false,onRemaining=()=>{}}) {
