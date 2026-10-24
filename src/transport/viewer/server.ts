@@ -12,6 +12,8 @@ import { componentSelection } from "../../core/viewer/components.js";
 import { sourceProvider } from "../../adapters/project/source-version.js";
 
 const assets = new Map([
+  ["/current-knowledge.js", {file:"current-knowledge.js",type:"text/javascript; charset=utf-8"}],
+  ["/current-knowledge.css", {file:"current-knowledge.css",type:"text/css; charset=utf-8"}],
   ["/factory-geometry.js", { file: "factory-geometry.js", type: "text/javascript; charset=utf-8" }],
   ["/factory-motion.js", { file: "factory-motion.js", type: "text/javascript; charset=utf-8" }],
   ["/factory-scene.js", { file: "factory-scene.js", type: "text/javascript; charset=utf-8" }],
@@ -103,12 +105,22 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan", "sort", "subject", "history_offset"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan", "sort", "subject", "history_offset", "decisions_offset", "plans_offset", "features_offset", "limit"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if (url.pathname === "/api/current-knowledge") {
+        const options: Record<string, unknown> = {};
+        for (const field of ["repository", "environment", "component"]) if (url.searchParams.has(field)) options[field] = url.searchParams.get(field);
+        for (const field of ["decisions_offset", "plans_offset", "features_offset", "limit"]) if (url.searchParams.has(field)) {
+          const raw = url.searchParams.get(field)!;
+          if (!/^\d{1,7}$/.test(raw)) throw new ViewerError("invalid_input", "조회 위치를 확인해 주세요.");
+          options[field] = Number(raw);
+        }
+        json(response, 200, reader.currentKnowledge(project, options)); return;
+      }
       if(url.pathname === "/api/decisions") {
         const filters=Object.fromEntries(["subject","repository","environment","component","feature"].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)!]));
         const history=url.searchParams.get("history_offset")??"0";if(!/^\d{1,3}$/.test(history))throw new ViewerError("invalid_input","이력 위치를 확인해 주세요.");

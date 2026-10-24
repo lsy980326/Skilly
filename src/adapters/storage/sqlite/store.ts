@@ -1,3 +1,4 @@
+import { SqliteCurrentKnowledge } from "./current-knowledge.js";
 import { SqliteTaskSkills } from "./task-skills.js";
 import { SqlitePlans } from "./plans.js";
 import { SqliteDecisions } from "./decisions.js";
@@ -24,6 +25,7 @@ type Row = Record<string, SQLOutputValue>;
 export class SqliteMemoryStore implements MemoryStore {
   private readonly db: DatabaseSync;
   readonly work: SqliteWorkReader;
+  readonly currentKnowledge: SqliteCurrentKnowledge;
   readonly reviews: SqliteRunReviews;
   readonly skills: SqliteSkills;
   readonly executions: SqliteExecutions;
@@ -38,6 +40,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.migrate();
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.work = new SqliteWorkReader(this.db, Date.now, sources);
+      this.currentKnowledge = new SqliteCurrentKnowledge(this.db, sources);
       this.reviews = new SqliteRunReviews(this.db);
       this.skills = new SqliteSkills(this.db, bindings);
       this.executions = new SqliteExecutions(this.db, sources);

@@ -1,3 +1,5 @@
+import { SqliteCurrentKnowledge } from "./current-knowledge.js";
+import { currentKnowledgeQuery } from "../../../core/work/current-knowledge.js";
 import { planKey } from "../../../core/plans/model.js";
 import { SqliteTaskSkills } from "./task-skills.js";
 import { SqliteDecisions } from "./decisions.js";
@@ -71,6 +73,13 @@ export class SqliteViewer {
     this.work = new SqliteWorkReader(this.db, now, sources);
   }
   close(): void { this.db.close(); }
+
+  currentKnowledge(projectId: string, options: Record<string, unknown> = {}) {
+    this.requireProject(projectId);
+    const parsed = currentKnowledgeQuery.safeParse({ ...options, project_id: projectId });
+    if (!parsed.success) throw new ViewerError("invalid_input", "현재 지식 조회 범위를 확인해 주세요.");
+    return new SqliteCurrentKnowledge(this.db, this.sources, this.now).query(parsed.data);
+  }
 
   decisions(projectId:string, input:Omit<DecisionQuery,"project_id">) {
     this.requireProject(projectId); pageOffset(input.offset);

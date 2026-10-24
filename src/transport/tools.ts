@@ -1,3 +1,4 @@
+import { currentKnowledgeQuery, type CurrentKnowledgeReader } from "../core/work/current-knowledge.js";
 import type { SqlitePlans } from "../adapters/storage/sqlite/plans.js";
 import { skillUsagesSchema } from "../core/skills/usage.js";
 import { decisionSchema } from "../core/decisions/model.js";
@@ -25,7 +26,7 @@ const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
 export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
-  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans): Record<string, ToolDefinition> {
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans, knowledge?: CurrentKnowledgeReader): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -135,6 +136,12 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.listExecutions(input.project_id, input.run_id, input.offset),
     ),
   };
+  if (knowledge) {
+    tools["memory_query_current_knowledge"] = define(
+      "Read a single bounded DB snapshot of explicitly applicable decisions, latest plan progress/remaining conditions, and direct check compatibility. Independent section offsets paginate decisions/plans/features. Default scope stays bound. Plan progress is AI-reported, current checks mean code compatibility only; current failed checks are not success. No overall verified verdict, no inference of unlinked work, no writes or command execution. Use original record/run/execution IDs and exact plan scope for details. Preserve truncation and schema_supported flags.", true,
+      currentKnowledgeQuery.extend({ repository: scope.default(bound?.binding.repository ?? "default"), environment: scope.default(bound?.binding.environment ?? "development") }),
+      async input => knowledge.query(input));
+  }
   if (plans) {
     const planScope = { ...projectId, repository:scope.default(bound?.binding.repository ?? "default"), environment:scope.default(bound?.binding.environment ?? "development") };
     tools["memory_save_plan"] = define("Store a selected Markdown or conversation plan as an immutable version, with explicit items and completion conditions. The host supplies original text; never read a stored path or scan folders. Markdown checkmarks remain historical declarations, not completion. A new version resets progress. Requires this active task and expected_version (0 for first). Original MD is unchanged. Writes are not recovery-queued.",false,
@@ -238,8 +245,8 @@ export class ToolDispatcher {
   private closed = false;
 
   constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans,
-    private readonly authority?: { status(id:string):JsonObject; assert(id:string):void }) {
-    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans);
+    private readonly authority?: { status(id:string):JsonObject; assert(id:string):void }, knowledge?: CurrentKnowledgeReader) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans, knowledge);
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {

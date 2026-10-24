@@ -1,3 +1,4 @@
+import { createCurrentKnowledge } from "./current-knowledge.js";
 import { renderTaskSkills, mergeTaskSkillRefresh } from "./task-skills.js";
 import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
 import { createListSorting } from "./list-sorting.js";
@@ -802,6 +803,14 @@ document.addEventListener("visibilitychange", () => {
   $("#simple-dashboard").classList.toggle("motion-paused", factoryPaused || document.hidden);
   if (!document.hidden) { refreshRelativeTimes(); void refresh(true); }
   schedule();
+});
+let currentKnowledge;
+$("#browse-knowledge").addEventListener("click",()=>{
+  currentKnowledge ??= createCurrentKnowledge({document,request:api,
+    onTask:async id=>{try{setSimpleMode(false);await changeView("runs");await openRun(id);}catch(error){showError(error);}},
+    onPlan:async plan=>{try{setSimpleMode(false);await changeView("plans");await openPlan(plan,plan.version);}catch(error){showError(error);}},
+  });
+  void currentKnowledge.open(state.projects.find(p=>p.id===state.project),{components:state.components,component:state.component}).catch(showError);
 });
 let documentImport;
 let decisionLibrary;

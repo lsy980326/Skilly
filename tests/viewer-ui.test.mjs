@@ -74,6 +74,7 @@ class Element {
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelectorAll(selector) {
     const matches = node => selector.startsWith(".") ? node.className.split(" ").includes(selector.slice(1))
+      : selector.startsWith("[name=") ? node.name === selector.slice(6,-1)
       : selector === "details[open]" ? node.tagName === "DETAILS" && node.open
       : selector === "[data-relative-time]" ? node.dataset.relativeTime !== undefined
       : node.tagName === selector.toUpperCase();
@@ -82,6 +83,29 @@ class Element {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 }
+
+test("current knowledge shows separate reports and evidence, clears failed scope changes and ignores late responses", async () => {
+  const { createCurrentKnowledge } = await import('../ui/current-knowledge.js');
+  const body=new Element('body'),doc={body,hidden:false,createElement:tag=>{
+    const n=new Element(tag);n.showModal=()=>{n.open=true;};n.close=()=>{n.open=false;n.listeners.close?.();};return n;
+  }};
+  const page=label=>({project_revision:1,observed_at:'2026-10-24T00:00:00Z',available_scopes:[{repository:'web',environment:'test'}],scopes_truncated:false,
+    decisions:{items:[{title:label,subject:'choice',status:'current',active_choices:[{summary:'<img src=x> 사용자 선택',record_id:'original'}]}],next_offset:null},
+    plans:{items:[{title:'알림 계획',repository:'web',environment:'test',plan_key:'alerts',version:2,progress:{percent:50,completed_reported:1,required:2},selected_progress:{remaining:1},remaining_items:[{key:'screen',title:'화면',state:'in_progress',criteria:[{text:'화면 표시',reported_met:false}],run_id:'saved-run'}],remaining_total:1}],next_offset:null},
+    checks:{items:[{key:'alerts',name:'알림',agent_report:{verified:false},current_knowledge:{status:'current',counts:{current:1,passed:0,failed:1,stale:0,unknown:0},evidence:[{execution_id:'exec',run_id:'run',result:'failed',status:'current',counts:{tests:2,passed:1,failed:1}}]}}],next_offset:null}});
+  let finishOld,fail=false;const requests=[];
+  const ui=createCurrentKnowledge({document:doc,request:async path=>{
+    requests.push(path);if(path.includes('component=web'))return new Promise(resolve=>{finishOld=resolve;});if(fail)throw new Error('offline');return page('원래 범위');
+  },onTask:async()=>{},onPlan:async()=>{}});
+  const old=ui.open({id:'project',name:'Test'},{components:[{key:'web',name:'Web'}],component:'web'});
+  await ui.open({id:'project',name:'Test'},{components:[{key:'mobile',name:'Mobile'}]});finishOld(page('늦은 이전 결과'));await old;
+  assert.match(body.textContent,/원래 범위/);assert.doesNotMatch(body.textContent,/늦은 이전 결과/);
+  assert.match(body.textContent,/50%/);assert.match(body.textContent,/완료 보고/);assert.match(body.textContent,/미충족 보고/);assert.match(body.textContent,/통과 0 \/ 실패 1/);
+  assert.match(body.textContent,/<img src=x>/);assert.equal(body.querySelectorAll('img').length,0);
+  fail=true;const select=body.querySelector('[name=component]');select.value='mobile';select.listeners.change();await new Promise(setImmediate);
+  assert.doesNotMatch(body.textContent,/원래 범위/);assert.match(body.textContent,/조회 실패/);assert.equal(body.querySelectorAll('.knowledge-card').length,0);
+  body.querySelector('dialog').close();
+});
 
 test("current events and imported interruption history remain separate in the recording panel", async () => {
   const { renderTaskRecording } = await import('../ui/task-recording.js');

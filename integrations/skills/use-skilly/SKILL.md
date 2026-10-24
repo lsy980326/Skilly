@@ -160,6 +160,21 @@ Do not run another AI or reconstruct a second independent source of truth.
 For component-filtered plans, skills and recovery, read
 [component catalogs](references/component-catalogs.md) before querying.
 
+### Combined current context
+
+When the task needs decisions, plan progress and current checks together, prefer
+`memory_query_current_knowledge` if exposed. Keep the resolved project and bound
+repository/environment. Read the independent section offsets and truncation flags;
+a partial page is not a complete project conclusion. `available_scopes` lists
+project candidates, not permission to broaden this connection.
+
+Decision applicability, AI-reported plan completion and comparable direct checks
+are separate. Current failed checks are not success. Never promote agent reports
+or a latest timestamp to verified knowledge. Follow remaining item conditions and
+exact plan version, and use returned record/run/execution IDs for originals.
+Missing links remain unknown. Older connections keep the separate queries below;
+this capability does not require changing settings or trust.
+
 ### Feature evidence currentness
 
 For user choices, corrections, withdrawals or conflicting decisions, read
