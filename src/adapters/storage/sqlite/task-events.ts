@@ -5,6 +5,7 @@ import { MemoryError, type JsonObject, parseJsonObject } from "../../../core/mem
 import type { TaskEvents } from "../../../core/memory/task-events.js";
 import { openLifecycleStore } from "./lifecycle.js";
 import { taskLinkSchema, lastSavedReceipt } from "./task-event-storage.js";
+import { hasEventImports, nativeOnly } from "./event-imports.js";
 
 type Row = Record<string, SQLOutputValue>;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -32,11 +33,11 @@ export class SqliteTaskEvents implements TaskEvents {
     try {
       events.exec("BEGIN IMMEDIATE");
       try {
-        const anchor = events.prepare(`SELECT * FROM events WHERE id=? AND project_key=? AND repository=? AND environment=? AND root_hash=?`)
+        const anchor = events.prepare(`SELECT * FROM events WHERE id=? AND project_key=? AND repository=? AND environment=? AND root_hash=? ${nativeOnly(events, "event", "events.id")}`)
           .get(observationId, text(run, "project_key"), text(run, "repository"), text(run, "environment"), rootHash);
         if (!anchor) throw new MemoryError("scope_mismatch", "Observation is absent or belongs to another project root or scope.");
         events.exec(taskLinkSchema);
-        const prior = events.prepare(`SELECT * FROM task_links WHERE project_key=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 1`)
+        const prior = events.prepare(`SELECT * FROM task_links WHERE project_key=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ${nativeOnly(events, "link", "task_links.id")} ORDER BY seq DESC LIMIT 1`)
           .get(text(run, "project_key"), text(run, "repository"), text(run, "environment"), rootHash, text(anchor, "session_hash"));
         if (prior && prior["project_id"] === projectId && prior["run_id"] === runId) {
           events.exec("COMMIT"); return this.linkReceipt(prior);
@@ -50,7 +51,7 @@ export class SqliteTaskEvents implements TaskEvents {
         // Only a session/turn boundary invalidates the supplied anchor; turn_hash
         // is opaque host metadata and may also change between ordinary tool calls.
         const boundary = events.prepare(`SELECT 1 FROM events WHERE session_hash=? AND root_hash=? AND project_key=? AND repository=? AND environment=?
-          AND seq>? AND event NOT IN ('PostToolUse','PreCompact') LIMIT 1`)
+          AND seq>? AND event NOT IN ('PostToolUse','PreCompact') ${nativeOnly(events, "event", "events.id")} LIMIT 1`)
           .get(text(anchor, "session_hash"), rootHash, text(run, "project_key"), text(run, "repository"), text(run, "environment"), anchor["seq"]!);
         if (boundary || !["SessionStart", "PostToolUse", "PreCompact"].includes(text(anchor, "event"))) {
           throw new MemoryError("stale_anchor", "Use an explicit observation from the current open session segment, after any interruption, stop or session restart.");
@@ -96,25 +97,38 @@ export class SqliteTaskEvents implements TaskEvents {
     try {
       events = openLifecycleStore(`${this.path}.events.sqlite`);
       if (!events.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_links'").get()) return { ...base, linkage: "not_linked", events: [] };
+      const scopeArgs = [projectId, runId, text(run, "project_key"), text(run, "repository"), text(run, "environment")];
+      const scopeWhere = "l.project_id=? AND l.run_id=? AND l.project_key=? AND l.repository=? AND l.environment=?";
+      const importedWhere = scopeWhere + " AND EXISTS(SELECT 1 FROM event_imports origin WHERE origin.kind='link' AND origin.id=l.id)";
+      const imported = hasEventImports(events) && events.prepare(`SELECT 1 FROM task_links l WHERE ${importedWhere} LIMIT 1`).get(...scopeArgs)
+        ? { imported_history: { ...this.projection(events, importedWhere, scopeArgs), linkage: "historical_import", provenance: "project_import_history",
+          current_session_binding: false, root_scope: "original_roots_and_sessions", claims_verified: false, live_execution: "unknown", automatic_replay: false } } : {};
       const args = [projectId, runId, text(run, "project_key"), text(run, "repository"), text(run, "environment"),
         ...(this.root ? [hash(realpathSync(this.root))] : [])];
-      const where = `l.project_id=? AND l.run_id=? AND l.project_key=? AND l.repository=? AND l.environment=? ${this.root ? "AND l.root_hash=?" : ""}`;
+      const where = scopeWhere + (this.root ? " AND l.root_hash=?" : "") + nativeOnly(events, "link", "l.id");
       const linked = events.prepare(`SELECT 1 FROM task_links l WHERE ${where} LIMIT 1`).get(...args);
-      if (!linked) return { ...base, linkage: "not_linked", events: [] };
-      const select = `SELECT e.id,e.event,e.received_at,e.seq,x.saved_json FROM events e JOIN event_task_links x ON x.event_id=e.id
-        JOIN task_links l ON l.id=x.link_id WHERE ${where}`;
-      const rows = events.prepare(`${select} ORDER BY e.seq DESC LIMIT 21`).all(...args);
-      const project = (row: Row) => ({ observation_id: text(row, "id"), event: text(row, "event"), received_at: text(row, "received_at"),
-        saved_during_event: parseJsonObject(text(row, "saved_json")) });
-      const interrupted = events.prepare(`${select} AND e.event='Interrupt' ORDER BY e.seq DESC LIMIT 1`).get(...args);
-      const issue = events.prepare(`SELECT count(*) n FROM event_link_failures f JOIN task_links l ON l.id=f.link_id WHERE ${where}`).get(...args);
-      return { ...base, linkage: "explicit_agent_binding", event_status: "available", events: rows.slice(0,20).map(project),
-        interruption: interrupted ? project(interrupted) : null, latest_event: rows[0] ? project(rows[0]) : null,
-        association_unconfirmed: Number(issue?.["n"] ?? 0), history_truncated: rows.length>20,
-        limitation: "Only future events captured while the explicitly linked task was active are associated. No cross-database atomic cutoff, live status, or completeness guarantee." };
+      if (!linked) return { ...base, linkage: "not_linked", events: [], ...imported };
+      return { ...base, linkage: "explicit_agent_binding", ...this.projection(events, where, args), ...imported };
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return { ...base, linkage: "not_linked", events: [] };
       return { ...base, linkage: "unavailable", events_status: "unavailable" };
     } finally { events?.close(); }
+  }
+
+  private projection(events: DatabaseSync, where: string, args: string[]): JsonObject {
+      const select = `SELECT e.id,e.event,e.received_at,e.seq,x.saved_json FROM events e JOIN event_task_links x ON x.event_id=e.id
+        JOIN task_links l ON l.id=x.link_id WHERE ${where}`;
+      const rows = events.prepare(`${select} ORDER BY e.seq DESC LIMIT 21`).all(...args);
+      const project = (row: Row) => {
+        const origin = hasEventImports(events) ? events.prepare("SELECT source_seq FROM event_imports WHERE kind='event' AND id=?").get(text(row, "id")) : undefined;
+        return { observation_id: text(row, "id"), event: text(row, "event"), received_at: text(row, "received_at"),
+          ...(origin ? { source_event_seq: Number(origin["source_seq"]) } : {}), saved_during_event: parseJsonObject(text(row, "saved_json")) };
+      };
+      const interrupted = events.prepare(`${select} AND e.event='Interrupt' ORDER BY e.seq DESC LIMIT 1`).get(...args);
+      const issue = events.prepare(`SELECT count(*) n FROM event_link_failures f JOIN task_links l ON l.id=f.link_id WHERE ${where}`).get(...args);
+      return { event_status: "available", events: rows.slice(0,20).map(project),
+        interruption: interrupted ? project(interrupted) : null, latest_event: rows[0] ? project(rows[0]) : null,
+        association_unconfirmed: Number(issue?.["n"] ?? 0), history_truncated: rows.length>20,
+        limitation: "Only future events captured while the explicitly linked task was active are associated. No cross-database atomic cutoff, live status, or completeness guarantee." };
   }
 }

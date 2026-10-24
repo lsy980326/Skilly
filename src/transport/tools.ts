@@ -118,7 +118,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.getEvidence(input.project_id, input.record_id),
     ),
     memory_get_status: define(
-      "Read a local SQLite task's state and capture limitations. No polling is needed during ordinary work.",
+      "Read a local SQLite task's state and capture limitations. task_recording.imported_history preserves imported events and interruption saved points separately from current linkage. Imported observations cannot be current anchors and never prove live execution or verified content. No polling is needed during ordinary work.",
       true,
       z.strictObject(runId),
       async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery),

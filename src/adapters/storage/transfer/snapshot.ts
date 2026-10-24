@@ -9,10 +9,11 @@ import { readEvents, validateEventPair } from "./events.js";
 
 export function openSnapshots(path: string, includeEvents = false) {
   let recovery: DatabaseSync | undefined, main: DatabaseSync | undefined, events: DatabaseSync | undefined;
+  let eventsAt: string | null = null;
   try {
     // Events may reference main records. Pin events first, then read the newer main view.
     if (includeEvents) {
-      try { lstatSync(`${path}.events.sqlite`); events = readEvents(`${path}.events.sqlite`); }
+      try { lstatSync(`${path}.events.sqlite`); events = readEvents(`${path}.events.sqlite`); eventsAt = new Date().toISOString(); }
       catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
     }
     // prepare(request) -> main receipt -> acknowledge(request). This order must not be reversed.
@@ -22,7 +23,7 @@ export function openSnapshots(path: string, includeEvents = false) {
     main = readDatabase(path);
     if (recovery) validateRecoveryPair(main, recovery);
     if (events) validateEventPair(main, events);
-    return { main, recovery, events, recoveryAt, mainAt: new Date().toISOString(), close() { main?.close(); recovery?.close(); events?.close(); } };
+    return { main, recovery, events, eventsAt, recoveryAt, mainAt: new Date().toISOString(), close() { main?.close(); recovery?.close(); events?.close(); } };
   } catch (error) { main?.close(); recovery?.close(); events?.close(); throw error; }
 }
 export async function copySnapshot(db: DatabaseSync, path: string): Promise<void> {

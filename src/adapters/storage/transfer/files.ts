@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { MemoryError } from "../../../core/memory/model.js";
-import { manifestSchema, type Manifest } from "../../../core/transfer/format.js";
+import { manifestSchema, MAX_DATA_BYTES, MAX_LINE_BYTES, type Manifest } from "../../../core/transfer/format.js";
 
 export function fail(code: string, message: string): never { throw new MemoryError(code, message); }
 export function safePath(path: string): void {
@@ -47,4 +47,20 @@ export function readManifest(directory: string, kind: Manifest["kind"]): Manifes
 export function checkFile(path: string, expected: { sha256: string; bytes: number }): void {
   const actual = digest(path, expected.bytes);
   if (actual.sha256 !== expected.sha256 || actual.bytes !== expected.bytes) fail("checksum_mismatch", "Bundle data is incomplete or changed; hashes are not signatures.");
+}
+
+export function* bundleLines(fd: number): Generator<string> {
+  const buffer = Buffer.alloc(64 * 1024);
+  let pending = Buffer.alloc(0), count, offset = 0;
+  while ((count = readSync(fd, buffer, 0, buffer.length, offset)) > 0) {
+    offset += count; pending = Buffer.concat([pending, buffer.subarray(0, count)]);
+    let end;
+    while ((end = pending.indexOf(10)) !== -1) {
+      if (end + 1 > MAX_LINE_BYTES) fail("transfer_limit", "Oversized bundle row.");
+      yield new TextDecoder("utf-8", { fatal: true }).decode(pending.subarray(0, end));
+      pending = pending.subarray(end + 1);
+    }
+    if (pending.length > MAX_LINE_BYTES || offset > MAX_DATA_BYTES) fail("transfer_limit", "Oversized bundle data.");
+  }
+  if (pending.length) fail("invalid_bundle", "Incomplete NDJSON row.");
 }

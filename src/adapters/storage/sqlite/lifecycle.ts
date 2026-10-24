@@ -7,6 +7,7 @@ import { loadProjectBinding } from "../../project/binding.js";
 import type { ProjectBinding } from "../../../core/memory/binding.js";
 import { MemoryError } from "../../../core/memory/model.js";
 import { captureTaskEvent } from "./task-event-storage.js";
+import { hasEventImports, nativeOnly } from "./event-imports.js";
 
 export const lifecycleEvents = ["SessionStart", "PostToolUse", "PreCompact", "Stop", "Interrupt", "SessionEnd"] as const;
 const application = 1397446995;
@@ -84,7 +85,7 @@ function regular(path: string) {
 }
 function validate(db: DatabaseSync) {
   if (db.prepare("PRAGMA application_id").get()?.["application_id"] !== application
-    || db.prepare("PRAGMA user_version").get()?.["user_version"] !== 1) {
+    || ![1, 2].includes(Number(db.prepare("PRAGMA user_version").get()?.["user_version"]))) {
     throw new MemoryError("unsupported_event_store", "Unsupported event store; existing data was preserved.");
   }
 }
@@ -115,9 +116,13 @@ export function readLifecycle(dbPath: string, binding: ProjectBinding, root: str
     db = new DatabaseSync(path, { readOnly: true });
     db.exec("PRAGMA query_only=ON; PRAGMA busy_timeout=200;"); validate(db);
     const items = db.prepare(`SELECT id AS observation_id, session_hash, turn_hash, event, source, tool_group, received_at
-      FROM events WHERE project_key=? AND repository=? AND environment=? AND root_hash=? ORDER BY seq DESC LIMIT 20`)
+      FROM events WHERE project_key=? AND repository=? AND environment=? AND root_hash=? ${nativeOnly(db, "event", "events.id")} ORDER BY seq DESC LIMIT 20`)
       .all(binding.key, binding.repository, binding.environment, hash(realpathSync(root))).map(row => observationSchema.parse(row));
+    const imported = hasEventImports(db) ? db.prepare(`SELECT e.id AS observation_id,e.session_hash,e.turn_hash,e.event,e.source,e.tool_group,e.received_at
+      FROM events e JOIN event_imports origin ON origin.kind='event' AND origin.id=e.id
+      WHERE e.project_key=? AND e.repository=? AND e.environment=? ORDER BY e.seq DESC LIMIT 20`).all(binding.key,binding.repository,binding.environment).map(row => observationSchema.parse(row)) : [];
     return { ...base, status: items.length ? "observations_available" : "not_observed", items,
+      ...(imported.length ? { imported_observations: { items: imported, current_session_binding: false, root_scope: "original_locations", provenance: "project_import_history" } } : {}),
       limit: 20, interruption_meaning: "Interrupt observes a user interruption, not a task finish. Stop is a turn boundary, not task completion." };
   } catch { return { ...base, status: "unavailable", error: "Event observations could not be read; no empty-success or retention claim is made." }; }
   finally { db?.close(); }

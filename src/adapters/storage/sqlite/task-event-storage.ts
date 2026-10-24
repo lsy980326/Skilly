@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { JsonObject } from "../../../core/memory/model.js";
+import { nativeOnly } from "./event-imports.js";
 
 export const taskLinkSchema = `CREATE TABLE IF NOT EXISTS task_links (
   seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, run_id TEXT NOT NULL,
@@ -28,7 +29,7 @@ export function captureTaskEvent(events: DatabaseSync, mainPath: string, eventId
   if (!events.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='event_task_links'").get()) return;
   const link = events.prepare(`SELECT l.* FROM task_links l JOIN events e ON e.id=? AND e.project_key=l.project_key
     AND e.repository=l.repository AND e.environment=l.environment AND e.root_hash=l.root_hash AND e.session_hash=l.session_hash
-    AND e.seq>=l.from_seq ORDER BY l.seq DESC LIMIT 1`).get(eventId);
+    AND e.seq>=l.from_seq ${nativeOnly(events, "link", "l.id")} ORDER BY l.seq DESC LIMIT 1`).get(eventId);
   if (!link) return;
   let main: DatabaseSync | undefined;
   try {

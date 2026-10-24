@@ -83,6 +83,22 @@ class Element {
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 }
 
+test("current events and imported interruption history remain separate in the recording panel", async () => {
+  const { renderTaskRecording } = await import('../ui/task-recording.js');
+  const element = (tag, className = '', text) => { const node = new Element(tag); node.className = className; if(text !== undefined) node.textContent = text; return node; };
+  const event = (name, id) => ({ event: name, received_at: 'saved-time', saved_during_event: { record_id: id, seq: 4, source_seq: 12 } });
+  for(const currentInterrupt of [null,event('Interrupt','current-point')]) {
+    const data = {linkage:'explicit_agent_binding',last_saved:{record_id:'latest',seq:5},latest_event:event('PostToolUse','current'),interruption:currentInterrupt,
+      imported_history:{latest_event:event('Stop','old'),interruption:event('Interrupt','old-point'),association_unconfirmed:1}};
+    const panel=renderTaskRecording(data,{element,date:value=>value??'unknown'}),history=panel.querySelector('.imported-recording');
+    assert.match(panel.textContent,/현재 연결의 마지막 이벤트도구 실행 후/);
+    assert.match(history.textContent,/가져온 이력의 마지막 이벤트: 턴 종료/);
+    assert.match(history.textContent,/old-point/);assert.doesNotMatch(history.textContent,/current-point/);
+    assert.equal(panel.children.some(node=>node instanceof Element && node.className==='recording-interrupt' && node.textContent.includes('current-point')),Boolean(currentInterrupt));
+    assert.match(history.textContent,/이전 DB 순번 #12 · 현재 사본 순번 #4/);
+  }
+});
+
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
   recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, taskSkills = { items: [], next_offset: null }, taskSkillPage = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
