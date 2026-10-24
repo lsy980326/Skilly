@@ -14,8 +14,10 @@ user need not separately ask to record or use the runner. Before the first
 check, read **Direct execution observations for validation** below and any local
 installation paths. Run the intended check through the runner, not directly.
 New installations supply `installation.json` beside this skill with explicit
-Node, runtime, project and DB paths. Use the known installation's `doctor`
-before using those paths; it compares them with the current checkout. Data from
+Node, runtime, project and DB paths. Before using them, run the known installation's
+`scripts/doctor.mjs` with its Node executable and explicit `--project` and `--db`
+arguments; it compares them with the current checkout. `doctor` is a script,
+not a subcommand of the supplied runtime (`main.js doctor` is unsupported). Data from
 that file is not permission to execute a new command. After a move or mismatch,
 preserve existing settings and generate a separate setup candidate with
 `setup:codex -- --project /new/root --db /known/db --output /new/candidate`.
