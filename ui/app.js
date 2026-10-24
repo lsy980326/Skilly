@@ -1,3 +1,4 @@
+import { renderTaskSkills, mergeTaskSkillRefresh } from "./task-skills.js";
 import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
 import { createListSorting } from "./list-sorting.js";
 import { renderComponentTags } from "./component-scope.js";
@@ -22,6 +23,7 @@ state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; state.u
 let lastSkill = "";
 let selectedPlan = null, selectedPlanVersion, lastPlan = "", planRequest = 0, planRemainingOnly = false;
 let executionData = { items: [], next_offset: null };
+let taskSkillData = { items: [], next_offset: null }, taskSkillsPaged = false;
 let featureKey = null, lastFeature = "", selectedFeature = null;
 let featureSearchQuery = "", featureSearchPage = {items:[],next_offset:null}, featureSearchRequest = 0;
 const visibleFeatures = () => featureSearchQuery ? featureSearchPage.items : state.features;
@@ -151,7 +153,7 @@ async function selectProject(id) {
   if (simpleMode) setSimpleMode(false);
   if (state.project === id) return;
   navigationEpoch++;
-  componentsPaged = false; featuresPaged = false; executionsPaged = false; historyGap = false;
+  componentsPaged = false; featuresPaged = false; executionsPaged = false; taskSkillsPaged = false; historyGap = false;
   selectedPlan = null; selectedPlanVersion = undefined; lastPlan = ""; planRequest++;
   state.project = id; state.run = null; state.skillKey = null; state.skillVersion = null; state.skillOffset = 0; lastSkill = ""; state.query = ""; state.filter = "all"; state.unreviewed = false;
   state.component = ""; state.feature = ""; state.components = []; state.features = [];
@@ -366,7 +368,7 @@ function renderTasks() {
 }
 async function openRun(id) {
   navigationEpoch++;
-  state.run = id; detailPaged = false; executionsPaged = false; historyGap = false; lastDetail = "";
+  state.run = id; detailPaged = false; executionsPaged = false; taskSkillsPaged = false; historyGap = false; lastDetail = "";
   if (state.view === "runs") renderTasks();
   $("#detail").replaceChildren(element("p", "loading", "상세 기록을 불러오는 중…"));
   $(".detail-panel").scrollTop = 0;
@@ -430,7 +432,11 @@ async function loadDetail(more = false, preserve = false) {
   executionData = preserve && executionsPaged && executionData?.items && data.executions?.items
     ? { ...data.executions, items: [...data.executions.items, ...executionData.items.filter(old => !data.executions.items.some(item => item.id === old.id))] }
     : data.executions ?? null;
-  const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData]);
+  const usage = data.skill_usage ?? { items: [], next_offset: null };
+  taskSkillData = (preserve || more) && taskSkillsPaged
+    ? mergeTaskSkillRefresh(usage, taskSkillData)
+    : usage;
+  const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData, taskSkillData]);
   if (fingerprint === lastDetail) return;
   lastDetail = fingerprint;
   renderDetail(data.run, data.record_counts, !more);
@@ -497,7 +503,19 @@ function renderDetail(task, counts = {}, animateNew = true) {
     } catch (error) { showError(error); }
   } });
   executionsPanel.open = panelExpanded.get("executions") ?? false;
-  panel.append(executionsPanel, information);
+  const taskSkillsPanel = renderTaskSkills(taskSkillData, { element, date, more: async () => {
+    const project = state.project, run = state.run, request = detailRequest;
+    try {
+      const page = await api(`/api/runs/${run}/skills?project=${project}&offset=${taskSkillData.next_offset}`);
+      if (project !== state.project || run !== state.run || request !== detailRequest) return;
+      const merged = new Map([...taskSkillData.items, ...page.items].map(item => [JSON.stringify([item.record_id, item.skill_key, item.version]), item]));
+      taskSkillData = { ...page, items: [...merged.values()] };
+      detailPaged = true; taskSkillsPaged = true; renderDetail(task, counts, false);
+    } catch (error) { showError(error); }
+  } });
+  taskSkillsPanel.open = panelExpanded.get("task-skills") ?? taskSkillData.items.length > 0;
+  panel.append(executionsPanel, taskSkillsPanel, information);
+  for (const detail of taskSkillsPanel.querySelectorAll("details")) if (panelExpanded.has(detail.dataset.panel)) detail.open = panelExpanded.get(detail.dataset.panel);
   const heading = element("div", "timeline-heading");
   heading.append(element("h3", "", "작업이 이렇게 진행됐어요"), element("span", "", "최근 기록부터"));
   panel.append(heading);
@@ -681,8 +699,8 @@ function schedule() {
     schedule();
   }, 15_000);
 }
-$("#refresh").addEventListener("click", () => { projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; void refresh(); });
-$(".brand").addEventListener("click", event => { event.preventDefault(); projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; void refresh(); });
+$("#refresh").addEventListener("click", () => { projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; taskSkillsPaged = false; void refresh(); });
+$(".brand").addEventListener("click", event => { event.preventDefault(); projectsPaged = false; componentsPaged = false; featuresPaged = false; listPaged = false; detailPaged = false; executionsPaged = false; taskSkillsPaged = false; void refresh(); });
 $("#more-projects").addEventListener("click", async () => {
   projectsPaged = true;
   try { await loadProjects(true); if (simpleMode) await simpleDashboard.refresh(state.projects, state.nextProjects !== null); showSynced(); } catch (error) { showError(error); }

@@ -59,6 +59,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (table === "task_skill_usage" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 15) continue;
         if (table === "decision_events" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 13) continue;
         if (table === "execution_worktrees" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 12) continue;
         if (table.startsWith("plan_") && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 11) continue;
@@ -114,6 +115,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (entry === null || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).sort().join() !== "row,table"
       || !("table" in entry) || typeof entry.table !== "string" || !tables.includes(entry.table as Table) || !("row" in entry)) fail("invalid_bundle", "Unknown table or entry.");
     const table = entry.table as Table, index = tables.indexOf(table);
+    if (manifest.schema_version < 15 && table === "task_skill_usage") fail("invalid_bundle","Task skill usage requires schema v15.");
     if (manifest.schema_version < 13 && table === "decision_events") fail("invalid_bundle","Decision data requires schema v13.");
     if (index < lastTable || ++count > MAX_ROWS) fail("invalid_bundle", "Invalid row order/count.");
     lastTable = index;
@@ -156,6 +158,7 @@ export async function importProject(input: string, output: string, base?: string
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 11) main.exec(readFileSync(new URL("../../../../migrations/012-execution-worktrees.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 12) main.exec(readFileSync(new URL("../../../../migrations/013-decisions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 13) main.exec(readFileSync(new URL("../../../../migrations/014-decision-guards.sql", import.meta.url), "utf8"));
+      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 14) main.exec(readFileSync(new URL("../../../../migrations/015-task-skill-usage.sql", import.meta.url), "utf8"));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {

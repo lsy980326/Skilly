@@ -1,4 +1,5 @@
 import { planKey } from "../../../core/plans/model.js";
+import { SqliteTaskSkills } from "./task-skills.js";
 import { SqliteDecisions } from "./decisions.js";
 import type { DecisionQuery } from "../../../core/decisions/model.js";
 import { workKey } from "../../../core/work/schema.js";
@@ -145,8 +146,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v14)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v15)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
@@ -281,7 +282,14 @@ export class SqliteViewer {
       }, claims_verified: false,
       record_counts: Object.fromEntries(counts.map(count => [text(count, "kind"), number(count, "total")])),
       executions: new SqliteExecutions(this.db, this.sources).list(projectId, runId),
+      skill_usage: new SqliteTaskSkills(this.db).list(projectId, runId, 0),
     };
+  }
+
+  taskSkills(projectId: string, runId: string, offset = 0) {
+    this.requireProject(projectId); requireId(runId); pageOffset(offset);
+    if (!this.db.prepare("SELECT 1 FROM runs WHERE project_id=? AND id=?").get(projectId, runId)) throw new ViewerError("not_found", "이 프로젝트의 작업이 아닙니다.");
+    return new SqliteTaskSkills(this.db).list(projectId, runId, offset);
   }
 
   executions(projectId: string, runId: string, offset = 0) {

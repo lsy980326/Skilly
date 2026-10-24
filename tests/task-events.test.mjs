@@ -48,7 +48,7 @@ test('future-only task link preserves records and interruption-time saved point 
     assert.equal(view.runs(f.p).items[0].interruption_observed,true);
   } finally {view.close();}
   const raw=new DatabaseSync(f.path,{readOnly:true});
-  try {assert.equal(raw.prepare('SELECT body FROM records WHERE id=?').get(first.record_id).body,'테스트 변경 before');assert.equal(raw.prepare('PRAGMA user_version').get().user_version,14);}
+  try {assert.equal(raw.prepare('SELECT body FROM records WHERE id=?').get(first.record_id).body,'테스트 변경 before');assert.equal(raw.prepare('PRAGMA user_version').get().user_version,15);}
   finally{raw.close();}
 });
 

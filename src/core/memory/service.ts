@@ -13,7 +13,7 @@ const CONTEXT_BYTES = 32 * 1024;
 type Change = Omit<Mutation, "receipt"> & { result: JsonObject };
 
 export class MemoryService {
-  constructor(private readonly store: MemoryStore, private readonly context: Context) {}
+  constructor(private readonly store: MemoryStore, private readonly context: Context, private readonly projectRoot?: string) {}
 
   async registerProject(input: RegisterProjectInput): Promise<JsonObject> {
     return this.mutate("registration", input.idempotency_key, { operation: "register", ...input }, async () => {
@@ -121,6 +121,7 @@ export class MemoryService {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
         run: { ...run, updated_at: now }, record,
         ...(input.decision ? {decision:input.decision} : {}),
+        ...(input.skill_usage ? {skill_usage: this.store.taskSkills.prepare(run, input.skill_usage, this.projectRoot).map(row => ({...row, record_id:record.id}))} : {}),
         work: { run_id: run.id, record_id: record.id, ...links(input), ...(input.report ? { report: input.report } : {}) },
         result: {
           status: "persisted", record_id: record.id, knowledge_status: "unknown",
@@ -228,6 +229,7 @@ export class MemoryService {
       knowledge_status: recordStatus(record), verified: false,
       decision: this.store.decisions.metadata(projectId,recordId) ? parseJsonObject(JSON.stringify(this.store.decisions.metadata(projectId,recordId))) : null,
       executions: this.store.executions.list(projectId, record.run_id, 0, recordId),
+      skill_usage: this.store.taskSkills.list(projectId, record.run_id, 0, recordId),
     };
   }
 
@@ -241,6 +243,11 @@ export class MemoryService {
   async queryDecisions(input: DecisionQuery): Promise<JsonObject> {
     await this.requireProject(input.project_id);
     return this.store.decisions.query(input);
+  }
+
+  async listTaskSkills(projectId: string, runId: string, offset: number): Promise<JsonObject> {
+    await this.getStatus(projectId, runId);
+    return this.store.taskSkills.list(projectId, runId, offset);
   }
 
   async listExecutions(projectId: string, runId: string, offset: number): Promise<JsonObject> {

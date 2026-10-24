@@ -10,7 +10,7 @@ export const packagePath = z.string().max(160).refine(path => path === "agents/o
   .refine(path => !path.split("/").some(part => !part || /(^\.|secret|credential|private|auth|token|password|config|\.pem$|\.key$)/i.test(part)), "Private or unsafe file path.");
 export const registerSkillSchema = z.strictObject({ project_id: z.uuid(), skill_key: skillKey, version: text(80),
   source: text(500), name: text(100), description: z.string().max(500).default(""),
-  body: text(32_000), files: z.array(z.strictObject({ path: packagePath, content: z.string().max(16_000) })).max(16).default([]),
+  body: text(48_000), files: z.array(z.strictObject({ path: packagePath, content: z.string().max(16_000) })).max(16).default([]),
   install_instructions: text(4000), idempotency_key: text(128),
 }).refine(input => new TextEncoder().encode(JSON.stringify(input)).length <= 100 * 1024, "Skill package exceeds 100 KiB.")
   .refine(input => new Set(input.files.map(file => file.path)).size === input.files.length, "Duplicate package file.");

@@ -20,6 +20,8 @@ const assets = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/workstream.js", { file: "workstream.js", type: "text/javascript; charset=utf-8" }],
+  ["/task-skills.js", { file: "task-skills.js", type: "text/javascript; charset=utf-8" }],
+  ["/task-skills.css", { file: "task-skills.css", type: "text/css; charset=utf-8" }],
   ["/skills.js", { file: "skills.js", type: "text/javascript; charset=utf-8" }],
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
@@ -147,6 +149,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (url.pathname === "/api/recovery") { json(response, 200, reader.recovery(project, offset(url),sort,component)); return; }
       const detail = /^\/api\/runs\/([^/]+)$/.exec(url.pathname);
       const executions = /^\/api\/runs\/([^/]+)\/executions$/.exec(url.pathname);
+      const taskSkills = /^\/api\/runs\/([^/]+)\/skills$/.exec(url.pathname);
+      if (taskSkills?.[1]) { json(response, 200, reader.taskSkills(project, taskSkills[1], offset(url))); return; }
       if (executions?.[1]) { json(response, 200, reader.executions(project, executions[1], offset(url))); return; }
       if (detail?.[1]) {
         const raw = url.searchParams.get("before");

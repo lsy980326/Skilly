@@ -11,6 +11,7 @@ import { SqliteViewer } from "../dist/adapters/storage/sqlite/viewer.js";
 import { backupDatabase, restoreDatabase } from "../dist/adapters/storage/transfer/snapshot.js";
 import { exportProject, importProject } from "../dist/adapters/storage/transfer/project.js";
 import { initialize } from "../dist/adapters/storage/transfer/database.js";
+import { createSkillPackage, parseSkillPackage } from "../dist/core/skills/package.js";
 
 async function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "skilly-skills-"))), db = join(root, "memory.sqlite");
@@ -29,6 +30,21 @@ async function fixture(t) {
   return { root, db, app, call, pid, register, assignment, folder, id: installed.installation_id,
     inspect: key => call("memory_check_skill_installation", { project_id: pid, installation_id: installed.installation_id, idempotency_key: key }) };
 }
+
+test("full installed guidance above 32k preserves its exact content while character and total-byte bounds still apply", async t => {
+  const f = await fixture(t), body = "# Installed guide\n" + "x".repeat(40_000);
+  await f.call("memory_register_skill", { ...f.register, version: "long", body, idempotency_key: "long" });
+  const detail = await f.call("memory_get_skill", { project_id: f.pid, skill_key: "use-sample", version: "long" });
+  assert.equal(detail.skill.body, body);
+  assert.equal(parseSkillPackage(createSkillPackage(detail.skill)).body, body);
+  await assert.rejects(f.call("memory_register_skill", { ...f.register, version: "too-long", body: "x".repeat(48_001), idempotency_key: "too-long" }), { code: "invalid_input" });
+  await assert.rejects(f.call("memory_register_skill", { ...f.register, version: "too-many-bytes", body: "가".repeat(36_000), idempotency_key: "too-many-bytes" }), { code: "invalid_input" });
+  const backup = join(f.root, "long-backup"), restored = join(f.root, "long-restored");
+  await backupDatabase(f.db, backup); await restoreDatabase(backup, restored);
+  const app = openLocal(join(restored, "memory.sqlite"));
+  try { assert.equal((await app.dispatcher.call("memory_get_skill", { project_id: f.pid, skill_key: "use-sample", version: "long" })).skill.body, body); }
+  finally { await app.close(); }
+});
 
 test("skill versions are immutable and source-separated; receipts replay without duplicate versions", async t => {
   const f = await fixture(t);
@@ -113,13 +129,13 @@ test("v5 skill data survives whole backup and project transfer without becoming 
   }
 });
 
-test("v4 backup and export remain readable; only the import destination migrates to v14", async t => {
+test("v4 backup and export remain readable; only the import destination migrates to v15", async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "skilly-legacy-transfer-"))), path = join(root, "legacy.sqlite");
   const old = new DatabaseSync(path), pid = randomUUID(); initialize(old, false, 4);
   old.prepare("INSERT INTO projects VALUES (?,?,?,?,?)").run(pid, "legacy", "Legacy", 0, new Date().toISOString()); old.close();
   const b = join(root, "backup"), e = join(root, "export"); await backupDatabase(path, b); exportProject(path, pid, e);
   const restored = await restoreDatabase(b, join(root, "restored")), imported = await importProject(e, join(root, "imported"));
-  for (const [dbPath, expected] of [[path, 4], [restored.db, 4], [imported.db, 14]]) {
+  for (const [dbPath, expected] of [[path, 4], [restored.db, 4], [imported.db, 15]]) {
     const db = new DatabaseSync(dbPath, { readOnly: true }); try { assert.equal(db.prepare("PRAGMA user_version").get().user_version, expected); } finally { db.close(); }
   }
   const view = new SqliteViewer(path); try { assert.deepEqual(view.skills(pid).items, []); } finally { view.close(); }

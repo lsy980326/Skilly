@@ -1,0 +1,29 @@
+.task-skills { margin: 18px 0; border: 1px solid var(--border, #e4e7ed); border-radius: 12px; background: #fff; }
+.task-skills-heading { display: flex; align-items: center; gap: 10px; padding: 15px 18px; cursor: pointer; font-size: 13px; font-weight: 650; }
+.task-skills-heading::before { content: "+"; color: #7b8497; font-size: 16px; font-weight: 400; }
+.task-skills[open] > .task-skills-heading::before { content: "−"; }
+.task-skills-heading::-webkit-details-marker { display: none; }
+.task-skills-count { margin-left: auto; color: #69758b; font-size: 11px; font-weight: 450; font-variant-numeric: tabular-nums; }
+.task-skills-note { margin: 0 18px 16px; color: #778296; font-size: 11px; line-height: 1.7; }
+.task-skill-report { margin: 0 12px 12px; padding: 16px; border: 1px solid #e9ebf2; border-radius: 8px; background: #fcfcff; }
+.task-skill-report.is-previous { background: #fafafa; }
+.task-skill-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.task-skill-version { padding: 3px 7px; border-radius: 5px; background: #efedff; color: #6250b9; font-size: 11px; overflow-wrap: anywhere; }
+.task-skill-tag { color: #8b6e40; font-size: 10px; }
+.task-skill-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 18px 0 14px; }
+.task-skill-column + .task-skill-column { border-left: 1px solid #e9ebf2; padding-left: 20px; }
+.task-skill-label { color: #778296; font-size: 10px; font-weight: 600; }
+.task-skill-column p { margin: 7px 0; color: #35415a; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.task-skill-column small { color: #8490a2; font-size: 10px; line-height: 1.6; }
+.task-skill-column .task-skill-file-state.matches { color: #35736a; }
+.task-skill-column .task-skill-file-state.modified, .task-skill-column .task-skill-file-state.missing { color: #9e6831; }
+.task-skill-source { padding-top: 12px; border-top: 1px solid #e9ebf2; color: #6d788b; font-size: 11px; }
+.task-skill-source summary { cursor: pointer; }
+.task-skill-source > code { display: block; margin-top: 12px; font-size: 10px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-skill-file { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: 10px; }
+.task-skills > .more { margin: 0 18px 16px; }
+.task-skills summary:focus-visible { outline: 2px solid #7064ed; outline-offset: 3px; border-radius: 4px; }
+@container (max-width: 440px) {
+  .task-skill-columns { grid-template-columns: 1fr; gap: 14px; }
+  .task-skill-column + .task-skill-column { border-left: 0; border-top: 1px solid #e9ebf2; padding: 12px 0 0; }
+}

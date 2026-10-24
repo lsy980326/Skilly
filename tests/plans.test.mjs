@@ -83,7 +83,7 @@ test('v10 read-only is supported without migration; v11 writer preserves origina
  for(const path of [imported.db,restored.db]){const reader=new SqliteViewer(path);try{const d=reader.plans(f.pid,{plan_key:'notifications',repository:'default',environment:'development'});assert.equal(d.plan.source_body,source);assert.equal(d.progress.percent,50);}finally{reader.close();}}
  const legacy=join(f.directory,'legacy.sqlite'),db=new DatabaseSync(legacy);initialize(db,false,10);db.prepare('INSERT INTO projects VALUES(?,?,?,?,?)').run('00000000-0000-4000-8000-000000000001','legacy','legacy',0,'2026-10-23T00:00:00Z');db.close();
  const snapshot=readFileSync(legacy),reader=new SqliteViewer(legacy);assert.equal(reader.plans('00000000-0000-4000-8000-000000000001').schema_supported,false);reader.close();assert.deepEqual(readFileSync(legacy),snapshot);
- const app=(await import('../dist/runtime/local/app.js')).openLocal(legacy);await app.close();const check=new DatabaseSync(legacy,{readOnly:true});assert.equal(check.prepare('PRAGMA user_version').get().user_version,14);assert.equal(check.prepare('SELECT name FROM projects').get().name,'legacy');validateDatabase(check);check.close();
+ const app=(await import('../dist/runtime/local/app.js')).openLocal(legacy);await app.close();const check=new DatabaseSync(legacy,{readOnly:true});assert.equal(check.prepare('PRAGMA user_version').get().user_version,15);assert.equal(check.prepare('SELECT name FROM projects').get().name,'legacy');validateDatabase(check);check.close();
 });
 test('backup/import validation enforces the same origin, classification and size limits as writes',async t=>{
  const f=await setup(t);await save(f);const r=await report(f);await update(f,r);const db=new DatabaseSync(f.path);t.after(()=>db.close());

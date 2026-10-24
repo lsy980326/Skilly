@@ -1,4 +1,5 @@
 import type { SqlitePlans } from "../adapters/storage/sqlite/plans.js";
+import { skillUsagesSchema } from "../core/skills/usage.js";
 import { decisionSchema } from "../core/decisions/model.js";
 import { savePlanFields, updatePlanFields, planKey } from "../core/plans/model.js";
 import type { MarkdownLibrary } from "../core/documents/importer.js";
@@ -63,7 +64,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
         supersedes: id.optional(),
         report_origin: reportOrigin,
         report: reportSchema.optional(), ...workLinks,
-        decision: decisionSchema.optional(),
+        decision: decisionSchema.optional(), skill_usage: skillUsagesSchema.optional(),
       }),
       input => service.checkpoint(input),
     ),
@@ -122,6 +123,11 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       z.strictObject(runId),
       async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery),
         ...(taskEvents ? { task_recording: taskEvents.status(input.project_id, input.run_id) } : {}) }),
+    ),
+    memory_list_task_skills: define(
+      "Read this task’s explicit skill-use reports and separately linked saved installation observations. Report exact registered skill_key/version/purpose in checkpoint.skill_usage; optionally attach an observation_id from memory_check_skill_installation in this launched root. Never guess versions, choose latest observations, or infer AI use from files. Versions/hashes are pinned per report. File state describes only the saved observation time; it does not prove current installation or model loading. Missing reports are uncollected, not no skills used. claims_verified=false and loading_status=unknown always. Read original reports by record_id.",
+      true, z.strictObject({ ...runId, offset: z.int().min(0).max(1_000_000).default(0) }),
+      input => service.listTaskSkills(input.project_id, input.run_id, input.offset),
     ),
     memory_list_executions: define(
       "Read direct local-runner process observations linked to this task. Includes test_details with bounded counts/failure names when collected; not_collected is not zero tests. code_version compares before/after/current Git metadata and bounded public-source fingerprints: same_version, changed or unknown. Dirty source can match only with three collected fingerprints. Read scope, reason and exclusions; matching never verifies correctness, dependencies or runtime. May read bounded public source at the explicitly configured host root only, never private/ignored files; no task-command execution or DB writes. Legacy dirty records, excluded changes, limits, hidden index entries, missing source or unconfigured roots remain unknown. Exit 0 is not a verified test/task result. Coverage is explicit runner invocations only; provenance is not tamper-proof attestation. Never infer missing results from an empty page.",

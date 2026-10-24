@@ -3,6 +3,53 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
+test("task skills separate AI declarations and file evidence, preserve hostile text and refresh saved states", async () => {
+  const item = { record_id: "usage-a", skill_key: "sample", name: "검사 스킬 <img src=x>", version: "1.2", purpose: "일반 작업 검사에 사용했다고 보고",
+    content_hash: "a".repeat(64), report_origin: "contemporaneous", report_state: "reported", recorded_at: "2026-10-21T01:00:00Z", file_observation: null };
+  const taskSkills = { items: [item], next_offset: null, schema_supported: true };
+  const app = await viewer({ taskSkills });
+  let detail = app.node("#detail");
+  assert.match(detail.textContent, /AI 사용 보고/); assert.match(detail.textContent, /연결된 파일 확인 없음/);
+  assert.match(detail.textContent, /실제 AI 사용 여부는 확인할 수 없습니다/); assert.match(detail.textContent, /검사 스킬 <img src=x>/);
+  assert.equal(detail.querySelectorAll("img").length, 0);
+  item.file_observation = { id: "observed", state: "modified", observed_at: item.recorded_at, project_root: "/test/root", tool: "codex", folder: "sample", files: [{path:"SKILL.md",state:"modified"}] };
+  item.report_origin = "retrospective";
+  await app.tick(); detail = app.node("#detail");
+  assert.match(detail.textContent, /관측 당시 내용 다름/); assert.match(detail.textContent, /소급 보고/); assert.match(detail.textContent, /현재 상태 재확인 필요/);
+  assert.doesNotMatch(detail.textContent, /연결된 파일 확인 없음/);
+});
+
+test("task skill report pages survive automatic refresh without duplication and manual refresh resets them", async () => {
+  const row = n => ({ record_id: "usage-"+n, skill_key: "sample", name: "안내", version: "1", purpose: "용도 "+n, content_hash: "a".repeat(64), recorded_at: "2026-10-21T01:00:00Z" });
+  const taskSkills = { items: Array.from({length:8},(_,n)=>row(n)), next_offset:8 };
+  const app = await viewer({ taskSkills, taskSkillPage: { items:[row(8)], next_offset:null } });
+  const button=app.node("#detail").querySelectorAll("button").find(b=>b.textContent==='스킬 보고 더 보기');await button.listeners.click();
+  assert.equal(app.node("#detail").querySelectorAll(".task-skill-report").length,9);
+  await app.tick();assert.equal(app.node("#detail").querySelectorAll(".task-skill-report").length,9);
+  assert.equal(app.node("#detail").querySelectorAll("button").some(b=>b.textContent==='스킬 보고 더 보기'),false);
+  assert.match(app.node("#detail").querySelector(".task-skills-count").textContent,/^9개 보고$/);
+  await app.node("#refresh").listeners.click();await new Promise(setImmediate);
+  assert.equal(app.node("#detail").querySelectorAll(".task-skill-report").length,8);
+});
+
+test("task skill refresh advances the next offset for new reports and discloses a reset for a non-overlapping burst", async () => {
+  const row=n=>({record_id:'usage-'+n,skill_key:'sample',name:'안내',version:'1',purpose:'용도 '+n,content_hash:'a'.repeat(64),recorded_at:'2026-10-21T01:00:00Z'});
+  const taskSkills={items:Array.from({length:8},(_,n)=>row(n)),next_offset:8};
+  const taskSkillPage={items:Array.from({length:8},(_,n)=>row(n+8)),next_offset:16};
+  const app=await viewer({taskSkills,taskSkillPage});
+  const more=()=>app.node('#detail').querySelectorAll('button').find(b=>b.textContent==='스킬 보고 더 보기');
+  await more().listeners.click();await app.tick();
+  taskSkillPage.items=[row(16)];taskSkillPage.next_offset=null;
+  taskSkills.items=[row(-2),row(-1),...taskSkills.items.slice(0,6)];
+  await app.tick();await more().listeners.click();
+  assert.ok(app.requests.some(path=>path.includes('/skills?')&&path.includes('offset=18')));
+  assert.equal(app.node('#detail').querySelectorAll('.task-skill-report').length,19);
+  await app.tick();assert.equal(more(),undefined);
+  taskSkills.items=Array.from({length:8},(_,n)=>row(-10-n));
+  await app.tick();assert.equal(app.node('#detail').querySelectorAll('.task-skill-report').length,8);
+  assert.match(app.node('#detail').textContent,/새 보고가 많아 최신 페이지부터/);
+});
+
 // Only the DOM surface used by the viewer; run the actual app and polling callback.
 class Element {
   children = [];
@@ -38,7 +85,7 @@ class Element {
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
-  recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
+  recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, taskSkills = { items: [], next_offset: null }, taskSkillPage = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0, hangNext = false;
   const deadlines = new Set();
@@ -78,12 +125,13 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const plans = readFileSync(new URL("../ui/plans.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export ", "");
   const componentUI=readFileSync(new URL("../ui/component-scope.js",import.meta.url),"utf8").replaceAll("export ","");
   const sorting=readFileSync(new URL("../ui/list-sorting.js",import.meta.url),"utf8").replaceAll("export ","");
+  const taskSkillsUI = readFileSync(new URL("../ui/task-skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${componentUI}\n${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${componentUI}\n${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${taskSkillsUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -118,8 +166,9 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
           next_offset: manyFeatures && path.includes("view=features") && !path.includes("offset=40") ? 40 : null }
         : path.includes("state=active") ? { items: active ? [run, ...Array.from({ length: extraActiveTasks }, (_, n) => ({ ...run, id: `run-extra${n + 1}`, title: `추가 작업 ${n + 1}` }))] : [], next_offset: partial ? 20 : null }
         : path.includes("state=completed") ? { items: active ? [] : [run], filtered_total: active ? 0 : 1, next_offset: null }
+        : path.startsWith("/api/runs/run/skills") ? (taskSkillPage ?? taskSkills)
         : path.startsWith("/api/runs/run")
-          ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, executions, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
+          ? { run: path.includes("run-extra") ? { ...run, id: "run-extra1", title: "추가 작업 1" } : run, executions, skill_usage: taskSkills, record_counts: { summary: recordAvailable ? 1 : 0 }, records: { items: recordAvailable ? [path.includes("before=") ? { ...record, id: "older", body: "이전 기록" } : record] : [], next_before: historyPage && !path.includes("before=") ? 99 : null } }
           : { items: [run], next_offset: null };
       return { ok: httpStatus === 200, status: httpStatus, async json() {
         if (requestFailure === "json") throw new SyntaxError("잘못된 응답");

@@ -30,7 +30,7 @@ export function openLocal(path: string, binding?: ProjectBinding, projectRoot?: 
   if (!lstatSync(path).isFile()) throw new MemoryError("invalid_path", "The database must be a regular local file.");
   const store = new SqliteMemoryStore(path, binding && projectRoot ? boundSourceProvider(projectRoot, binding) : undefined, bindings);
   const context = createMemoryContext();
-  const service = new MemoryService(store, context);
+  const service = new MemoryService(store, context, projectRoot);
   const journal = new SqliteRecoveryJournal(`${path}.recovery.sqlite`, path);
   const recovery = new WriteRecovery(store, journal, context,
     binding && projectRoot ? () => readLifecycle(path, binding, projectRoot) : undefined);

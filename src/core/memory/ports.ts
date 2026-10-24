@@ -1,11 +1,13 @@
 import type { MemoryRecord, Mutation, Project, Receipt, RecordQuery, Run } from "./model.js";
 import type { WorkReader } from "../work/model.js";
 import type { ExecutionReader } from "../execution/model.js";
+import type { SkillUsageReader } from "../skills/usage.js";
 import type { DecisionReader } from "../decisions/model.js";
 
 /** Storage owns atomicity; domain rules are computed before a versioned commit. */
 export interface MemoryStore {
   readonly decisions: DecisionReader;
+  readonly taskSkills: SkillUsageReader;
   readonly work: WorkReader;
   readonly executions: ExecutionReader;
   getProject(id: string): Promise<Project | undefined>;

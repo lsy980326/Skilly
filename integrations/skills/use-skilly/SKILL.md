@@ -338,6 +338,31 @@ Only provide `source_fingerprint` or `observed_at` when actually known. Omit the
 otherwise. For a confirmed correction, use `supersedes` with the same topic, kind,
 repository, and environment; preserve the old record instead of deleting it.
 
+### Task skill versions
+
+When `memory_list_task_skills` is exposed, include `skill_usage` on a meaningful
+checkpoint for skills you actually used: exact registered `skill_key`, `version`
+and a readable `purpose` (up to 8 per checkpoint). Do the bounded lookup before
+the first change checkpoint: list skills for the resolved component, then call
+`memory_get_skill` for the used key and component. Match an installation's
+`project_root` to this working root and its repository/environment to the resolved
+scope. Follow `next_installation_offset` if needed, then read that installation's
+explicit `version` if it differs from the returned skill version. A short catalog
+preview alone cannot establish the version; do not stop at that preview or choose
+another root's latest version. If this exact lookup still cannot identify the
+used version, disclose the gap instead of inventing metadata.
+An optional `observation_id` may reuse that installation's saved observation only
+when `observed_version` equals the reported version and `expected_hash` matches
+the registered content hash. Preserve its saved time and state, even if modified
+or old; it never proves today's files or loading. Otherwise omit it or perform an
+authorized explicit installation check. Do not inspect files per checkpoint
+or auto-install/update skills. A use report alone creates no file observation.
+On handoff or reuse, read `memory_list_task_skills` with the known run ID: report
+origin, original record ID and saved file observation remain separate. Files
+matching at the saved time never prove model loading/use or today's installation;
+`loading_status` stays unknown. Missing rows mean uncollected, not no skills used.
+Old connections without this tool keep their existing checkpoint contract.
+
 ### Vitest details
 
 For installed Vitest 3, the runner supports explicit `--test-format vitest`

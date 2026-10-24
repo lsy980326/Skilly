@@ -1,4 +1,5 @@
 import type { StructuredReport, WorkLinks, WorkMutation } from "../work/model.js";
+import type { SkillUsage, TaskSkillUsageRow } from "../skills/usage.js";
 import type { Decision } from "../decisions/model.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
@@ -75,6 +76,7 @@ export interface BeginTaskInput extends WorkLinks {
 }
 
 export interface CheckpointInput extends WorkLinks {
+  skill_usage?: SkillUsage[] | undefined;
   decision?: Decision | undefined;
   project_id: string;
   run_id: string;
@@ -124,6 +126,7 @@ export interface Receipt {
 }
 
 export interface Mutation {
+  skill_usage?: TaskSkillUsageRow[];
   decision?: Decision;
   receipt: Receipt;
   project: Project;
