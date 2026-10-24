@@ -10,11 +10,11 @@
 | 대상 | 구현 범위 | 실행 연결 |
 |---|---|---|
 | SQLite | 기존 전체 MemoryStore와 업무 확장, 새 공통 저장 계약 | 기존 로컬 MCP/CLI 유지 |
-| D1 | 작업·원문·보고·분류, 결정 이력·계획 버전/진행, 실행 관측·검사 상세·코드 버전과 계획 근거 연결 | 주입된 Workers binding을 받는 모듈만 구현 |
+| D1 | 작업·원문·보고·분류, 결정·계획·검사 근거, 수신 이벤트·작업 연결·중단 저장 지점 | 주입된 Workers binding을 받는 모듈만 구현 |
 | 클라우드 HTTP·MCP | 아직 없음 | 배포·네트워크·인증 설정·실사용 DB 연결 없음 |
 
 D1 모듈은 전체 `MemoryStore` 구현이 아니다.
-스킬, 이벤트·중단 지점, 이전 권한은 아직 D1에서 처리하지 않는다.
+스킬, 역사 이벤트 가져오기, 이전 권한은 아직 D1에서 처리하지 않는다.
 이 필드와 알 수 없는 최상위 입력을 `unsupported_capability`로 **SQL 제출 전에 거절**한다.
 기본 `kind=decision` 원문 보관과 구조화 결정 이력 지원은 서로 다르다.
 원문의 `superseded_by`를 미리 채운 역사 자료 가져오기도 지원하지 않는다.
@@ -31,7 +31,7 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다.
 | 1 | 작업 분류·제목·보고, 작업 목록·기록 원문 조회 | 프로젝트·작업·원문·영수증 | 구현 |
 | 2 | 결정·정정·철회, 계획 버전·항목·완료 조건·진행 보고 | 작업 ID·기능·구성요소·원문 보고 | 구현 |
 | 3 | 검사 실행 관측·통과/실패 상세·코드 버전 | 작업·원문 ID와 출처 | 구현. 004 스키마에서 계획의 검사 근거 연결 지원 |
-| 4 | 훅 이벤트·작업 연결·중단 당시 마지막 저장 지점 | 저장된 작업·원문·실행 ID | 후속 |
+| 4 | 훅 이벤트·작업 연결·중단 당시 마지막 저장 지점 | 저장된 작업·원문·실행 ID | 구현. 명시적 호스트 수신·연결만 지원 |
 | 5 | 스킬 전문·불변 패키지·설치 관측·작업별 사용 버전 | 프로젝트 범위·작업·원문·관측 연결 | 후속. 패키지 카탈로그 자체는 앞선 단계와 독립 구현 가능 |
 | 6 | 현재 지식 통합 조회·이전 쓰기 세대 | 위 자료의 범위·버전·연결 계약 | 후속 |
 
@@ -54,7 +54,7 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다.
 
 현재 첫 묶음은 기능의 **별칭·코드 경로 메타데이터를 지원하지 않는다**.
 중첩된 이 필드도 SQL 전에 `unsupported_capability`로 거절한다. 입력을 버린 뒤
-저장 성공으로 표시하지 않는다. 미지원 스킬·이벤트 역시 그대로 거절한다.
+저장 성공으로 표시하지 않는다. 미지원 스킬·역사 자료 가져오기도 그대로 거절한다.
 메타데이터가 늘어도 요청 64 KiB/40문장 상한은 유지한다. 작은 분류·보고는 함께 저장할 수
 있지만 12개 분류를 한꺼번에 넣는 등 문장 예산을 넘는 조합은 **분할 자동 저장 없이 거절**한다.
 
@@ -192,6 +192,59 @@ query는 최신 목록 또는 `{plan_key, version?, remaining_only?}` 상세를 
 Codex 새 MCP의 D1 실행기 연결은 검증 범위가 아니다. 기존 003만 있는 계획은 계속 읽을 수 있고,
 실행 스키마가 없으면 근거 상태를 미지원으로 반환한다.
 
+### 네 번째 묶음: 수신 이벤트·작업·중단 저장 지점
+
+`005-task-events.sql`은 001–004 다음 선택한 신규/테스트 D1에만 명시적으로 적용한다.
+기존 SQLite v15·로컬 훅·신뢰·연결 설정과 실사용 DB는 바꾸지 않는다.
+
+`D1TaskEvents(binding, {project_id,repository,environment,root_hash,session_hash})`는
+호스트가 고정한 프로젝트·저장소·환경·작업 폴더 해시·세션 해시를 사용한다.
+요청으로 범위를 덮어쓰지 못하며, 저장된 경로나 가장 최근 이벤트에서 현재 세션을 추측하지 않는다.
+실제 파일 경로, 프롬프트, 명령, 입출력, 도구 입력을 받거나 저장하지 않는다.
+
+| API | 입력/의미 |
+|---|---|
+| receive(input) | idempotency_key·observation_id·event·observed_at·선택 turn_hash/source/tool_group의 정규화된 호스트 이벤트 |
+| link(input) | idempotency_key·활성 run_id·현재 호스트 세션의 명시적 observation_id |
+| observations(offset?) | 현재 호스트 세션/폴더의 실제 저장된 이벤트와 연결 상태를 최대20개/64KiB로 조회 |
+| status(run_id) | 같은 프로젝트/저장소/환경/폴더 작업의 현재 저장 지점·최근 연결 이벤트·마지막 중단 snapshot |
+
+- 허용 이벤트는 기존 수집기의 SessionStart/PostToolUse/PreCompact/Stop/Interrupt/SessionEnd이다.
+  이 모듈의 허용 목록은 Codex의 실제 훅 설치·신뢰·자동 실행 검증이 아니다. 출처는
+  local_hook_input·authenticity=not_attested·claims_verified=false로 유지한다.
+- 이벤트 저장 영수증의 delivery_status=saved와 work_record_saved=false는 **이벤트만 저장**했다는 뜻이다.
+  작업 시작/변경/마감 영수증을 대체하지 않는다. 작업 상태나 프로세스 종료도 자동 변경하지 않는다.
+- 동일 키/정규 입력은 원래 영수증을 재생한다. 같은 observation_id/동일 원문을 다른 키로 다시
+  보내도 기존 이벤트를 소급 연결하거나 snapshot을 새로 만들지 않는다. 다른 원문은 event_conflict다.
+- 연결 anchor는 정확한 범위의 기존 SessionStart/PostToolUse/PreCompact여야 한다. 중간의
+  PostToolUse·PreCompact·불투명 turn_hash 변경은 허용한다. 같은 세션의 Stop/Interrupt/SessionEnd/
+  새 SessionStart 경계는 이전 미연결 anchor를 무효화한다. 다른 세션의 경계는 영향을 주지 않는다.
+- 다른 활성 작업의 세션 연결을 빼앗지 않는다. 동일 작업의 기존 연결 재조회는 원래 링크와
+  watermark를 보존한다. 새 링크는 확정 배치의 마지막 이벤트 seq+1부터만 연결하며, anchor와
+  연결 전에 수신한 이벤트는 소급 연결하지 않는다. 새 세션/fork는 기존 링크를 상속하지 않는다.
+- 정규화 이벤트·연결·저장 지점·프로젝트 revision·영수증은 같은 CAS 배치에서 확정한다.
+  새 수신 시 링크가 없거나 작업이 이미 닫혔으면 이벤트는 각각 not_linked/run_closed로 보존하고
+  연결 snapshot은 만들지 않는다. linked로 저장됐으면 snapshot도 함께 존재해야 한다.
+- snapshot은 **서버 수신·저장 처리 시점에 보이던 기록**이다. 원래 생산자 시각 observed_at과
+  서버 저장 시각 received_at을 구분하며, 네트워크 도착 전 실제 중지 버튼 시각을 뜻하지 않는다.
+  last_saved는 최신 원문 ID/seq와 실제 영수증의 단일 record_id 또는 다중 record_ids 연결을 확인한다.
+  시작 영수증만 있는 start, 원문이 보이지만 영수증 확인이 없는 record, unknown을 구분한다.
+- 중단 뒤 새 원문이나 지연된 쓰기가 저장되면 현재 last_saved만 변한다. 기존 interruption의
+  saved_during_event는 불변이다. 최근20개 밖의 마지막 Interrupt도 별도로 조회한다. 한 status의
+  작업·현재 저장 지점·이벤트·중단 snapshot은 같은 업무 SQL snapshot에서 읽는다.
+- 이미 커밋된 응답을 잃으면 원래 입력/키로 원래 영수증과 snapshot을 확인한다. 롤백된 요청을
+  나중에 처음 저장했다면 그때의 서버 시각/저장 지점이며 실패 당시 snapshot으로 주장하지 않는다.
+  자동 재전송 큐·원문 복구·미수신 이벤트 추정은 없다.
+- 프로젝트별 이벤트와 링크는 각각10000개 상한이다. 초과 시 보존/큐 성공을 반환하거나 기존
+  이력을 지우지 않는다. 조회는 live_offset과 잘림 표시를 사용한다. 빈 목록이어도 completeness=unknown,
+  missing_record_count=null, live_execution=unknown이며 미수신 이벤트/작업 요청은 not_observable이다.
+- 아직 004까지만 적용한 DB는 unsupported/schema_supported=false로 반환하며 자동 마이그레이션하지 않는다.
+  역사 이벤트 가져오기·이전 세대·외부 호스트 인증·원격 D1 전송은 별도 후속 계약이다.
+
+`tests/d1-task-events.test.mjs`는 합성 중단/경계/장애 입력과 실제 로컬 훅 수집기→정규 DTO→
+로컬 D1→새 바인딩/workerd 재실행을 구분한다. 테스트의 Interrupt는 실제 사용자 중지 버튼
+검증이 아니며, 실사용 훅 설정·MCP·화면의 D1 연결도 변경하거나 검증하지 않는다.
+
 ## 공통 저장 규칙
 
 1. 신규 프로젝트는 revision 0, 기존 프로젝트는 기대 revision을 정확히 1 증가시킨다.
@@ -290,7 +343,8 @@ D1 어댑터의 현재 보수적 상한은 **요청 64 KiB, 영수증 16 KiB, �
 
 이 harness의 배치 트랜잭션은 Node SQLite로 직접 구현했다. 실제 D1 런타임의
 호환성 근거는 별도의 `tests/d1-runtime.test.mjs`, `tests/d1-work.test.mjs`,
-`tests/d1-decisions-plans.test.mjs`, `tests/d1-executions.test.mjs`에서 구분한다.
+`tests/d1-decisions-plans.test.mjs`, `tests/d1-executions.test.mjs`,
+`tests/d1-task-events.test.mjs`에서 구분한다.
 
 ### 실제 로컬 D1 런타임
 

@@ -35,7 +35,7 @@ export async function prepareD1Execution(db:D1Binding,change:D1Mutation):Promise
   if(change.execution===undefined)return undefined;
   const parsed=command.safeParse(change.execution);
   if(!parsed.success)throw new MemoryError("invalid_input","Invalid host execution observation.");
-  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.plan)
+  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.plan||change.lifecycle)
     throw new MemoryError("invalid_input","Runner observations use a separate internal command, never an AI report mutation.");
   const c=parsed.data,i=c.input;
   if(i.project_id!==change.project.id||i.idempotency_key!==change.receipt.key)throw new MemoryError("scope_mismatch","Observation and receipt scope differ.");
