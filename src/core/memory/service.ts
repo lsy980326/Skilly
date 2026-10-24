@@ -6,6 +6,7 @@ import {
 } from "./model.js";
 import type { MemoryStore } from "./ports.js";
 import type { Component, OverviewQuery, WorkLinks } from "../work/model.js";
+import { validateDecision, type DecisionQuery } from "../decisions/model.js";
 
 const encoder = new TextEncoder();
 const CONTEXT_BYTES = 32 * 1024;
@@ -86,9 +87,18 @@ export class MemoryService {
       const project = await this.requireProject(input.project_id);
       const run = await this.requireActiveRun(project.id, input.run_id);
       const now = this.context.now();
+      if (input.decision) {
+        if (input.kind !== "decision" || input.supersedes || input.observed_at || input.source_fingerprint)
+          throw new MemoryError("invalid_input", "Structured decisions use decision kind and append-only links, without supersedes or supplied times/versions.");
+        const d = input.decision;
+        this.store.decisions.assertScope(project.id,run.id,d);
+        const history = this.store.decisions.events(project.id,run.repository,run.environment,d);
+        validateDecision(d,history.events,history.truncated,input.report_origin??"unspecified");
+      }
       const observedAt = input.observed_at ?? now;
       if (observedAt > now) throw new MemoryError("invalid_time", "observed_at cannot be in the future.");
       if (input.supersedes) {
+        if (this.store.decisions.metadata(project.id,input.supersedes)) throw new MemoryError("invalid_input","Use explicit decision replacement/withdrawal links.");
         const previous = await this.store.getRecord(project.id, input.supersedes);
         if (!previous) throw new MemoryError("not_found", "The superseded record does not exist in this project.");
         if (previous.superseded_by) throw new MemoryError("conflict", "This record has already been superseded.");
@@ -110,6 +120,7 @@ export class MemoryService {
       return {
         project: { ...project, revision: project.revision + 1 }, expected_revision: project.revision,
         run: { ...run, updated_at: now }, record,
+        ...(input.decision ? {decision:input.decision} : {}),
         work: { run_id: run.id, record_id: record.id, ...links(input), ...(input.report ? { report: input.report } : {}) },
         result: {
           status: "persisted", record_id: record.id, knowledge_status: "unknown",
@@ -174,6 +185,7 @@ export class MemoryService {
       status: records.length ? "matched" : "no_match", project_id: project.id,
       project_revision: project.revision, current_knowledge: [], records: page,
       capture: "agent_reports_only", currentness: "unverified",
+      decision_guidance: "Decision records are historical reports. Use memory_query_decisions for explicit current/replaced/withdrawn/conflicting decisions; never choose the newest prose as fact.",
       search: "literal_terms_prefix_and_scoped_substring",
       truncated: false, next_cursor: null,
     };
@@ -214,6 +226,7 @@ export class MemoryService {
     return {
       record: parseJsonObject(JSON.stringify({ ...record, report: this.store.work.report(projectId, recordId) ?? null })), provenance: "agent_report",
       knowledge_status: recordStatus(record), verified: false,
+      decision: this.store.decisions.metadata(projectId,recordId) ? parseJsonObject(JSON.stringify(this.store.decisions.metadata(projectId,recordId))) : null,
       executions: this.store.executions.list(projectId, record.run_id, 0, recordId),
     };
   }
@@ -223,6 +236,11 @@ export class MemoryService {
     const run = await this.store.getRun(projectId, runId);
     if (!run) throw new MemoryError("not_found", "Run not found in this project.");
     return { run: parseJsonObject(JSON.stringify({ ...run, ...this.store.work.identity(projectId, runId) })), project_revision: project.revision, capture: "agent_reports_only", pending_queue_supported: false };
+  }
+
+  async queryDecisions(input: DecisionQuery): Promise<JsonObject> {
+    await this.requireProject(input.project_id);
+    return this.store.decisions.query(input);
   }
 
   async listExecutions(projectId: string, runId: string, offset: number): Promise<JsonObject> {

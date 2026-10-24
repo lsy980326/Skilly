@@ -27,6 +27,7 @@ export const rowSchemas = {
   run_features: z.strictObject({ project_id: id, run_id: id, feature_key: text }),
   run_details: z.strictObject({ project_id: id, run_id: id, title: nullable, branch: nullable }),
   record_reports: z.strictObject({ project_id: id, record_id: id, report_json: text }),
+  decision_events: z.strictObject({project_id:id,record_id:id,subject_key:workKey,component_key:text,feature_key:text,metadata_json:text}),
   executions: executionRowSchema,
   execution_test_details: testDetailsRowSchema,
   execution_sources: executionSourceRowSchema,
@@ -49,7 +50,7 @@ export type Table = keyof typeof rowSchemas;
 export const tables = Object.keys(rowSchemas) as Table[];
 const file = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: integer.nonnegative() });
 export const manifestSchema = z.strictObject({
-  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11), z.literal(12)]),
+  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11), z.literal(12), z.literal(13), z.literal(14)]),
   created_at: text, recovery_snapshot_at: text.nullable(), main_snapshot_at: text,
   project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable(), events: file.optional() }),
   rows: integer.nonnegative().max(MAX_ROWS).nullable(),

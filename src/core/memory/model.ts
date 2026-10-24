@@ -1,4 +1,5 @@
 import type { StructuredReport, WorkLinks, WorkMutation } from "../work/model.js";
+import type { Decision } from "../decisions/model.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };
@@ -74,6 +75,7 @@ export interface BeginTaskInput extends WorkLinks {
 }
 
 export interface CheckpointInput extends WorkLinks {
+  decision?: Decision | undefined;
   project_id: string;
   run_id: string;
   topic: string;
@@ -122,6 +124,7 @@ export interface Receipt {
 }
 
 export interface Mutation {
+  decision?: Decision;
   receipt: Receipt;
   project: Project;
   /** Null means create; otherwise compare and increment this project revision. */

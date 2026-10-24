@@ -65,7 +65,7 @@ test("real MCP client discovers tools and saves/searches data across server rest
   // be mistaken for a broken connection: the same client can still save below.
   await assert.rejects(client.listResources(), /Method not found/);
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 20);
+  assert.equal(tools.length, 21);
   assert.equal(tools.find(tool => tool.name === "memory_checkpoint").annotations.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === "memory_query_context").annotations.readOnlyHint, true);
   assert.equal(tools.find(tool => tool.name === "memory_begin_task").inputSchema.properties.actor.type, "string");

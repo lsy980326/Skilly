@@ -164,5 +164,5 @@ test("schema v5 originals are preserved and execution facts round-trip in backup
   const bytes = readFileSync(oldPath); const read = new SqliteViewer(oldPath); read.projects(); read.close(); assert.deepEqual(readFileSync(oldPath), bytes);
   const upgraded = openLocal(oldPath); await upgraded.close();
   const check = new DatabaseSync(oldPath, { readOnly: true });
-  assert.deepEqual(check.prepare("SELECT * FROM projects").all(), original); assert.equal(check.prepare("PRAGMA user_version").get().user_version, 12); check.close();
+  assert.deepEqual(check.prepare("SELECT * FROM projects").all(), original); assert.equal(check.prepare("PRAGMA user_version").get().user_version, 14); check.close();
 });

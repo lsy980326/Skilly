@@ -24,6 +24,8 @@ const assets = new Map([
   ["/session.js", { file: "session.js", type: "text/javascript; charset=utf-8" }],
   ["/reports.js", { file: "reports.js", type: "text/javascript; charset=utf-8" }],
   ["/plans.js", { file: "plans.js", type: "text/javascript; charset=utf-8" }],
+  ["/decisions.js", {file:"decisions.js",type:"text/javascript; charset=utf-8"}],
+  ["/decisions.css", {file:"decisions.css",type:"text/css; charset=utf-8"}],
   ["/list-sorting.js", { file: "list-sorting.js", type: "text/javascript; charset=utf-8" }],
   ["/component-scope.js", { file: "component-scope.js", type: "text/javascript; charset=utf-8" }],
   ["/features.js", { file: "features.js", type: "text/javascript; charset=utf-8" }],
@@ -99,12 +101,17 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         const input = await documentBody(request);
         json(response, 200, await documents.call(url.pathname.endsWith("/preview") ? "preview" : "import", input, reader)); return;
       }
-      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan", "sort"]);
+      const allowed = new Set(["project", "offset", "query", "state", "before", "component", "feature", "view", "skill", "version", "document", "compare", "review", "completed_within", "repository", "environment", "plan", "sort", "subject", "history_offset"]);
       if ([...url.searchParams.keys()].some(key => !allowed.has(key))) {
         throw new ViewerError("invalid_input", "지원하지 않는 조회 조건입니다.");
       }
       if (url.pathname === "/api/projects") { json(response, 200, reader.projects(offset(url))); return; }
       const project = url.searchParams.get("project") ?? "";
+      if(url.pathname === "/api/decisions") {
+        const filters=Object.fromEntries(["subject","repository","environment","component","feature"].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)!]));
+        const history=url.searchParams.get("history_offset")??"0";if(!/^\d{1,3}$/.test(history))throw new ViewerError("invalid_input","이력 위치를 확인해 주세요.");
+        json(response,200,reader.decisions(project,{...filters,history_offset:Number(history),query:url.searchParams.get("query")??"",offset:offset(url),limit:12}));return;
+      }
       const sort=listSort(url.searchParams.has("sort")?url.searchParams.get("sort"):undefined),sorting=sort?{sort}:{};
       const component=componentSelection(url.searchParams.has("component")?url.searchParams.get("component"):undefined),selection=component?{component}:{};
       if(url.pathname === "/api/plans") {

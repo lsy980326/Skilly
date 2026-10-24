@@ -1,4 +1,5 @@
 import type { SqlitePlans } from "../adapters/storage/sqlite/plans.js";
+import { decisionSchema } from "../core/decisions/model.js";
 import { savePlanFields, updatePlanFields, planKey } from "../core/plans/model.js";
 import type { MarkdownLibrary } from "../core/documents/importer.js";
 import { registerSkillSchema, skillKey, type SkillLibrary } from "../core/skills/model.js";
@@ -62,6 +63,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
         supersedes: id.optional(),
         report_origin: reportOrigin,
         report: reportSchema.optional(), ...workLinks,
+        decision: decisionSchema.optional(),
       }),
       input => service.checkpoint(input),
     ),
@@ -86,6 +88,11 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       }),
       input => service.queryContext(input),
     ),
+    memory_query_decisions: define(
+      "Read append-only decision history and explicit current/previous/withdrawn/conflict state. Optional checkpoint.decision is allowed only with kind=decision, this active task, explicit source quote/reference and complete expected_current_ids from this exact subject/scope. Different active choice_keys conflict; no semantic inference or latest-wins. Replacement/withdrawal targets active IDs only and never restores ancestors. Proposals and retrospective reports cannot change current decisions. Source user_statement is agent-supplied attribution, not authenticated approval. claims_verified is always false. Truncated history is unknown, not a complete CAS base. Legacy decisions are not automatically classified. Retrieve originals by memory_get_evidence.",
+      true, z.strictObject({...projectId,repository:scope.default(bound?.binding.repository??"default"),environment:scope.default(bound?.binding.environment??"development"),
+        component:z.union([workKey,z.literal("")]).optional(),feature:z.union([workKey,z.literal("")]).optional(),subject:workKey.optional(),query:z.string().trim().max(200).default(""),
+        history_offset:z.int().min(0).max(200).default(0),offset:z.int().min(0).max(1000000).default(0),limit:z.int().min(1).max(20).default(12)}),input=>service.queryDecisions(input)),
     memory_query_overview: define(
       "Read components, features or tasks with structured reports. query searches feature names, explicitly registered aliases and repository-relative code path segments, and existing linked tasks; match_reasons explains matches. Does not scan files, infer links or classify history. Register aliases/code_paths explicitly in features on begin/checkpoint; same aliases may yield multiple candidates. coverage=service explicitly spans repositories in this project; default repository scope stays bound. Feature current_knowledge evaluates direct test observations as current/stale/conflict/unknown with reasons and execution IDs. Current is Git-version compatibility, not verified feature correctness; read counts/results and truncation. AI reports are never promoted. Reports and feature states remain unverified. Retrieve original evidence on the record's configured connection; service reads do not broaden write permissions.",
       true,

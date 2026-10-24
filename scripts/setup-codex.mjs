@@ -63,6 +63,7 @@ export function setupCodex({ project, db, identity, output }) {
       body: readFileSync(join(skill, "agents/openai.yaml"), "utf8"),
     },
     { path: join(destination, ".agents/skills/use-skilly/references/component-catalogs.md"), body: readFileSync(join(skill, "references/component-catalogs.md"), "utf8") },
+    { path: join(destination, ".agents/skills/use-skilly/references/decisions.md"), body: readFileSync(join(skill, "references/decisions.md"), "utf8") },
     { path: join(destination, installationRelativePath), body: JSON.stringify(installationData(root, db), null, 2) + "\n" },
   ];
   // Preflight every destination before writing; never follow links out of scope.

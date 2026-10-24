@@ -162,6 +162,11 @@ For component-filtered plans, skills and recovery, read
 
 ### Feature evidence currentness
 
+For user choices, corrections, withdrawals or conflicting decisions, read
+[explicit decisions](references/decisions.md) and use the exposed decision query
+before changing a recorded choice. This is separate from test currentness:
+current applicability never authenticates the user or verifies a report.
+
 When `memory_query_overview(view: "features")` returns `current_knowledge`, read
 its status, reason, counts, evidence IDs and truncation together. `current` means
 comparable direct checks at the configured Git version, not a verified feature

@@ -1,4 +1,5 @@
 import { SqlitePlans } from "./plans.js";
+import { SqliteDecisions } from "./decisions.js";
 import { SqliteRunReviews } from "./run-reviews.js";
 import { SqliteSkills } from "./skills.js";
 import { SqliteExecutions } from "./executions.js";
@@ -25,6 +26,7 @@ export class SqliteMemoryStore implements MemoryStore {
   readonly skills: SqliteSkills;
   readonly executions: SqliteExecutions;
   readonly plans: SqlitePlans;
+  readonly decisions: SqliteDecisions;
 
   constructor(private readonly path: string, sources?: SourceProvider, bindings: InstallationComponent[] = []) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
@@ -37,6 +39,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.skills = new SqliteSkills(this.db, bindings);
       this.executions = new SqliteExecutions(this.db, sources);
       this.plans = new SqlitePlans(this.db, sources);
+      this.decisions = new SqliteDecisions(this.db);
     } catch (error) {
       this.db.close();
       throw storageError(error);
@@ -52,8 +55,8 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 12) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
-    if (version === 12) return;
+    if (version > 14) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version === 14) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const lockedVersion = number(this.db.prepare("PRAGMA user_version").get(), "user_version");
@@ -82,6 +85,8 @@ export class SqliteMemoryStore implements MemoryStore {
       if (lockedVersion < 10) this.db.exec(readFileSync(new URL("../../../../migrations/010-feature-discovery.sql", import.meta.url), "utf8"));
       if (lockedVersion < 11) this.db.exec(readFileSync(new URL("../../../../migrations/011-plans.sql", import.meta.url), "utf8"));
       if (lockedVersion < 12) this.db.exec(readFileSync(new URL("../../../../migrations/012-execution-worktrees.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 13) this.db.exec(readFileSync(new URL("../../../../migrations/013-decisions.sql", import.meta.url), "utf8"));
+      if (lockedVersion < 14) this.db.exec(readFileSync(new URL("../../../../migrations/014-decision-guards.sql", import.meta.url), "utf8"));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -208,6 +213,10 @@ export class SqliteMemoryStore implements MemoryStore {
         }
       }
       if (change.work) writeWork(this.db, project.id, change.work);
+      if (change.decision && change.record) {
+        const d=change.decision;
+        this.db.prepare("INSERT INTO decision_events VALUES(?,?,?,?,?,?)").run(project.id,change.record.id,d.subject,d.component_key??"",d.feature_key??"",JSON.stringify(d));
+      }
       for (const report of change.reports ?? []) writeWork(this.db, project.id, report);
       this.db.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?)").run(receipt.scope, receipt.key, receipt.hash, JSON.stringify(receipt.result));
       this.db.exec("COMMIT");

@@ -11,6 +11,7 @@ import { createDocumentImport } from "./documents.js";
 import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
 import { renderTaskRecording } from "./task-recording.js";
+import { createDecisionLibrary } from "./decisions.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
@@ -778,6 +779,11 @@ document.addEventListener("visibilitychange", () => {
   schedule();
 });
 let documentImport;
+let decisionLibrary;
+$("#browse-decisions").addEventListener("click",()=>{
+  decisionLibrary ??= createDecisionLibrary({document,request:api});
+  void decisionLibrary.open(state.projects.find(p=>p.id===state.project)).catch(showError);
+});
 let documentLibrary;
 $("#browse-documents").addEventListener("click", () => {
   documentLibrary ??= createDocumentLibrary({ document, request: api });

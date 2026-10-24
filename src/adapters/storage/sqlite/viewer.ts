@@ -1,4 +1,7 @@
 import { planKey } from "../../../core/plans/model.js";
+import { SqliteDecisions } from "./decisions.js";
+import type { DecisionQuery } from "../../../core/decisions/model.js";
+import { workKey } from "../../../core/work/schema.js";
 import { SqlitePlans } from "./plans.js";
 import { MemoryError } from "../../../core/memory/model.js";
 import { unreviewedRunSql } from "./run-reviews.js";
@@ -67,6 +70,16 @@ export class SqliteViewer {
   }
   close(): void { this.db.close(); }
 
+  decisions(projectId:string, input:Omit<DecisionQuery,"project_id">) {
+    this.requireProject(projectId); pageOffset(input.offset);
+    if(input.query.length>200 || [input.component,input.feature].some(v=>v!==undefined&&v!==""&&!workKey.safeParse(v).success)
+      || (input.subject!==undefined&&!workKey.safeParse(input.subject).success)
+      || (input.history_offset!==undefined&&(!Number.isSafeInteger(input.history_offset)||input.history_offset<0||input.history_offset>200))
+      || [input.repository,input.environment].some(v=>v!==undefined&&(!v.trim()||v!==v.trim()||v.length>100)))
+      throw new ViewerError("invalid_input","결정 조회 범위를 확인해 주세요.");
+    return new SqliteDecisions(this.db).query({...input,project_id:projectId});
+  }
+
   plans(projectId:string,options:{plan_key?:string;repository?:string;environment?:string;version?:number;query?:string;offset?:number;sort?:ListSort;component?:string}={}) {
     this.requireProject(projectId);
     componentSelection(options.component);
@@ -132,8 +145,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v12)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v14)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }
