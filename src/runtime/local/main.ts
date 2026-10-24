@@ -22,6 +22,9 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly skill-export --db /absolute/memory.sqlite --project-id <UUID> --skill <key> [--version <version>] --output /absolute/new-package.json
   skilly skill-install --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
   skilly skill-verify --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
+  skilly skill-update-preview --from /absolute/old.json --input /absolute/new.json --project /absolute/project --tool codex|cursor [--folder <name>]
+  skilly skill-update --from /absolute/old.json --input /absolute/new.json --project /absolute/project --tool codex|cursor --expect <preview-hash> --state /absolute/new-recovery-directory [--folder <name>]
+  skilly skill-update-recover --project /absolute/project --tool codex|cursor --folder <name> --state /absolute/recovery-directory
   skilly --help
 
 Default DB: ~/.skilly/memory.sqlite
@@ -47,18 +50,19 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     options: { db: { type: "string" }, project: { type: "string" }, help: { type: "boolean", short: "h" },
       input: { type: "string" }, output: { type: "string" }, "project-id": { type: "string" },
-      skill: { type: "string" }, version: { type: "string" }, tool: { type: "string" }, folder: { type: "string" } },
+      skill: { type: "string" }, version: { type: "string" }, tool: { type: "string" }, folder: { type: "string" },
+      from: { type: "string" }, expect: { type: "string" }, state: { type: "string" } },
     allowPositionals: true,
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
   const [command, tool] = positionals;
-  if (command && ["skill-export", "skill-install", "skill-verify"].includes(command)) {
+  if (command && ["skill-export", "skill-install", "skill-verify", "skill-update-preview", "skill-update", "skill-update-recover"].includes(command)) {
     if (positionals.length !== 1) throw new MemoryError("invalid_command", "Use one skill package command.");
     const { skillPackageCommand } = await import("./skill-package.js");
     process.stdout.write(`${JSON.stringify(skillPackageCommand(command, values))}\n`);
     return;
   }
-  if (values.skill || values.version || values.tool || values.folder) throw new MemoryError("invalid_input", "Skill options require a skill package command.");
+  if (values.skill || values.version || values.tool || values.folder || values.from || values.expect || values.state) throw new MemoryError("invalid_input", "Skill options require a skill package command.");
   if (command && ["backup", "restore", "export", "import"].includes(command)) {
     if (positionals.length !== 1) throw new MemoryError("invalid_command", "Maintenance takes one command only.");
     const { maintenance } = await import("./maintenance.js");

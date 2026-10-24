@@ -5,9 +5,13 @@ import { installSkillPackage, readSkillPackage, verifySkillPackage } from "../..
 import { createSkillPackage } from "../../core/skills/package.js";
 import { registerSkillSchema } from "../../core/skills/model.js";
 import { MemoryError } from "../../core/memory/model.js";
+import { applySkillUpdate, previewSkillUpdate, recoverSkillUpdate } from "../../adapters/skills/update.js";
 
-type Options = { db?: string; input?: string; output?: string; project?: string; "project-id"?: string; skill?: string; version?: string; tool?: string; folder?: string };
+type Options = { db?: string; input?: string; output?: string; project?: string; "project-id"?: string; skill?: string; version?: string; tool?: string; folder?: string;
+  from?: string; expect?: string; state?: string };
 export function skillPackageCommand(command: string, options: Options) {
+  if (command.startsWith("skill-update")) return updateCommand(command, options);
+  if (options.from || options.expect || options.state) throw new MemoryError("invalid_input", "Update options require a skill-update command.");
   if (command === "skill-export") {
     if (!options.db || !options["project-id"] || !options.skill || !options.output || !isAbsolute(options.output)) throw new MemoryError("invalid_input", "skill-export requires --db, --project-id, --skill and an absolute --output file.");
     if (options.input || options.project || options.tool || options.folder) throw new MemoryError("invalid_input", "Unsupported export options.");
@@ -27,5 +31,27 @@ export function skillPackageCommand(command: string, options: Options) {
   const p = readSkillPackage(options.input), tool = options.tool as "codex" | "cursor";
   const result = command === "skill-install" ? installSkillPackage(p, options.project, tool, options.folder) : verifySkillPackage(p, options.project, tool, options.folder);
   if (result.state !== "matches") process.exitCode = 2;
+  return result;
+}
+
+function updateCommand(command: string, options: Options) {
+  if (!options.project || !["codex", "cursor"].includes(options.tool ?? "") || options.db || options.output || options["project-id"] || options.skill || options.version)
+    throw new MemoryError("invalid_input", "Update uses explicit --project, --tool and package/state files; no DB options.");
+  const tool = options.tool as "codex" | "cursor";
+  if (command === "skill-update-recover") {
+    if (!options.state || !options.folder || options.from || options.input || options.expect) throw new MemoryError("invalid_input", "Recovery requires --state and --folder; no package or approval options.");
+    const result = recoverSkillUpdate({ root: options.project, tool, folder: options.folder, state: options.state });
+    if (result.status === "recovery_blocked" || result.lock_status === "release_failed") process.exitCode = 2;
+    return result;
+  }
+  if (!options.from || !options.input) throw new MemoryError("invalid_input", "Preview/update require both --from old-package and --input new-package.");
+  const input = { before: readSkillPackage(options.from), after: readSkillPackage(options.input), root: options.project, tool, folder: options.folder };
+  if (command === "skill-update-preview") {
+    if (options.expect || options.state) throw new MemoryError("invalid_input", "Preview is read-only; do not supply state or approval options.");
+    const result = previewSkillUpdate(input); if (!result.applicable) process.exitCode = 2; return result;
+  }
+  if (!options.expect || !options.state) throw new MemoryError("invalid_input", "Apply requires the reviewed --expect preview hash and a fresh --state directory.");
+  const result = applySkillUpdate(input, { expect: options.expect, state: options.state });
+  if (result.status !== "applied" || result.lock_status === "release_failed") process.exitCode = 2;
   return result;
 }

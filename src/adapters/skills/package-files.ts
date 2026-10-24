@@ -5,7 +5,7 @@ import { parseSkillPackage, type SkillPackage } from "../../core/skills/package.
 import { skillKey, type SkillVersion } from "../../core/skills/model.js";
 import { LocalSkillObserver } from "./local-observer.js";
 
-function safeDirectory(path: string): void {
+export function safeDirectory(path: string): void {
   if (!isAbsolute(path) || resolve(path) !== path) throw new MemoryError("invalid_path", "Use a normalized absolute path.");
   let current = parse(path).root;
   for (const part of path.slice(current.length).split("/").filter(Boolean)) {
