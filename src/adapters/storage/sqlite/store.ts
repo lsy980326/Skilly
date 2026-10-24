@@ -14,6 +14,7 @@ import {
   type Receipt, type RecordQuery, type Run,
 } from "../../../core/memory/model.js";
 import type { MemoryStore } from "../../../core/memory/ports.js";
+import { validateMutationOwnership } from "../../../core/memory/atomic-commit.js";
 import { SqliteWorkReader, writeWork } from "./work.js";
 
 import type { InstallationComponent } from "../../../core/viewer/components.js";
@@ -176,6 +177,7 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   async commit(change: Mutation): Promise<"committed" | "conflict"> {
+    validateMutationOwnership(change);
     try { this.db.exec("BEGIN IMMEDIATE"); } catch (error) { throw storageError(error); }
     try {
       assertWritable(this.db,change.project.id);
@@ -192,8 +194,8 @@ export class SqliteMemoryStore implements MemoryStore {
         }
         this.db.prepare("INSERT INTO projects VALUES (?, ?, ?, ?, ?)").run(project.id, project.key, project.name, project.revision, project.created_at);
       } else {
-        const updated = this.db.prepare("UPDATE projects SET revision = ? WHERE id = ? AND revision = ?")
-          .run(project.revision, project.id, change.expected_revision);
+        const updated = this.db.prepare("UPDATE projects SET revision = ? WHERE id = ? AND revision = ? AND project_key = ? AND created_at = ?")
+          .run(project.revision, project.id, change.expected_revision, project.key, project.created_at);
         if (updated.changes !== 1) {
           this.db.exec("ROLLBACK");
           return "conflict";
@@ -201,22 +203,29 @@ export class SqliteMemoryStore implements MemoryStore {
       }
       if (change.run) {
         const run = change.run;
-        this.db.prepare(`INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`)
+        const saved = this.db.prepare(`INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at
+          WHERE runs.project_id = excluded.project_id AND runs.repository = excluded.repository AND runs.environment = excluded.environment`)
           .run(run.id, run.project_id, run.goal, run.mode, run.environment, run.repository, run.state, run.created_at, run.updated_at);
+        if (saved.changes !== 1) { this.db.exec("ROLLBACK"); return "conflict"; }
         if (run.actor) {
           this.db.prepare("INSERT INTO run_actors VALUES (?, ?) ON CONFLICT(run_id) DO NOTHING").run(run.id, run.actor);
         }
       }
       for (const r of [...(change.record ? [change.record] : []), ...(change.records ?? [])]) {
+        if (!this.db.prepare("SELECT 1 FROM runs WHERE project_id=? AND id=? AND repository=? AND environment=?")
+          .get(project.id, r.run_id, r.repository, r.environment)) {
+          this.db.exec("ROLLBACK"); return "conflict";
+        }
         this.db.prepare(`INSERT INTO records
           (id, project_id, run_id, topic, kind, body, environment, repository, source_fingerprint, observed_at, recorded_at, supersedes, superseded_by, report_origin)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(r.id, r.project_id, r.run_id, r.topic, r.kind, r.body, r.environment, r.repository, r.source_fingerprint,
             r.observed_at, r.recorded_at, r.supersedes, r.superseded_by, r.report_origin);
         if (r.supersedes) {
-          const updated = this.db.prepare("UPDATE records SET superseded_by = ? WHERE project_id = ? AND id = ? AND superseded_by IS NULL")
-            .run(r.id, r.project_id, r.supersedes);
+          const updated = this.db.prepare(`UPDATE records SET superseded_by = ? WHERE project_id = ? AND id = ? AND superseded_by IS NULL
+            AND topic=? AND kind=? AND repository=? AND environment=? AND observed_at<=?`)
+            .run(r.id, r.project_id, r.supersedes, r.topic, r.kind, r.repository, r.environment, r.observed_at);
           if (updated.changes !== 1) {
             this.db.exec("ROLLBACK");
             return "conflict";

@@ -1,16 +1,17 @@
 import {
   MemoryError, parseJsonObject, recordStatus,
   type BeginTaskInput, type CheckpointInput, type Context, type FinishTaskInput,
-  type JsonObject, type MemoryRecord, type Mutation, type Project, type QueryInput,
+  type JsonObject, type MemoryRecord, type Project, type QueryInput,
   type RegisterProjectInput, type Run,
 } from "./model.js";
 import type { MemoryStore } from "./ports.js";
+import { commitWithReceipt, type PreparedChange } from "./atomic-commit.js";
 import type { Component, OverviewQuery, WorkLinks } from "../work/model.js";
 import { validateDecision, type DecisionQuery } from "../decisions/model.js";
 
 const encoder = new TextEncoder();
 const CONTEXT_BYTES = 32 * 1024;
-type Change = Omit<Mutation, "receipt"> & { result: JsonObject };
+type Change = PreparedChange;
 
 export class MemoryService {
   constructor(private readonly store: MemoryStore, private readonly context: Context, private readonly projectRoot?: string) {}
@@ -269,30 +270,7 @@ export class MemoryService {
   }
 
   private async mutate(scope: string, key: string, payload: unknown, build: () => Promise<Change>): Promise<JsonObject> {
-    const hash = this.context.hash(payload);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const existing = await this.store.getReceipt(scope, key);
-      if (existing) {
-        if (existing.hash !== hash) throw new MemoryError("idempotency_conflict", "This key was already used with different input.");
-        return existing.result;
-      }
-      let next: Change;
-      try { next = await build(); }
-      catch (error) {
-        // A concurrent copy may finish after our receipt read and before the
-        // state checks (for example closing the same run). Prefer its receipt.
-        const raced = await this.store.getReceipt(scope, key);
-        if (raced) {
-          if (raced.hash !== hash) throw new MemoryError("idempotency_conflict", "This key was already used with different input.");
-          return raced.result;
-        }
-        throw error;
-      }
-      const { result, ...change } = next;
-      const status = await this.store.commit({ ...change, receipt: { scope, key, hash, result } });
-      if (status === "committed") return result;
-    }
-    throw new MemoryError("conflict", "Concurrent changes prevented this write. Retry with the same idempotency key.", true);
+    return commitWithReceipt(this.store, scope, key, this.context.hash(payload), build);
   }
 }
 

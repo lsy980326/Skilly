@@ -1,11 +1,12 @@
-import type { MemoryRecord, Mutation, Project, Receipt, RecordQuery, Run } from "./model.js";
+import type { MemoryRecord, Project, RecordQuery, Run } from "./model.js";
+import type { AtomicCommitStore } from "./atomic-commit.js";
 import type { WorkReader } from "../work/model.js";
 import type { ExecutionReader } from "../execution/model.js";
 import type { SkillUsageReader } from "../skills/usage.js";
 import type { DecisionReader } from "../decisions/model.js";
 
 /** Storage owns atomicity; domain rules are computed before a versioned commit. */
-export interface MemoryStore {
+export interface MemoryStore extends AtomicCommitStore {
   readonly decisions: DecisionReader;
   readonly taskSkills: SkillUsageReader;
   readonly work: WorkReader;
@@ -15,8 +16,6 @@ export interface MemoryStore {
   listProjects(after: string, limit: number): Promise<Project[]>;
   getRun(projectId: string, runId: string): Promise<Run | undefined>;
   getRecord(projectId: string, recordId: string): Promise<MemoryRecord | undefined>;
-  getReceipt(scope: string, key: string): Promise<Receipt | undefined>;
-  commit(mutation: Mutation): Promise<"committed" | "conflict">;
   query(input: RecordQuery): Promise<MemoryRecord[]>;
   maxSequence(projectId: string): Promise<number>;
   unfinishedRuns(projectId: string, repository: string, environment: string, limit: number, offset: number, component?: string): Promise<Run[]>;
