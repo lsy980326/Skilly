@@ -1,31 +1,12 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { observeCommand } from "./process-observer.js";
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
-import { performance } from "node:perf_hooks";
+import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { loadProjectBinding } from "../../adapters/project/binding.js";
 import { MemoryError } from "../../core/memory/model.js";
-import { prepareVitest } from "./vitest-collector.js";
-import { nodeTestArguments, testCollector } from "./test-collector.js";
-import { Readable } from "node:stream";
 import { openLocal } from "./app.js";
 import { observeSource } from "../../adapters/project/source-version.js";
-
-const HASH_LIMIT = 1024 * 1024;
-function counter() {
-  const hash = createHash("sha256");
-  let bytes = 0, hashed = 0;
-  return {
-    add(chunk: Buffer) {
-      bytes += chunk.length;
-      const part = chunk.subarray(0, Math.max(0, HASH_LIMIT - hashed));
-      hash.update(part); hashed += part.length;
-    },
-    result: () => ({ bytes, hashed, hash: hash.digest("hex") }),
-  };
-}
 
 /** Explicit opt-in process boundary. No imported caller-supplied exit code is accepted. */
 export async function executeCommand(argv: string[]): Promise<number> {
@@ -48,68 +29,17 @@ export async function executeCommand(argv: string[]): Promise<number> {
   if (!file.isFile() || file.isSymbolicLink()) throw new MemoryError("invalid_path", "Use an existing regular DB file.");
   const root = realpathSync(values.project), binding = loadProjectBinding(root);
   const app = openLocal(values.db, binding, root);
-  let vitest: ReturnType<typeof prepareVitest> | undefined;
   try {
     const resolved = await app.dispatcher.call("memory_resolve_project", {});
     const project = z.object({ id: z.uuid() }).parse(resolved["project"]);
     const runId = values["run-id"]!;
     await app.dispatcher.call("memory_get_status", { project_id: project.id, run_id: runId });
     if (values["record-id"]) await app.dispatcher.call("memory_get_evidence", { project_id: project.id, record_id: values["record-id"] });
-    if (values["test-format"] === "vitest") vitest = prepareVitest(command, args, root);
-    // Store a generic executable label only. Arguments, paths, cwd and environment are not persisted.
-    const name = basename(command);
-    const executable = /^[a-zA-Z0-9._+-]{1,80}$/.test(name) ? name : "local-command";
-    const id = app.executions.start({ project_id: project.id, run_id: runId,
-      source_observation: observeSource(root, binding),
-      ...(values["record-id"] ? { record_id: values["record-id"] } : {}), executable,
-      command_hash: createHash("sha256").update(JSON.stringify([command, ...args])).digest("hex") });
-    const out = counter(), err = counter(), at = performance.now();
-    let interrupted = false, timedOut = false, incomplete = false, launchError: string | null = null;
-    const collectedArgs = vitest?.args ?? nodeTestArguments(command, args, root), tests = testCollector(Boolean(collectedArgs));
-    const child = spawn(command, collectedArgs ?? args, { cwd: root, ...(vitest ? { env: vitest.env } : {}), shell: false, detached: true, stdio: ["ignore", "pipe", "pipe", "pipe"] });
-    const detailStream = child.stdio[3], stdoutStream = child.stdout, stderrStream = child.stderr;
-    if (!(detailStream instanceof Readable) || !stdoutStream || !stderrStream) throw new MemoryError("execution_pipe_failed", "Process streams unavailable; execution remains unconfirmed.");
-    detailStream.on("data", (chunk: Buffer) => tests.add(chunk));
-    detailStream.on("error", () => { incomplete = true; });
-    stdoutStream.on("data", (chunk: Buffer) => out.add(chunk));
-    stderrStream.on("data", (chunk: Buffer) => err.add(chunk));
-    stdoutStream.on("error", () => { incomplete = true; });
-    stderrStream.on("error", () => { incomplete = true; });
-    let killTimer: NodeJS.Timeout | undefined, drainTimer: NodeJS.Timeout | undefined;
-    let stopSettled: Promise<void> | undefined;
-    const signalGroup = (signal: NodeJS.Signals) => {
-      if (!child.pid) return;
-      try { process.kill(-child.pid, signal); }
-      catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error; }
-    };
-    const stop = () => {
-      signalGroup("SIGTERM");
-      stopSettled ??= new Promise<void>(done => { killTimer = setTimeout(() => { signalGroup("SIGKILL"); done(); }, 1000); });
-      // A detached descendant may keep pipes open. Mark hashing incomplete below.
-      drainTimer ??= setTimeout(() => { incomplete = true; stdoutStream.destroy(); stderrStream.destroy(); detailStream.destroy(); }, 2500);
-    };
-    const onSignal = () => { interrupted = true; stop(); };
-    process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
-    const timer = setTimeout(() => { timedOut = true; stop(); }, timeout);
-    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(done => {
-      child.once("error", error => { launchError = "code" in error && typeof error.code === "string" ? error.code : "SPAWN_ERROR"; });
-      child.once("close", (code, signal) => done({ code, signal }));
-    });
-    // close only describes the direct child/pipes. Its silent descendants may still be alive.
-    clearTimeout(timer); await stopSettled; clearTimeout(killTimer); clearTimeout(drainTimer);
-    process.removeListener("SIGINT", onSignal); process.removeListener("SIGTERM", onSignal);
-    const stdout = out.result(), stderr = err.result();
-    const outcome = launchError ? "launch_failed" : interrupted ? "interrupted" : timedOut ? "timed_out" : "exited";
-    try {
-      app.executions.finish(id, { outcome, exit_code: result.code, signal: result.signal, error_code: launchError,
-        duration_ms: Math.round(performance.now() - at), stdout_bytes: stdout.bytes, stderr_bytes: stderr.bytes,
-        stdout_hash: stdout.hash, stderr_hash: stderr.hash, stdout_hashed_bytes: stdout.hashed, stderr_hashed_bytes: stderr.hashed, output_complete: incomplete ? 0 : 1 }, (vitest ?? tests).finish(outcome === "exited" && !incomplete), observeSource(root, binding));
-    } catch {
-      throw new MemoryError("execution_save_failed", "Process ended but result storage is unconfirmed. Never replay the command to retry storage.", false,
-        { execution_id: id, persistence: "unconfirmed", automatic_replay: false });
-    }
-    process.stdout.write(`${JSON.stringify({ status: "persisted", execution_id: id, project_id: project.id, run_id: runId,
-      outcome, exit_code: result.code, signal: result.signal, claims_verified: false, content_stored: false })}\n`);
-    return launchError ? 127 : interrupted ? 130 : timedOut ? 124 : result.code ?? 128;
-  } finally { try { vitest?.close(); } finally { await app.close(); } }
+    const result = await observeCommand({command,args,root,timeout,testFormat:values["test-format"] as "auto"|"vitest",
+      sink:app.executions,source:()=>observeSource(root,binding),start:{project_id:project.id,run_id:runId,
+        ...(values["record-id"]?{record_id:values["record-id"]}:{})}});
+    process.stdout.write(`${JSON.stringify({ status: "persisted", execution_id: result.execution_id, project_id: project.id, run_id: runId,
+      outcome: result.outcome, exit_code: result.exit_code, signal: result.signal, claims_verified: false, content_stored: false })}\n`);
+    return result.code;
+  } finally { await app.close(); }
 }

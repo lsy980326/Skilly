@@ -10,11 +10,11 @@
 | 대상 | 구현 범위 | 실행 연결 |
 |---|---|---|
 | SQLite | 기존 전체 MemoryStore와 업무 확장, 새 공통 저장 계약 | 기존 로컬 MCP/CLI 유지 |
-| D1 | 기본 작업·원문·보고·분류와 결정 이력·계획 버전/진행의 원자적 저장, 범위 고정 비동기 조회 | 주입된 Workers binding을 받는 모듈만 구현 |
+| D1 | 작업·원문·보고·분류, 결정 이력·계획 버전/진행, 실행 관측·검사 상세·코드 버전과 계획 근거 연결 | 주입된 Workers binding을 받는 모듈만 구현 |
 | 클라우드 HTTP·MCP | 아직 없음 | 배포·네트워크·인증 설정·실사용 DB 연결 없음 |
 
 D1 모듈은 전체 `MemoryStore` 구현이 아니다.
-스킬, 실행 관측, 이벤트·중단 지점, 이전 권한은 아직 D1에서 처리하지 않는다.
+스킬, 이벤트·중단 지점, 이전 권한은 아직 D1에서 처리하지 않는다.
 이 필드와 알 수 없는 최상위 입력을 `unsupported_capability`로 **SQL 제출 전에 거절**한다.
 기본 `kind=decision` 원문 보관과 구조화 결정 이력 지원은 서로 다르다.
 원문의 `superseded_by`를 미리 채운 역사 자료 가져오기도 지원하지 않는다.
@@ -29,8 +29,8 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다.
 | 순서 | 범위 | 먼저 필요한 자료 | 상태 |
 |---|---|---|---|
 | 1 | 작업 분류·제목·보고, 작업 목록·기록 원문 조회 | 프로젝트·작업·원문·영수증 | 구현 |
-| 2 | 결정·정정·철회, 계획 버전·항목·완료 조건·진행 보고 | 작업 ID·기능·구성요소·원문 보고 | 구현. 실제 검사 연결은 미지원 |
-| 3 | 검사 실행 관측·통과/실패 상세·코드 버전 | 작업·원문 ID와 출처 | 후속. 계획의 검사 근거 연결도 이 단계 필요 |
+| 2 | 결정·정정·철회, 계획 버전·항목·완료 조건·진행 보고 | 작업 ID·기능·구성요소·원문 보고 | 구현 |
+| 3 | 검사 실행 관측·통과/실패 상세·코드 버전 | 작업·원문 ID와 출처 | 구현. 004 스키마에서 계획의 검사 근거 연결 지원 |
 | 4 | 훅 이벤트·작업 연결·중단 당시 마지막 저장 지점 | 저장된 작업·원문·실행 ID | 후속 |
 | 5 | 스킬 전문·불변 패키지·설치 관측·작업별 사용 버전 | 프로젝트 범위·작업·원문·관측 연결 | 후속. 패키지 카탈로그 자체는 앞선 단계와 독립 구현 가능 |
 | 6 | 현재 지식 통합 조회·이전 쓰기 세대 | 위 자료의 범위·버전·연결 계약 | 후속 |
@@ -54,7 +54,7 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다.
 
 현재 첫 묶음은 기능의 **별칭·코드 경로 메타데이터를 지원하지 않는다**.
 중첩된 이 필드도 SQL 전에 `unsupported_capability`로 거절한다. 입력을 버린 뒤
-저장 성공으로 표시하지 않는다. 미지원 스킬·검사·이벤트 역시 그대로 거절한다.
+저장 성공으로 표시하지 않는다. 미지원 스킬·이벤트 역시 그대로 거절한다.
 메타데이터가 늘어도 요청 64 KiB/40문장 상한은 유지한다. 작은 분류·보고는 함께 저장할 수
 있지만 12개 분류를 한꺼번에 넣는 등 문장 예산을 넘는 조합은 **분할 자동 저장 없이 거절**한다.
 
@@ -82,14 +82,15 @@ constructor의 범위는 호스트가 결정하며 요청 본문으로 덮어쓰
 및 `pagination_reason: offset_limit`로 표시한다. 조회는 과거 미분류를 추정하거나 DB·설정을 수정하지 않는다.
 
 반환의 `claims_verified=false`, `capture=agent_reports_only`,
-`execution_observations=unsupported`는 AI 보고와 미구현 실행 관측을 구분한다.
+작업/원문 조회의 `execution_observations=unsupported`는 이 조회가 실행 근거를
+포함하지 않는다는 뜻이다. 실행 관측은 별도의 `D1ExecutionReader`에서 읽는다.
 최신 요약·저장 성공·작업 종료로 검증 완료를 판정하지 않는다.
 
 ### 두 번째 묶음: 결정 이력과 계획
 
 `003-decisions-plans.sql`은 001·002 다음 테스트/신규 D1에만 적용하는 추가 스키마다.
 기존 SQLite v15 마이그레이션·설정·MCP·화면에는 등록하지 않는다. 원격 배포나
-전체 `MemoryStore` 구현이 아니며 실행 관측·팀 인증·자동 전송은 추가하지 않는다.
+전체 `MemoryStore` 구현이 아니며 팀 인증·자동 전송은 추가하지 않는다.
 
 **결정**은 기존 `Mutation.decision`과 새 `record(kind=decision)`를 같이 저장한다.
 `D1Decisions(binding, scope).query({subject, component_key?, feature_key?, history_offset?})`로
@@ -138,9 +139,58 @@ query는 최신 목록 또는 `{plan_key, version?, remaining_only?}` 상세를 
 입력 원문/조건의 개별 상한과 별도로 전체 mutation 64 KiB/40문장 상한을 유지하므로 가장 큰 값들을
 한번에 조합한 요청은 저장 전에 거절할 수 있다. source_ref는 출처 문자열이며 파일을 열거나 실행하지 않는다.
 
-아직 `execution_ids`가 있는 진행 요청은 unsupported_capability로 거절한다. 응답의 evidence도
-unsupported이며 완료는 completed_reported·claims_verified=false다. 직접 검사 수집/코드 버전 비교까지
-D1에서 지원한다고 표시하지 않는다. 계획 쓰기는 별도 전송 큐에 자동 보관하지 않는다.
+003까지만 적용한 DB는 `execution_ids`가 있는 진행 요청을 unsupported_capability로 거절한다.
+004 적용 후에는 아래의 근거 연결을 제공한다. 완료는 여전히 completed_reported·claims_verified=false이며
+계획 쓰기는 별도 전송 큐에 자동 보관하지 않는다.
+
+### 세 번째 묶음: 실행 관측과 계획 근거 연결
+
+`004-execution-evidence.sql`은 001–003 다음 **선택한 신규/테스트 D1**에 명시적으로 적용한다.
+기존 SQLite v15 마이그레이션과 실사용 DB, MCP, 화면은 전환하지 않는다.
+
+`D1Executions(binding, scope, sourceProvider?)`는 내부 호스트용 비동기 저장·조회 모듈이다.
+`start({idempotency_key,run_id,record_id?,executable,command_hash,source_observation?})`는
+미확정 관측 ID를, `finish({idempotency_key,execution_id,result,details?,source_after?})`는
+마감 영수증을 반환한다. `list(run_id,offset?)`로 새 연결에서도 관측을 읽는다.
+
+- 실제 명령 실행은 Node의 `observeCommand`가 담당한다. 기존 SQLite CLI와 동일한 수집 코드를
+  재사용하고 저장 sink만 await한다. Node 테스트 이벤트와 지원 Vitest 수집기의 결과를 사용하며
+  stdout 문자열이나 AI의 통과 보고를 검사 개수로 바꾸지 않는다.
+- D1은 프로세스를 실행하지 않는다. 이 쓰기는 호스트 내부 경계이며 AI MCP 도구나 공개 HTTP
+  입력으로 노출하지 않는다. `source=local_runner`는 로컬 출처 표시이고 원격 인증·서명·증명이 아니다.
+- 시작은 정확한 범위의 활성 작업과 같은 작업의 선택 원문을 요구한다. 마감은 이미 시작한 관측만
+  한 번 허용하며, 작업이 먼저 종료돼도 그 관측의 결과 마감은 가능하다. ID·명령 해시·시작 시각·
+  before 소스는 불변이고, 마감 후 덮어쓰기·삭제도 DB 트리거로 막는다.
+- 시작/마감의 관측·상세·소스·프로젝트 revision·영수증은 같은 CAS 배치에서 확정한다.
+  응답 유실은 **원래 입력/키의 영수증만** 재조회한다. 시작 영수증 재생은 실행 허가나 프로세스
+  재개가 아니다. 저장 실패를 해결하려고 명령을 다시 실행하지 않는다. 자동 큐는 없다.
+- 계획 진행의 `execution_ids`는 최대 4개의 같은 프로젝트·작업·범위 관측만 연결한다.
+  링크는 진행 보고·기대 갱신 ID·완료 조건·영수증과 같은 원자 배치로 저장한다. 미확정·실패 관측도
+  그대로 연결해 표시하며, 검사가 보고된 진행률을 자동 변경하지 않는다.
+- 계획 상세는 한 업무 SQL snapshot에서 연결 관측·검사 상세·before/after를 함께 읽는다.
+  항목별 `evidence`에는 current/stale/conflict/unknown과 집계·실행 ID·결과 요약이 포함된다.
+  상세의 공통 `execution_details.items`에서 ID로 중복 제거한 검사 상세·실패 항목·코드 비교를 읽는다.
+  이 공통 투영은 32 KiB를 넘으면 omitted_execution_ids·truncated를 명시하고, 전문은 실행 목록에서
+  조회한다. 같은 실행을 여러 항목에 연결해도 실패 이름·소스 전체를 항목마다 복제하지 않는다.
+  SQL 중간 집계도 항목에는 ID만 넣고 실행은 중복 제거한다. 저장된 검사 상세가 4 KiB를 넘으면
+  계획 투영에서는 개수·결과를 유지하고 실패 이름을 생략해 detail_projection_truncated와
+  failures_truncated로 표시한다. 실행 목록의 원래 상세는 보존하므로 해당 ID를 다시 조회할 수 있다.
+  기존 `assessFeatureKnowledge`·`compareExecutionSource`를 재사용한다. 통과 판정에는 종료 코드뿐 아니라
+  온전한 테스트 요약·통과/실패·취소 여부가 필요하다. 모든 응답의 claims_verified는 false다.
+- 현재 코드의 관측은 **조회 요청이 아니라 호스트가 주입한 sourceProvider**에서만 받는다.
+  D1 모듈은 Git을 실행하거나 저장된 경로를 열지 않는다. 공급자가 없는 Worker/새 연결은 unknown이며
+  저장된 after를 현재 코드로 복사하지 않는다. dirty 코드는 수집된 공개 소스 지문으로 비교하고,
+  누락·제외·불안정한 지문은 비교 불가로 남긴다. 같음은 코드 호환성일 뿐 제품 정확성은 아니다.
+- 실행 목록은 최대 10개/64 KiB와 live_offset 상한을 사용한다. 응답 한도로 생략한 투영은
+  projection_truncated 및 다음 위치로 표시한다. 상세 전체는 기존 128 KiB를 유지하며 초과 시
+  resource_limit이다. 테스트 상세는 최대 20개 실패 이름/각 200자와 명시적 잘림 표시를 보존한다.
+- 명령 인자·출력 전문·환경변수·실제 경로는 저장하지 않는다. 출력 해시는 스트림당 최대 1 MiB이며
+  hashed_bytes와 전체 bytes가 다를 수 있다. output_complete는 스트림 마감 여부이지 전체 해시 보장이 아니다.
+
+검증은 합성 DTO로 경계/장애를 주입하는 검사와, **실제 로컬 자식 프로세스 수집 → 로컬 D1 →
+계획 연결 → 새 바인딩/workerd 재실행 후 조회**를 구분한다. 원격 D1·계정 인증·네트워크 장애·
+Codex 새 MCP의 D1 실행기 연결은 검증 범위가 아니다. 기존 003만 있는 계획은 계속 읽을 수 있고,
+실행 스키마가 없으면 근거 상태를 미지원으로 반환한다.
 
 ## 공통 저장 규칙
 
@@ -240,7 +290,7 @@ D1 어댑터의 현재 보수적 상한은 **요청 64 KiB, 영수증 16 KiB, �
 
 이 harness의 배치 트랜잭션은 Node SQLite로 직접 구현했다. 실제 D1 런타임의
 호환성 근거는 별도의 `tests/d1-runtime.test.mjs`, `tests/d1-work.test.mjs`,
-`tests/d1-decisions-plans.test.mjs`에서 구분한다.
+`tests/d1-decisions-plans.test.mjs`, `tests/d1-executions.test.mjs`에서 구분한다.
 
 ### 실제 로컬 D1 런타임
 

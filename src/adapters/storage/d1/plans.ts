@@ -7,12 +7,13 @@ import { d1SavePlanSchema, d1UpdatePlanSchema, type D1PlanChange } from "./plan-
 import { D1PlanReader } from "./plan-reader.js";
 import { canonical, hashText, json, rows, scope, type D1Scope } from "./query.js";
 import type { D1Binding } from "./binding.js";
+import type { SourceProvider } from "../../../core/execution/currentness.js";
 
 /** Host-scoped plan commands. No filesystem reads, automatic queue or live-DB wiring. */
 export class D1Plans extends D1PlanReader {
   private readonly writeScope:D1Scope;
   private readonly store:D1AtomicCommitStore;
-  constructor(private readonly binding:D1Binding,s:D1Scope){super(binding,s);this.writeScope=scope(s);this.store=new D1AtomicCommitStore(binding,s.project_id);}
+  constructor(private readonly binding:D1Binding,s:D1Scope,sources?:SourceProvider){super(binding,s,sources);this.writeScope=scope(s);this.store=new D1AtomicCommitStore(binding,s.project_id);}
   private async write(c:D1PlanChange,result:JsonObject):Promise<JsonObject> {
     const s=this.writeScope,digest=await hashText(canonical({operation:c.operation,input:c.input}));
     return commitWithReceipt(this.store,s.project_id,c.input.idempotency_key,digest,async()=>{
@@ -36,7 +37,6 @@ export class D1Plans extends D1PlanReader {
     const parsed=d1UpdatePlanSchema.safeParse(input);
     if(!parsed.success)throw new MemoryError("invalid_input","Invalid plan progress request.");
     const i=parsed.data;
-    if(i.execution_ids.length)throw new MemoryError("unsupported_capability","D1 execution links are not supported yet.");
     const id=crypto.randomUUID();
     return this.write({operation:"update",input:{...i,...this.writeScope},id,created_at:new Date().toISOString()},
       {status:"persisted",update_id:id,plan_key:i.plan_key,version:i.version,item_key:i.item_key,state:i.state,claims_verified:false,recovery_queued:false});
