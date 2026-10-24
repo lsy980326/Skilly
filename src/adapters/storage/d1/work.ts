@@ -20,7 +20,7 @@ export function validateD1Work(change: Mutation): WorkMutation[] {
   for (const entry of entries) {
     if (!metadata.safeParse(entry).success) throw new MemoryError("invalid_input", "Invalid D1 work metadata.");
     if (entry.features?.some(feature => feature.aliases !== undefined || feature.code_paths !== undefined)) {
-      throw new MemoryError("unsupported_capability", "D1 feature discovery metadata is not supported in this slice.");
+      if (!entry.run_id) throw new MemoryError("scope_mismatch", "Feature discovery metadata requires its own task.");
     }
     // Catalog-only binding registration is allowed; task details/reports require the mutation's own run.
     if (entry.run_id && entry.run_id !== change.run?.id && !records.some(r => r.run_id === entry.run_id)) {

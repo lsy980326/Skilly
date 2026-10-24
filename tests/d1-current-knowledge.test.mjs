@@ -1,0 +1,137 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,createHash} from 'node:crypto';
+import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {Miniflare} from 'miniflare';
+import {D1AtomicCommitStore} from '../dist/adapters/storage/d1/atomic-store.js';
+import {D1FeatureReader} from '../dist/adapters/storage/d1/feature-reader.js';
+import {D1TaskReader} from '../dist/adapters/storage/d1/task-reader.js';
+import {D1CurrentKnowledge} from '../dist/adapters/storage/d1/current-knowledge.js';
+import {D1Plans} from '../dist/adapters/storage/d1/plans.js';
+import {D1Executions} from '../dist/adapters/storage/d1/executions.js';
+import {observeCommand} from '../dist/runtime/local/process-observer.js';
+import {observeSource} from '../dist/adapters/project/source-version.js';
+import {d1WorkerModules} from './support/d1-modules.mjs';
+const at='2026-10-25T00:00:00.000Z',hash=s=>createHash('sha256').update(s).digest('hex'),repo=fileURLToPath(new URL('../',import.meta.url));
+const feature={key:'comments',name:'댓글 해결',description:'대화 상태 관리',aliases:['해결 처리','ＲＥＶＩＥＷ'],code_paths:['./src\\reviews\\comments']};
+const component={key:'api',name:'API'};
+function wrap(db,c){return {withSession(constraint){const s=db.withSession(constraint),native=new WeakMap();return {
+ prepare(sql){const stmt=s.prepare(sql);let args=[];const wrapped={bind(...values){args=values;return this;},async all(){
+  const result=await stmt.bind(...args).all();if(c.afterRead)await c.afterRead(sql);return result;}};native.set(wrapped,()=>stmt.bind(...args));return wrapped;},
+ async batch(statements){statements=statements.map(x=>native.get(x)?.()??x);c.count=statements.length;const submitted=c.failBefore===undefined?statements:[...statements.slice(0,c.failBefore),s.prepare('INSERT INTO context_fault VALUES(0)'),...statements.slice(c.failBefore)];
+ if(c.beforeBatch){const hook=c.beforeBatch;c.beforeBatch=null;await hook();}return s.batch(submitted);}
+ };}};}
+const result={outcome:'exited',exit_code:0,signal:null,error_code:null,duration_ms:1,stdout_bytes:0,stderr_bytes:0,stdout_hash:hash(''),stderr_hash:hash(''),stdout_hashed_bytes:0,stderr_hashed_bytes:0,output_complete:1};
+const details={status:'collected',framework:'node_test',counts:{tests:1,passed:1,failed:0,cancelled:0,skipped:0,todo:0,suites:0},suite_success:true,failures:[],failures_truncated:false};
+test('actual local D1 feature search and revision-checked current context',{timeout:150000},async t=>{
+ const root=mkdtempSync(join(tmpdir(),'skilly-d1-context-')),options={...d1WorkerModules(fileURLToPath(new URL('./support/d1-runtime-worker.mjs',import.meta.url))),compatibilityDate:'2026-07-30',d1Databases:{DB:randomUUID()},d1Persist:join(root,'d1'),host:'127.0.0.1',port:0,outboundService:()=>new Response('outbound disabled',{status:403})};
+ let mf=new Miniflare(options);t.after(()=>mf.dispose());let db=await mf.getD1Database('DB');
+ const all=async(sql,...args)=>(await db.prepare(sql).bind(...args).all()).results;
+ const apply=async names=>{for(const name of names){const sql=readFileSync(new URL('../migrations/d1/'+name,import.meta.url),'utf8').replace(/^--[^\n]*$/gm,'').trim().split(/;\s*(?=CREATE\s|$)/i).filter(Boolean);await db.batch(sql.map(s=>db.prepare(s)));}};
+ await apply(['001-atomic-memory.sql','002-work.sql','003-decisions-plans.sql','004-execution-evidence.sql','005-task-events.sql','006-skills.sql']);
+ const receipt=p=>{const key=randomUUID();return {scope:p.id,key,hash:hash(key),result:{status:'persisted'}};};
+ const mutation=async(f,extra={})=>{const rev=(await all('SELECT revision FROM projects WHERE id=?',f.p.id))[0].revision;return {project:{...f.p,revision:rev+1},expected_revision:rev,receipt:receipt(f.p),...extra};};
+ const scope=f=>({project_id:f.p.id,repository:f.run.repository,environment:f.run.environment});
+ const seed=async(extra={})=>{const p={id:randomUUID(),key:'context-'+randomUUID(),name:'D1 지식 테스트',revision:0,created_at:at},store=new D1AtomicCommitStore(db,p.id);await store.commit({project:p,expected_revision:null,receipt:receipt(p)});
+ const run={id:randomUUID(),project_id:p.id,goal:'테스트용 기능 작업',mode:'change',repository:'api',environment:'test',state:'active',created_at:at,updated_at:at,...extra},f={p,run,store};await store.commit(await mutation(f,{run}));return f;};
+ const declare=(f,features=[feature],components=[component])=>mutation(f,{record:record(f),work:{run_id:f.run.id,features,components}});
+ const record=(f,extra={})=>({id:randomUUID(),project_id:f.p.id,run_id:f.run.id,topic:'context-test',kind:'change',body:'테스트용 작업 원문',repository:f.run.repository,environment:f.run.environment,source_fingerprint:null,observed_at:at,recorded_at:at,supersedes:null,superseded_by:null,report_origin:'contemporaneous',...extra});
+ const note=async(f,extra={})=>{const r=record(f,extra);await f.store.commit(await mutation(f,{record:r}));return r;};
+ const features=(f,provider)=>new D1FeatureReader(db,scope(f),provider),context=(f,provider)=>new D1CurrentKnowledge(db,scope(f),provider);
+ const worker=async(input,status=200)=>{const res=await mf.dispatchFetch('http://local-context.invalid/',{method:'POST',body:JSON.stringify({...input,project_id:input.scope.project_id})}),data=await res.json();assert.equal(res.status,status,JSON.stringify(data));return data;};
+ await t.test('006 still searches names, explicitly rejects discovery metadata and exposes missing support',async()=>{const f=await seed();await f.store.commit(await declare(f,[{key:feature.key,name:feature.name}]));
+ const before=await all('SELECT revision FROM projects WHERE id=?',f.p.id);await assert.rejects(f.store.commit(await declare(f)),{code:'unsupported_capability'});assert.deepEqual(await all('SELECT revision FROM projects WHERE id=?',f.p.id),before);
+ const page=await features(f).list({query:'댓글'});assert.equal(page.items.length,1);assert.equal(page.discovery_schema_supported,false);assert.equal((await context(f).query()).checks.items[0].current_knowledge.status,'unknown');});
+ await apply(['007-feature-discovery.sql']);await db.prepare('CREATE TABLE context_fault(ok INTEGER NOT NULL CHECK(ok=1)) STRICT').run();
+ const snapshot=async()=>JSON.stringify(await Promise.all(['projects','runs','records','receipts','features','run_features','feature_aliases','feature_code_paths','skilly_write_assertions'].map(name=>all(`SELECT * FROM ${name} ORDER BY 1,2`))));
+ await t.test('Worker searches NFKC aliases and normalized path segments with exact reasons and original task links',async()=>{const f=await seed(),c=await declare(f);await f.store.commit(c);
+ for(const query of ['해결 처리','review','ＲＥＶＩＥＷ','src/reviews','src\\reviews\\comments\\index.ts']){
+ const page=await worker({operation:'features',scope:scope(f),query:{query}});assert.equal(page.items.length,1);assert.ok(page.items[0].match_reasons.length);assert.equal(page.items[0].claims_verified,false);
+ const tasks=await worker({operation:'tasks',scope:scope(f),query:{query}});assert.equal(tasks.items[0].id,f.run.id);assert.ok(tasks.items[0].match_reasons.some(x=>x.source_run_id===f.run.id));}
+ assert.equal((await features(f).list({query:'src/reviews-other'})).items.length,0);assert.equal((await features(f).list({query:'comments.ts'})).items.length,0);
+ const long=await seed({goal:'x'.repeat(280)+' 끝말'});await long.store.commit(await declare(long,[{...feature,code_paths:['src/Ärea']} ]));
+ assert.equal((await features(long).list({query:'src/ärea'})).items[0].match_reasons[0].kind,'code_path');
+ assert.equal((await new D1TaskReader(db,scope(long)).listTasks({query:'끝말'})).items[0].task_text_match,true);
+ assert.equal((await new D1TaskReader(db,scope(long)).listTasks({query:'해결'})).items[0].task_text_match,false);
+ await long.store.commit(await declare(long,[{...feature,aliases:Array.from({length:8},(_,i)=>'many-'+i),code_paths:[]} ]));
+ await long.store.commit(await declare(long,[{...feature,aliases:['many-8'],code_paths:[]} ]));
+ const reasons=(await new D1TaskReader(db,scope(long)).listTasks({query:'many'})).items[0];assert.equal(reasons.match_reasons.length,8);assert.equal(reasons.match_reasons_truncated,true);
+ const before=await snapshot();await features(f).list({query:'해결'});await context(f).query();assert.equal(await snapshot(),before);
+ assert.equal((await all('SELECT path FROM feature_code_paths WHERE project_id=?',f.p.id))[0].path,'src/reviews/comments');});
+ await t.test('ambiguous aliases stay candidates; other component/project/repository/environment and unclassified history are preserved',async()=>{const f=await seed();await f.store.commit(await declare(f,[feature,{...feature,key:'other',name:'다른 기능'}]));
+ assert.equal((await features(f).list({query:'해결'})).items.length,2);
+ const unclassified={...f,run:{...f.run,id:randomUUID(),goal:'해결 처리 과거 미분류'}};await f.store.commit(await mutation(unclassified,{run:unclassified.run}));
+ const before=await snapshot();const tasks=await new D1TaskReader(db,scope(f)).listTasks({query:'해결',component:'unclassified'});assert.equal(tasks.items[0].id,unclassified.run.id);assert.equal(tasks.items[0].features.length,0);assert.equal(await snapshot(),before);
+ assert.equal((await features(f).list({query:'해결',component:'web'})).items.length,0);
+ for(const s of [{...scope(f),repository:'web'},{...scope(f),environment:'production'},scope(await seed())])assert.equal((await new D1FeatureReader(db,s).list({query:'해결'})).items.length,0);
+ });
+ await t.test('metadata and task/record/receipt mutations roll back together at every SQL boundary',async()=>{const f=await seed(),base=await declare(f),ctl={};await new D1AtomicCommitStore(wrap(db,ctl),f.p.id).commit(base);
+ for(let pos=0;pos<=ctl.count;pos++){const before=await snapshot(),c=await declare(f,[{key:'failure-'+pos,name:'실패 검사',aliases:['별칭'],code_paths:['src/test']}]);
+ await assert.rejects(new D1AtomicCommitStore(wrap(db,{failBefore:pos}),f.p.id).commit(c));assert.equal(await snapshot(),before);}
+ const stale=await declare(f),race={beforeBatch:async()=>{await f.store.commit(await mutation(f));}};assert.equal(await new D1AtomicCommitStore(wrap(db,race),f.p.id).commit(stale),'conflict');
+ await assert.rejects(f.store.commit(await declare(f,[{...feature,code_paths:['../secret.key']}])) ,{code:'invalid_input'});
+ });
+ await t.test('cumulative metadata capacity rejects without writing or dropping original declarations',async()=>{
+ const f=await seed();for(let n=0;n<8;n++)await f.store.commit(await declare(f,[{...feature,aliases:Array.from({length:8},(_,i)=>'cap-'+(n*8+i)),code_paths:[]} ]));
+ const before=await snapshot();await assert.rejects(f.store.commit(await declare(f,[{...feature,aliases:['cap-64'],code_paths:[]} ])),{code:'resource_limit'});assert.equal(await snapshot(),before);
+ await f.store.commit(await declare(f,[{...feature,aliases:['cap-0'],code_paths:[]} ]));assert.equal((await all('SELECT count(*) n FROM feature_aliases WHERE project_id=?',f.p.id))[0].n,64);
+ });
+ const decision=(extra={})=>({subject:'policy',title:'테스트 선택',action:'decide',choice_key:'a',targets:[],expected_current_ids:[],component_key:'api',feature_key:'comments',source:{kind:'user_statement',reference:'synthetic fixture',quote:'테스트 선택 A'},...extra});
+ const decide=async(f,d)=>{const r=record(f,{kind:'decision',body:d.source.quote});await f.store.commit(await mutation(f,{record:r,decision:d}));return r;};
+ const save=(f,extra={})=>({run_id:f.run.id,idempotency_key:randomUUID(),plan_key:'plan',expected_version:0,title:'작업 계획',source_kind:'conversation',source_ref:'test request',source_body:'첫 항목 후 두 번째 항목을 수행합니다.',items:[{key:'one',title:'첫 항목',required:true,component_key:'api',feature_key:'comments',criteria:[{key:'ok',text:'실제 결과 확인'}]},{key:'two',title:'둘째 항목',required:true,component_key:'web',criteria:[{key:'ok',text:'후속 확인'}]}],...extra});
+ const update=(f,r,ids=[],extra={})=>({run_id:f.run.id,idempotency_key:randomUUID(),plan_key:'plan',version:1,item_key:'one',expected_update_id:null,record_id:r.id,state:'completed',note:'AI 조건 충족 보고',criteria_results:[{key:'ok',met:true,detail:'실행 근거와 별도인 보고'}],execution_ids:ids,...extra});
+ const source=f=>({version:1,root_hash:hash('synthetic-root'),project_key:f.p.key,repository:f.run.repository,environment:f.run.environment,observed_at:at,status:'clean',commit:'a'.repeat(40),reason:null});
+ const execute=async(f,extra={},ver=source(f))=>{const ex=new D1Executions(db,scope(f)),s=await ex.start({run_id:f.run.id,executable:'node',command_hash:hash('test command'),source_observation:ver,idempotency_key:randomUUID()});
+ await ex.finish({execution_id:s.execution_id,result:extra.result??result,details:extra.details??details,source_after:ver,idempotency_key:randomUUID()});return s.execution_id;};
+ await t.test('current decisions, replacement/withdrawal, plan progress and remaining conditions stay separate from AI success reports',async()=>{const f=await seed();await f.store.commit(await declare(f));await f.store.commit(await mutation(f,{work:{components:[{key:'web',name:'Web'}]}}));
+ const a=await decide(f,decision()),b=await decide(f,decision({action:'replace',choice_key:'b',targets:[a.id],expected_current_ids:[a.id]}));
+ const p=new D1Plans(db,scope(f));await p.save(save(f));const r=record(f);await f.store.commit(await mutation(f,{record:r,work:{run_id:f.run.id,record_id:r.id,report:{title:'AI 완료 보고',summary:'검사 성공을 보고했습니다.',feature_updates:[{key:'comments',state:'implemented',summary:'AI 보고만 있음'}]}}}));await p.update(update(f,r));
+ let read=await context(f).query();assert.equal(read.decisions.items[0].status,'current');assert.deepEqual(read.decisions.items[0].active_record_ids,[b.id]);assert.equal(read.plans.items[0].progress.remaining,1);assert.equal(read.plans.items[0].remaining_items[0].key,'two');assert.equal(read.checks.items[0].current_knowledge.status,'unknown');assert.equal(read.checks.items[0].agent_report.provenance,'agent_report');
+ const scoped=await context(f).query({component:'api'});assert.equal(scoped.plans.items[0].selected_progress.remaining,0);assert.equal(scoped.plans.items[0].progress.remaining,1);
+ await decide(f,decision({action:'withdraw',choice_key:undefined,targets:[b.id],expected_current_ids:[b.id]}));read=await context(f).query();assert.equal(read.decisions.items[0].status,'withdrawn');assert.equal(read.claims_verified,false);
+ await note(f,{supersedes:r.id});read=await context(f).query();assert.equal(read.plans.items[0].progress.remaining,2);assert.equal(read.checks.items[0].agent_report,null);
+ await p.save(save(f,{expected_version:1,source_body:'새 계획',items:[{key:'new',title:'새 항목',required:true,criteria:[{key:'ok',text:'새 조건'}]}]}));read=await context(f).query();assert.equal(read.plans.items[0].version,2);assert.equal(read.plans.items[0].progress.remaining,1);
+ await p.save(save(f,{expected_version:2,source_body:'혼합 범위',items:[{key:'a',title:'API 항목',required:true,component_key:'api',criteria:[{key:'ok',text:'확인'}]},{key:'b',title:'미분류 항목',required:true,criteria:[{key:'ok',text:'확인'}]}]}));
+ const unclassified=await context(f).query({component:'unclassified'});assert.equal(unclassified.plans.items[0].selected_progress.remaining,1);assert.equal(unclassified.plans.items[0].remaining_items[0].key,'b');
+ });
+ await t.test('synthetic current/stale/conflicting checks and absent current-source provider are never AI verification',async()=>{const f=await seed();await f.store.commit(await declare(f));await execute(f);const provider=()=>source(f);
+ let read=await context(f,provider).query();assert.equal(read.checks.items[0].current_knowledge.status,'current');assert.equal(read.checks.items[0].current_knowledge.counts.passed,1);
+ assert.equal((await context(f).query()).checks.items[0].current_knowledge.status,'unknown');
+ const changed=await context(f,()=>({...source(f),commit:'b'.repeat(40)})).query();assert.equal(changed.checks.items[0].current_knowledge.status,'stale');
+ await execute(f,{result:{...result,exit_code:1},details:{...details,counts:{...details.counts,passed:0,failed:1},suite_success:false,failures:['synthetic failed check']}});
+ read=await context(f,provider).query();assert.equal(read.checks.items[0].current_knowledge.status,'conflict');assert.equal(read.agent_reports_promoted,false);
+ });
+ await t.test('revision-changing reads retry completely, persistent churn rejects, and current source is sampled once per root',async()=>{const f=await seed();await f.store.commit(await declare(f));const r=await note(f),id=await execute(f),p=new D1Plans(db,scope(f));await f.store.commit(await mutation(f,{work:{components:[{key:'web',name:'Web'}]}}));await p.save(save(f));await p.update(update(f,r,[id]));
+ let fired=false,calls=0;const c={afterRead:async sql=>{if(!fired&&sql.includes('GROUP BY d.subject_key')){fired=true;await f.store.commit(await mutation(f));}}};
+ const read=await new D1CurrentKnowledge(wrap(db,c),scope(f),()=>{calls++;return source(f);}).query();assert.equal(fired,true);assert.equal(read.project_revision,(await all('SELECT revision FROM projects WHERE id=?',f.p.id))[0].revision);assert.equal(calls,1);
+ let changes=0;const busy={afterRead:async sql=>{if(sql.startsWith('SELECT name,revision')){changes++;await f.store.commit(await mutation(f));}}};await assert.rejects(new D1CurrentKnowledge(wrap(db,busy),scope(f)).query(),{code:'conflict'});assert.ok(changes>=3);
+ });
+ await t.test('bounded pages keep forward progress and do not infer classifications from old titles',async()=>{const f=await seed();for(let n=0;n<9;n++)await f.store.commit(await declare(f,[{key:'item-'+n,name:'기능 '+n,aliases:['같은 별칭']} ]));
+ let p=await features(f).list({query:'같은 별칭',limit:3}),count=p.items.length;while(p.next_offset!==null){p=await features(f).list({query:'같은 별칭',limit:3,offset:p.next_offset});count+=p.items.length;}assert.equal(count,9);
+ await assert.rejects(context(f).query({repository:'web'}),{code:'invalid_input'});await assert.rejects(features(f).list({offset:100001}),{code:'invalid_input'});
+ const before=await snapshot();await worker({operation:'current-knowledge',scope:scope(f),query:{limit:2}});assert.equal(await snapshot(),before);
+ });
+ await t.test('oversized first-plan summary keeps the cursor to later plans',async()=>{
+ const f=await seed(),p=new D1Plans(db,scope(f));await f.store.commit(await declare(f));
+ const escaped=n=>'\u0001'.repeat(n-1)+'x';
+ await p.save(save(f,{plan_key:'z-next',items:[{key:'next',title:'뒤 계획',required:true,criteria:[{key:'ok',text:'다음 항목 확인'}]}]}));
+ await p.save(save(f,{plan_key:'a-large',items:Array.from({length:8},(_,i)=>({key:'item-'+i,title:escaped(200),required:true,criteria:[{key:'a',text:escaped(160)},{key:'b',text:escaped(160)}]}))}));
+ const first=await context(f).query({limit:1});assert.equal(first.plans.items[0].plan_key,'a-large');assert.equal(first.plans.items[0].projection_truncated,true);assert.equal(first.plans.next_offset,1);
+ const next=await context(f).query({limit:1,plans_offset:first.plans.next_offset});assert.equal(next.plans.items[0].plan_key,'z-next');assert.equal(next.plans.next_offset,null);
+ });
+ let actual;
+ await t.test('real child execution evidence joins a reported plan and feature summary without promoting the AI report',async()=>{const f=await seed();await f.store.commit(await declare(f));await f.store.commit(await mutation(f,{work:{components:[{key:'web',name:'Web'}]}}));const r=await note(f),p=new D1Plans(db,scope(f));await p.save(save(f));
+ const binding={version:1,key:f.p.key,name:f.p.name,repository:f.run.repository,environment:f.run.environment},provider=()=>observeSource(repo,binding),ex=new D1Executions(db,scope(f));
+ const sink={start:async({project_id,...input})=>{assert.equal(project_id,f.p.id);return (await ex.start({...input,idempotency_key:randomUUID()})).execution_id;},finish:async(id,result,details,source_after)=>{await ex.finish({execution_id:id,result,details,source_after,idempotency_key:randomUUID()});}};
+ const file=join(root,'actual.test.mjs');writeFileSync(file,"import test from 'node:test';import assert from 'node:assert/strict';test('actual context collector case',()=>assert.equal(2+2,4));\n");
+ const old=process.env.NODE_TEST_CONTEXT;let outcome;try{delete process.env.NODE_TEST_CONTEXT;outcome=await observeCommand({command:process.execPath,args:['--test',file],root:repo,timeout:10000,testFormat:'auto',start:{project_id:f.p.id,run_id:f.run.id,record_id:r.id},sink,source:provider});}finally{if(old!==undefined)process.env.NODE_TEST_CONTEXT=old;}
+ assert.equal(outcome.code,0);await p.update(update(f,r,[outcome.execution_id]));const read=await context(f,provider).query();assert.equal(read.checks.items[0].current_knowledge.status,'current');assert.equal(read.checks.items[0].current_knowledge.evidence[0].counts.passed,1);assert.equal(read.plans.items[0].item_evidence[0].evidence.status,'current');assert.equal(read.plans.items[0].progress.remaining,1);actual={f,provider,read};
+ });
+ await t.test('fresh workerd and new binding return the same match reasons, source record IDs and bounded plan state',async()=>{const {f,provider,read}=actual,before=await features(f).list({query:'해결 처리'});await mf.dispose();mf=new Miniflare(options);db=await mf.getD1Database('DB');
+ assert.deepEqual(await worker({operation:'features',scope:scope(f),query:{query:'해결 처리'}}),before);
+ const next=await context(f,provider).query();const stable=value=>JSON.parse(JSON.stringify(value,(key,v)=>key==='checked_at'?undefined:v));assert.deepEqual(stable(next),stable(read));const workerRead=await worker({operation:'current-knowledge',scope:scope(f)});assert.equal(workerRead.checks.items[0].current_knowledge.status,'unknown');assert.equal(workerRead.plans.items[0].progress.remaining,1);assert.equal(workerRead.snapshot,'revision_checked_multi_read');
+ });
+});

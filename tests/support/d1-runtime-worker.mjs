@@ -6,6 +6,8 @@ import { D1Plans } from '../../dist/adapters/storage/d1/plans.js';
 import { D1Executions } from '../../dist/adapters/storage/d1/executions.js';
 import { D1TaskEvents } from '../../dist/adapters/storage/d1/task-events.js';
 import { D1Skills } from '../../dist/adapters/storage/d1/skills.js';
+import { D1FeatureReader } from '../../dist/adapters/storage/d1/feature-reader.js';
+import { D1CurrentKnowledge } from '../../dist/adapters/storage/d1/current-knowledge.js';
 
 export default {
   async fetch(request, env) {
@@ -37,6 +39,8 @@ export default {
       if (input.operation === 'skill-package') return Response.json(await new D1Skills(env.DB,input.scope).package(input.key,input.version));
       if (input.operation === 'skill-history') return Response.json(await new D1Skills(env.DB,input.scope).history(input.id,input.kind,input.offset));
       if (input.operation === 'task-skills') return Response.json(await new D1Skills(env.DB,input.scope).taskSkills(input.run_id,input.offset));
+      if (input.operation === 'features') return Response.json(await new D1FeatureReader(env.DB,input.scope).list(input.query));
+      if (input.operation === 'current-knowledge') return Response.json(await new D1CurrentKnowledge(env.DB,input.scope).query(input.query));
       return new Response(null, { status: 404 });
     } catch (error) {
       return Response.json({ error: error.code ?? 'unexpected_error', retryable: error.retryable ?? false }, { status: 409 });

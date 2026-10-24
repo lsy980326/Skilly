@@ -53,7 +53,7 @@ export class D1PlanReader {
     if(o.plan_key){filters.push("p.plan_key=?");values.push(o.plan_key);}
     if(o.version!==undefined){filters.push("p.version=?");values.push(o.version);}
     else filters.push("p.version=(SELECT MAX(v.version) FROM plan_versions v WHERE v.project_id=p.project_id AND v.repository=p.repository AND v.environment=p.environment AND v.plan_key=p.plan_key)");
-    if(o.component==="unclassified")filters.push("NOT EXISTS(SELECT 1 FROM json_each(p.items_json) j WHERE json_extract(j.value,'$.component_key') IS NOT NULL)");
+    if(o.component==="unclassified")filters.push("EXISTS(SELECT 1 FROM json_each(p.items_json) j WHERE json_extract(j.value,'$.component_key') IS NULL)");
     else if(o.component){filters.push("EXISTS(SELECT 1 FROM json_each(p.items_json) j WHERE json_extract(j.value,'$.component_key')=?)");values.push(o.component);}
     const offset=o.plan_key?0:o.offset??0,limit=o.plan_key?1:o.limit??5;
     const detail=o.plan_key?`,(SELECT json_group_array(json(v)) FROM (SELECT json_object('version',version,'title',title,'source_hash',source_hash,'created_at',created_at) AS v

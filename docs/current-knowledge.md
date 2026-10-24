@@ -42,3 +42,14 @@
 `tests/current-knowledge.test.mjs`는 테스트 DB에서 정정·철회, 최신 계획 버전,
 부분 진행, 범위 격리, 생략, 현재/오래됨/충돌/미확인 검사와 HTTP·새 stdio MCP의
 동일 응답을 확인한다. 합성 실행 관측은 실제 제품 코드의 검사 성공 증거가 아니다.
+
+## 로컬 D1 어댑터
+
+`D1CurrentKnowledge(binding, hostScope, sourceProvider?)`는 같은 의미의 비동기 조회를
+제공한다. 고정된 프로젝트·저장소·환경에서 결정·계획·기능 검사를 함께 읽으며, 읽기
+전후 revision이 변하면 최대 3회 재시도한다. `revision_checked_multi_read`는 위의
+SQLite 단일 스냅샷과 다르다. 호스트 코드 관측기가 없으면 현재 근거는 unknown이며
+AI 보고를 실제 실행 관측으로 승격하지 않는다. 전체 계약과 한도는
+[클라우드 저장 계약](cloud-storage-contract.md#기능-검색과-현재-지식-통합-조회)을 따른다.
+`tests/d1-current-knowledge.test.mjs`가 실제 로컬 workerd와 새 연결에서 검증한다.
+기존 화면·MCP의 저장소는 SQLite를 유지하며 원격 D1 연결을 추가하지 않는다.

@@ -129,8 +129,6 @@ test('actual local D1 work storage and scoped async reads', { timeout: 90000 }, 
     for (const extra of [
       { work: { run_id: randomUUID(), components: [component] } },
       { work: { run_id: f.run.id, record_id: r.id, report } },
-      { work: { run_id: f.run.id, features: [{ ...feature, aliases: [] }] } },
-      { work: { run_id: f.run.id, features: [{ ...feature, code_paths: ['src/comments.ts'] }] } },
       { work: { unknown: 'ignored?' } }, { work: { run_id: f.run.id, report } },
       { work: null }, { reports: null },
       { skill_usage: [] }, { decision: {} },
@@ -241,7 +239,7 @@ test('actual local D1 work storage and scoped async reads', { timeout: 90000 }, 
 test('D1 reader offset ceiling returns explicit truncation instead of an unusable next page', async () => {
   const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), state: 'active', updated_at: now, actor: null,
     components_total: 0, features_total: 0, components_json: '[]', features_json: '[]', latest_report_json: null }));
-  const binding = { withSession: () => ({ prepare: () => ({ bind() { return this; }, all: async () => ({ success: true, results: rows, meta: { changes: 0 } }) }) }) };
+  const binding = { withSession: () => ({ prepare: sql => ({ bind() { return this; }, all: async () => ({ success: true, results: sql.includes('sqlite_master') ? [] : rows, meta: { changes: 0 } }) }) }) };
   const reader = new D1TaskReader(binding, { project_id: randomUUID(), repository: 'api', environment: 'test' });
   assert.equal((await reader.listTasks({ offset: 99999, limit: 1 })).next_offset, 100000);
   const end = await reader.listTasks({ offset: 100000, limit: 1 });

@@ -5,6 +5,7 @@ import { appendD1Work, validateD1Work } from "./work.js";
 import { prepareD1Decision } from "./decisions.js";
 import { prepareD1Plan, type D1Mutation } from "./plan-mutation.js";
 import { prepareD1Execution } from "./execution-mutation.js";
+import { prepareD1Discovery } from "./discovery-mutation.js";
 import { prepareD1Skill } from "./skill-mutation.js";
 import { prepareD1Event } from "./event-mutation.js";
 
@@ -76,6 +77,9 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     const skill=await prepareD1Skill(this.binding,change);
     if(skill==="conflict")return "conflict";
 
+    const discovery=await prepareD1Discovery(this.binding,change,work);
+    if(discovery==="conflict")return "conflict";
+
     const token = crypto.randomUUID();
     const session = this.binding.withSession("first-primary"), statements: D1Statement[] = [];
     const sql = (text: string, ...values: (string | number | null)[]) => statements.push(session.prepare(text).bind(...values));
@@ -120,6 +124,7 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
       }
     }
     for (const entry of work) appendD1Work(p.id, entry, sql, assertOneChange);
+    discovery?.(sql);
     decision?.(sql,assertOneChange);
     plan?.(sql,assertOneChange);
     execution?.(sql,assertOneChange);
