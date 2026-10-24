@@ -3,6 +3,16 @@
 Use `memory_query_decisions` when work depends on a user's recorded choice. Do not
 infer current policy from the newest note. Legacy prose remains unclassified.
 
+When the user explicitly sets, corrects or withdraws a choice that guides the
+ongoing task or later work, save a structured decision checkpoint on your owned
+active task before finishing, without requiring a separate request to record it.
+A mention in the task goal or final summary does not create decision history.
+Preserve the user's actual scope, including a named test-only task; do not turn a
+one-response formatting preference into a lasting project policy. Keep synthetic
+test choices clearly separate from real policies and label their source honestly.
+Start by reading that subject to obtain the current IDs, even for a first choice.
+If the scope or the intended change is unclear, ask instead of inventing a choice.
+
 For a selected subject, preserve resolved project/repository/environment and the
 explicit component/feature scope. Query with subject and use an empty string for a
 common component/feature filter when needed. Omitted filters span all declared scopes. Read every subject page and follow history_next_offset as history_offset for older entries. A truncated
