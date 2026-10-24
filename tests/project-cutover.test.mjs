@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync,existsSync,renameSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync,existsSync,renameSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
@@ -136,7 +136,7 @@ test('failed activation stays fenced, can recover safely, and conflicting transf
  const resumed=f.open(recovered.active_db);await resumed.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'실패 후 복귀 사본 저장',idempotency_key:'after-failed-activation'});
 });
 
-test('new MCP connections and authenticated HTTP agree on source, target and return authority',async t=>{
+for(const recovery of ['latest','backup'])test(`new MCP and authenticated HTTP agree on source, target and ${recovery} return authority`,async t=>{
  const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state);
  const query=async db=>{
   const client=new Client({name:'cutover-proof',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:[runtime,'serve','--db',db,'--project',f.a.folder],stderr:'pipe'});transport.stderr.resume();await client.connect(transport);
@@ -148,7 +148,9 @@ test('new MCP connections and authenticated HTTP agree on source, target and ret
   }finally{await viewer.close();}
  };
  assert.equal((await compare(f.db)).write_authority.status,'fenced');assert.equal((await compare(active.active_db)).write_authority.current_copy,'target');
- const returned=await recoverTransfer(f.state);assert.equal((await compare(returned.active_db)).write_authority.current_copy,'return');
+ const backup=recovery==='backup'?await backupDatabase(active.active_db,join(f.root,'mcp-backup')):undefined;
+ const returned=await recoverTransfer(f.state,backup?.directory);const status=await compare(returned.active_db);assert.equal(status.write_authority.current_copy,'return');
+ assert.equal(status.task_recording.imported_history.interruption.saved_during_event.record_id,f.a.point);
 });
 
 test('fenced HTTP imports and acknowledgements explain the block without asking for a retry',async t=>{
@@ -162,4 +164,91 @@ test('fenced HTTP imports and acknowledgements explain the block without asking 
  for(const [path,body] of [['/api/documents/import',{...input,preview_token:preview.data.preview_token}],['/api/runs/acknowledge',{project_id:f.a.pid,run_id:f.a.run,expected_updated_at:updated}]]) {
   const r=await post(path,body);assert.equal(r.status,409);assert.equal(r.data.code,'project_write_blocked');assert.match(r.data.error,/재시도하지 말고/);
  }
+});
+
+test('incomplete legacy return outputs are retained while a new selected attempt preserves the latest record and interruption',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state),target=f.open(active.active_db);
+ const latest=(await target.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'미완료 복귀 뒤 보존할 최신 원문',idempotency_key:'retained-latest'})).record_id;
+ for(const name of ['return','return-export']){mkdirSync(join(f.state,name));writeFileSync(join(f.state,name,'partial'),'retain byte-for-byte');}
+ const result=await recoverTransfer(f.state);assert.equal(result.status,'returned');assert.match(result.active_db,/return-attempt-/);
+ const returned=f.open(result.active_db);assert.equal((await returned.dispatcher.call('memory_get_evidence',{project_id:f.a.pid,record_id:latest})).record.body,'미완료 복귀 뒤 보존할 최신 원문');
+ assert.equal((await f.status(returned)).task_recording.imported_history.interruption.saved_during_event.record_id,f.a.point);
+ for(const name of ['return','return-export'])assert.equal(readFileSync(join(f.state,name,'partial'),'utf8'),'retain byte-for-byte');
+ assert.deepEqual(await recoverTransfer(f.state),result);assert.equal(transferStatus(f.state).active_db,result.active_db);
+ await assert.rejects(f.a.note('old-blocked-after-partial'),blocked);await f.other.note('other-still-writable');
+});
+
+for(const stage of ['export','copy','selection','backup'])test(`actual recovery process killed at ${stage} can resume without opening two writers`,async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state),target=f.open(active.active_db);
+ const latest=(await target.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'프로세스 중단 전 원문',idempotency_key:'before-kill'})).record_id;
+ const backup=stage==='backup'?await backupDatabase(active.active_db,join(f.root,'kill-backup')):undefined;
+ const script=join(f.root,'kill-recovery.mjs');
+ writeFileSync(script,`import fs from 'node:fs';import{syncBuiltinESMExports}from'node:module';
+ const mkdir=fs.mkdirSync,write=fs.writeFileSync;
+ fs.mkdirSync=function(path,...args){const r=mkdir.call(this,path,...args);if(String(path).includes('return-attempt-')&&String(path).endsWith('/${stage}'))process.kill(process.pid,'SIGKILL');return r;};
+ fs.writeFileSync=function(path,...args){const r=write.call(this,path,...args);if(${JSON.stringify(stage)}==='selection'&&String(path).endsWith('/return-selection.json'))process.kill(process.pid,'SIGKILL');return r;};
+ syncBuiltinESMExports();const{recoverTransfer}=await import(${JSON.stringify(new URL('../dist/adapters/storage/transfer/cutover.js',import.meta.url).href)});await recoverTransfer(${JSON.stringify(f.state)},${JSON.stringify(backup?.directory)});`);
+ const killed=spawnSync(process.execPath,[script],{encoding:'utf8'});assert.equal(killed.signal,'SIGKILL',killed.stderr);
+ const attempts=readdirSync(f.state).filter(n=>n.startsWith('return-attempt-'));assert.equal(attempts.length,1);
+ assert.equal((await f.status(target)).write_authority.write_allowed,false);assert.equal((await f.status(f.a.app)).write_authority.write_allowed,false);
+ const resumed=await recoverTransfer(f.state,backup?.directory);assert.equal(resumed.status,'returned');assert.ok(existsSync(join(f.state,attempts[0])));
+ assert.equal((await f.open(resumed.active_db).dispatcher.call('memory_get_evidence',{project_id:f.a.pid,record_id:latest})).record.body,'프로세스 중단 전 원문');
+ assert.deepEqual(await recoverTransfer(f.state),resumed);
+});
+
+test('selected recovery resumes a partial opening without discarding the chosen path',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);activateTransfer(f.state);const returned=await recoverTransfer(f.state);
+ const c=new DatabaseSync(join(f.state,'operation.sqlite'));c.exec("UPDATE operation SET phase='active'");c.close();
+ const db=new DatabaseSync(returned.active_db);db.exec("UPDATE project_authority SET state='blocked'");db.close();
+ assert.equal((await recoverTransfer(f.state)).active_db,returned.active_db);assert.equal((await f.status(f.open(returned.active_db))).write_authority.write_allowed,true);
+});
+
+test('fresh backup recovery activates only its selected project and preserves every older fence and backup byte',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state),target=f.open(active.active_db);
+ const latest=(await target.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'백업 복구 원문',idempotency_key:'backup-latest'})).record_id;
+ const backup=await backupDatabase(active.active_db,join(f.root,'current-backup')),before=readFileSync(join(backup.directory,'memory.sqlite'));
+ const child=spawnSync(process.execPath,[runtime,'transfer-restore','--state',f.state,'--input',backup.directory],{encoding:'utf8'});assert.equal(child.status,0,child.stderr);const recovered=JSON.parse(child.stdout);
+ assert.equal(recovered.status,'returned');assert.notEqual(recovered.active_db,active.active_db);assert.deepEqual(readFileSync(join(backup.directory,'memory.sqlite')),before);
+ const restored=f.open(recovered.active_db);assert.equal((await restored.dispatcher.call('memory_get_evidence',{project_id:f.a.pid,record_id:latest})).record.body,'백업 복구 원문');
+ const resumedRecord=(await restored.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'백업 복귀 후 새 저장',idempotency_key:'backup-resumed-write'})).record_id;
+ assert.equal((await f.status(restored)).task_recording.imported_history.interruption.saved_during_event.record_id,f.a.point);
+ assert.equal((await f.status(target)).write_authority.write_allowed,false);assert.equal((await f.status(f.a.app)).write_authority.write_allowed,false);
+ await assert.rejects(f.a.note('source-closed-after-backup'),blocked);await f.other.note('backup-not-activating-other-project');
+ assert.deepEqual(await recoverTransfer(f.state,backup.directory),recovered);
+ assert.equal((await restored.dispatcher.call('memory_get_evidence',{project_id:f.a.pid,record_id:resumedRecord})).record.body,'백업 복귀 후 새 저장');
+ await assert.rejects(recoverTransfer(f.state,join(f.root,'different-backup')),e=>e.code==='authority_conflict');
+});
+
+for(const change of ['record','event','request'])test(`backup missing a newer ${change} is rejected and normal recovery keeps latest data`,async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state),target=f.open(active.active_db);
+ const backup=await backupDatabase(active.active_db,join(f.root,'stale-backup'));
+ let newest;
+ if(change==='record')newest=(await target.dispatcher.call('memory_checkpoint',{project_id:f.a.pid,run_id:f.a.run,kind:'change',topic:'cutover',body:'백업 뒤 새 기록',idempotency_key:'newer-than-backup'})).record_id;
+ else if(change==='event')recordLifecycle(active.active_db,f.a.folder,{cwd:f.a.folder,session_id:'after-backup',hook_event_name:'SessionStart'});
+ else {const db=new DatabaseSync(active.active_db+'.recovery.sqlite');assert.ok(db.prepare("UPDATE requests SET last_error='changed-after-backup' WHERE project_id=?").run(f.a.pid).changes>0);db.close();}
+ await assert.rejects(recoverTransfer(f.state,backup.directory),e=>e.code==='stale_backup');
+ assert.equal((await f.status(target)).write_authority.write_allowed,false);assert.equal((await f.status(f.a.app)).write_authority.write_allowed,false);
+ const recovered=await recoverTransfer(f.state);if(newest)assert.equal((await f.open(recovered.active_db).dispatcher.call('memory_get_evidence',{project_id:f.a.pid,record_id:newest})).record.body,'백업 뒤 새 기록');
+});
+
+test('foreign ownership never reopens a recovery copy',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state);
+ const foreign=new DatabaseSync(active.active_db);foreign.prepare('UPDATE project_authority SET generation=generation+1').run();foreign.close();
+ await assert.rejects(recoverTransfer(f.state),e=>e.code==='authority_conflict');assert.equal((await f.status(f.a.app)).write_authority.write_allowed,false);
+});
+
+test('a changed selected completion receipt fails closed after a lost coordinator commit',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state);const returned=await recoverTransfer(f.state);
+ const control=new DatabaseSync(join(f.state,'operation.sqlite'));control.exec("UPDATE operation SET phase='active'");control.close();
+ for(const suffix of ['', '.recovery.sqlite','.events.sqlite']){const db=new DatabaseSync(returned.active_db+suffix);db.exec("UPDATE project_authority SET state='blocked'");db.close();}
+ const marker=join(returned.active_db,'..','import.json'),receipt=JSON.parse(readFileSync(marker));writeFileSync(marker,JSON.stringify({...receipt,source_sha256:'f'.repeat(64)}));
+ await assert.rejects(recoverTransfer(f.state),e=>e.code==='invalid_transfer');
+ for(const db of [f.db,active.active_db,returned.active_db])assert.equal((await f.status(f.open(db))).write_authority.write_allowed,false);
+});
+
+test('backup activation rejects an unavailable or replaced latest target rather than guessing from the backup',async t=>{
+ const f=await fixture(t);await prepareTransfer(f.db,f.a.pid,f.state);const active=activateTransfer(f.state),backup=await backupDatabase(active.active_db,join(f.root,'retained-backup'));
+ const retained=join(f.state,'target','retained.sqlite');renameSync(active.active_db,retained);writeFileSync(active.active_db,'damaged replacement');
+ await assert.rejects(recoverTransfer(f.state,backup.directory));assert.equal((await f.status(f.a.app)).write_authority.write_allowed,false);assert.ok(existsSync(retained));
+ assert.equal(existsSync(join(f.state,'return-selection.json')),false);
 });

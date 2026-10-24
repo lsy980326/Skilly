@@ -11,6 +11,7 @@ import { readEvents } from "./events.js";
 import { lifecycleSchemaSql } from "../sqlite/lifecycle.js";
 import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { authorityRow, hasAuthority, putAuthority, readAuthority, type AuthorityRow, type AuthorityKind } from "../sqlite/project-authority.js";
+import { prepareReturnCopy, returnPath } from "./return-copy.js";
 
 const planSchema=z.strictObject({id:z.uuid(),project_id:z.uuid(),project_key:z.string().min(1).max(100),source:z.string(),
   source_dev:z.number().int(),source_ino:z.number().int(),generation:z.int().positive()});
@@ -57,13 +58,13 @@ function setCopy(path:string,a:AuthorityRow):void {
   const ordered=a.state==="blocked"?parts:[...parts.slice(1),parts[0]!];
   for(const [kind,suffix] of ordered)setPart(path+suffix,kind,a);
 }
-function assertCopy(path:string,plan:Plan,state:AuthorityRow["state"],role:AuthorityRow["role"]):void {
+function assertCopy(path:string,plan:Plan,state:AuthorityRow["state"]|"recovering",role:AuthorityRow["role"]):void {
   validateCopy(path);
   for(const [kind,suffix] of parts) {
     const db=kind==="events"?readEvents(path+suffix):readDatabase(path+suffix,kind==="recovery");
     try {
       const a=hasAuthority(db)?db.prepare("SELECT * FROM project_authority WHERE project_id=?").get(plan.project_id):undefined;
-      const expected=row(plan,role,state),actual=authorityRow.parse(a);
+      const actual=authorityRow.parse(a),expected=row(plan,role,state==="recovering"?actual.state:state);
       if(["transfer_id","project_key","generation","state","role"].some(k=>actual[k as keyof AuthorityRow]!==expected[k as keyof AuthorityRow]))
         fail("authority_conflict","A different generation or transfer controls this copy.");
     } finally{db.close();}
@@ -81,7 +82,7 @@ function control(directory:string) {
     return {db,plan,phase:String(rows[0]?.["phase"])};
   }catch(error){db.close();throw error;}
 }
-function paths(directory:string){return {target:join(directory,"target","memory.sqlite"),returned:join(directory,"return","memory.sqlite")};}
+function paths(directory:string){return {target:join(directory,"target","memory.sqlite"),returned:returnPath(directory)};}
 function activationIntent(directory:string,p:Plan,create=false):boolean {
   const path=join(directory,"activation.json"),content=JSON.stringify({transfer_id:p.id,meaning:"target_activation_is_irreversible_to_old_source"});
   if(create) {
@@ -144,14 +145,21 @@ export function activateTransfer(directory:string) {
     c.db.prepare("UPDATE operation SET phase='active'").run();c.db.exec("COMMIT");return result(directory,c.plan,"active");
   }finally{if(c.db.isTransaction)c.db.exec("ROLLBACK");c.db.close();}
 }
-export async function recoverTransfer(directory:string) {
+export async function recoverTransfer(directory:string,backup?:string) {
   const c=control(directory),p=c.plan,{target,returned}=paths(directory);
   try {
+    if(backup!==undefined && !activationIntent(directory,p))fail("transfer_phase","Backup activation requires an existing target activation intent; the source was not reopened.");
     if(c.phase==="aborted"){assertCopy(p.source,p,"writable","source");return result(directory,p,c.phase);}
-    if(c.phase==="returned"){assertCopy(returned,p,"writable","return");return result(directory,p,c.phase);}
+    if(c.phase==="returned"){
+      assertCopy(p.source,p,"blocked","source");assertCopy(target,p,"blocked","target");
+      if(existsSync(join(directory,"return-selection.json")))await prepareReturnCopy(directory,target,row(p,"return","blocked"),backup);
+      else if(backup!==undefined)fail("transfer_phase","A legacy return is already active; do not select another backup.");
+      assertCopy(returned,p,"writable","return");return result(directory,p,c.phase);
+    }
     // An active target may contain writes even if a crash left control.phase=prepared.
     let targetWasWritable=false;
     if(existsSync(target)) {
+      assertCopy(target,p,"recovering","target");
       const read=readDatabase(target);
       try{const a=readAuthority(read,p.project_id);targetWasWritable=a["write_allowed"]===true;
         if(a["transfer_id"]!==p.id)fail("authority_conflict","Target is incomplete or owned by another transfer.");}finally{read.close();}
@@ -163,17 +171,13 @@ export async function recoverTransfer(directory:string) {
       c.db.prepare("UPDATE operation SET phase='aborted'").run();c.db.exec("COMMIT");return result(directory,p,"aborted");
     }
     assertCopy(p.source,p,"blocked","source");assertCopy(target,p,"blocked","target");
-    if(!existsSync(join(directory,"return","import.json"))) {
-      if(existsSync(join(directory,"return")))fail("incomplete_transfer","Incomplete return copy retained. Neither source nor target was reactivated.");
-      const bundle=join(directory,"return-export");
-      if(existsSync(bundle))fail("incomplete_transfer","Return export already exists; retained without replay or deletion.");
-      exportProject(target,p.project_id,bundle);
-      await importProject(bundle,join(directory,"return"),undefined,row(p,"return","blocked"));
-    }
-    const read=readDatabase(returned);let ready=false;
-    try{const a=readAuthority(read,p.project_id);ready=a["write_allowed"]===true;if(a["transfer_id"]!==p.id)fail("authority_conflict","Return copy ownership differs.");}finally{read.close();}
-    assertCopy(returned,p,ready?"writable":"blocked","return");
-    setCopy(returned,row(p,"return","writable"));
+    // Legacy completed returns remain authoritative after a lost coordinator
+    // commit. Never create another writer merely because phase is still active.
+    const legacy=existsSync(join(directory,"return","import.json")) && !existsSync(join(directory,"return-selection.json"));
+    if(legacy && backup!==undefined)fail("transfer_phase","A completed legacy return must be recovered before selecting a backup.");
+    const copy=legacy?returned:await prepareReturnCopy(directory,target,row(p,"return","blocked"),backup);
+    assertCopy(copy,p,"recovering","return");
+    setCopy(copy,row(p,"return","writable"));
     c.db.prepare("UPDATE operation SET phase='returned'").run();c.db.exec("COMMIT");return result(directory,p,"returned");
   }finally{if(c.db.isTransaction)c.db.exec("ROLLBACK");c.db.close();}
 }
