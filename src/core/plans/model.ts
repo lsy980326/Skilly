@@ -19,7 +19,7 @@ export type CriterionResults = z.infer<typeof criterionResultsSchema>;
 export const savePlanFields = {
   plan_key:planKey, expected_version:z.int().min(0).max(100000).default(0), title:text(200),
   source_kind:z.enum(["markdown","conversation"]), source_ref:text(300),
-  source_body:z.string().min(1).max(24000).refine(x=>Buffer.byteLength(x)<=48*1024 && x.trim().length>0),
+  source_body:z.string().min(1).max(24000).refine(x=>new TextEncoder().encode(x).byteLength<=48*1024 && x.trim().length>0),
   items:planItemsSchema.optional(),
 };
 export const updatePlanFields = {

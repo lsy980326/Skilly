@@ -10,11 +10,11 @@
 | 대상 | 구현 범위 | 실행 연결 |
 |---|---|---|
 | SQLite | 기존 전체 MemoryStore와 업무 확장, 새 공통 저장 계약 | 기존 로컬 MCP/CLI 유지 |
-| D1 | 프로젝트 revision, 작업·원문·정정 링크·작성 주체·영수증·기본 FTS와 작업 분류·구조화 보고의 한 배치 저장, 범위 고정 비동기 작업/기록 조회 | 주입된 Workers binding을 받는 모듈만 구현 |
+| D1 | 기본 작업·원문·보고·분류와 결정 이력·계획 버전/진행의 원자적 저장, 범위 고정 비동기 조회 | 주입된 Workers binding을 받는 모듈만 구현 |
 | 클라우드 HTTP·MCP | 아직 없음 | 배포·네트워크·인증 설정·실사용 DB 연결 없음 |
 
-D1 모듈은 전체 `MemoryStore` 구현이 아니다. 구조화 결정,
-계획, 스킬, 실행 관측, 이벤트·중단 지점, 이전 권한은 아직 D1에서 처리하지 않는다.
+D1 모듈은 전체 `MemoryStore` 구현이 아니다.
+스킬, 실행 관측, 이벤트·중단 지점, 이전 권한은 아직 D1에서 처리하지 않는다.
 이 필드와 알 수 없는 최상위 입력을 `unsupported_capability`로 **SQL 제출 전에 거절**한다.
 기본 `kind=decision` 원문 보관과 구조화 결정 이력 지원은 서로 다르다.
 원문의 `superseded_by`를 미리 채운 역사 자료 가져오기도 지원하지 않는다.
@@ -28,8 +28,8 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다. 구조화 결정,
 
 | 순서 | 범위 | 먼저 필요한 자료 | 상태 |
 |---|---|---|---|
-| 1 | 작업 분류·제목·보고, 작업 목록·기록 원문 조회 | 프로젝트·작업·원문·영수증 | 이번 첫 묶음 |
-| 2 | 결정·정정·철회, 계획 버전·항목·완료 조건·진행 보고 | 작업 ID·기능·구성요소·원문 보고 | 후속 |
+| 1 | 작업 분류·제목·보고, 작업 목록·기록 원문 조회 | 프로젝트·작업·원문·영수증 | 구현 |
+| 2 | 결정·정정·철회, 계획 버전·항목·완료 조건·진행 보고 | 작업 ID·기능·구성요소·원문 보고 | 구현. 실제 검사 연결은 미지원 |
 | 3 | 검사 실행 관측·통과/실패 상세·코드 버전 | 작업·원문 ID와 출처 | 후속. 계획의 검사 근거 연결도 이 단계 필요 |
 | 4 | 훅 이벤트·작업 연결·중단 당시 마지막 저장 지점 | 저장된 작업·원문·실행 ID | 후속 |
 | 5 | 스킬 전문·불변 패키지·설치 관측·작업별 사용 버전 | 프로젝트 범위·작업·원문·관측 연결 | 후속. 패키지 카탈로그 자체는 앞선 단계와 독립 구현 가능 |
@@ -54,7 +54,7 @@ D1 모듈은 전체 `MemoryStore` 구현이 아니다. 구조화 결정,
 
 현재 첫 묶음은 기능의 **별칭·코드 경로 메타데이터를 지원하지 않는다**.
 중첩된 이 필드도 SQL 전에 `unsupported_capability`로 거절한다. 입력을 버린 뒤
-저장 성공으로 표시하지 않는다. 미지원 계획·스킬·결정·검사·이벤트 역시 그대로 거절한다.
+저장 성공으로 표시하지 않는다. 미지원 스킬·검사·이벤트 역시 그대로 거절한다.
 메타데이터가 늘어도 요청 64 KiB/40문장 상한은 유지한다. 작은 분류·보고는 함께 저장할 수
 있지만 12개 분류를 한꺼번에 넣는 등 문장 예산을 넘는 조합은 **분할 자동 저장 없이 거절**한다.
 
@@ -84,6 +84,63 @@ constructor의 범위는 호스트가 결정하며 요청 본문으로 덮어쓰
 반환의 `claims_verified=false`, `capture=agent_reports_only`,
 `execution_observations=unsupported`는 AI 보고와 미구현 실행 관측을 구분한다.
 최신 요약·저장 성공·작업 종료로 검증 완료를 판정하지 않는다.
+
+### 두 번째 묶음: 결정 이력과 계획
+
+`003-decisions-plans.sql`은 001·002 다음 테스트/신규 D1에만 적용하는 추가 스키마다.
+기존 SQLite v15 마이그레이션·설정·MCP·화면에는 등록하지 않는다. 원격 배포나
+전체 `MemoryStore` 구현이 아니며 실행 관측·팀 인증·자동 전송은 추가하지 않는다.
+
+**결정**은 기존 `Mutation.decision`과 새 `record(kind=decision)`를 같이 저장한다.
+`D1Decisions(binding, scope).query({subject, component_key?, feature_key?, history_offset?})`로
+정확한 주제와 명시적 구성요소/기능 범위를 조회한다. 구성요소/기능 생략은 공통 범위이며
+다른 범위 전체를 합치는 뜻이 아니다. 주제 이름을 모르는 카탈로그 검색은 이 조회의 범위 밖이다.
+원문 전체는 기존 `D1TaskReader.getRecord`에서 읽는다.
+
+- 공통 `assessDecisions/validateDecision` 규칙으로 decide·replace·withdraw·propose를 구분한다.
+- 이력과 프로젝트 revision을 한 SQL에서 읽고 그 revision으로 최종 CAS를 수행한다.
+  다른 요청의 쓰기가 끼면 전부 거절한다. 원래 `expected_current_ids`나 targets를 자동 교체하지 않는다.
+- 활성 작업에 미리 연결한 구성요소·기능만 선언할 수 있다. 다른 주제의 대상과 소급 정정·철회는 거절한다.
+- 새 결정과 같은 배치의 추가 원문이 그 결정을 generic supersedes하는 경우도 사전에 거절한다.
+  배치 안에서도 최종 원문의 종류·연결·미정정 상태를 확인한다.
+- 결정 원문·sidecar의 UPDATE/DELETE는 DB 트리거로 막아 이전 writer의 generic correction도 거절한다.
+  정정·철회는 새 이벤트일 뿐 원문을 바꾸거나 이전 조상을 부활시키지 않는다.
+- 최대 200건의 완전한 이력만 현재 ID의 기준이다. 200건에서 새 쓰기는 거절하며, 초과 이력은
+  unknown·불완전한 active IDs로 표시한다. 메타데이터 합계 100000바이트를 넘는 snapshot은
+  명시적 resource_limit이며 현재 상태를 반환하지 않는다. 상세 응답은 최대 128 KiB,
+  최근 이력은 20개씩과 다음 위치를 반환한다. 원문 투영은 1200자로 제한한다.
+- 현재/충돌/철회는 명시된 선택 관계이며 사실 검증이나 사용자 인증이 아니다.
+
+**계획**은 `D1Plans(binding, scope).save(input)`, `.update(input)`, `.query(options)`를 제공한다.
+호스트 scope의 project/repository/environment를 input으로 덮어쓰지 못한다. `save`와 `update`
+필드는 기존 계획 계약과 같으며, 작업 ID·요청 키는 필수이고 project/scope는 constructor에서 고정한다.
+입력은 런타임 스키마로 검사하고, SHA-256은 Worker의 Web Crypto로 계산한다.
+
+| 처리 | 보존/판정 규칙 |
+|---|---|
+| save | 선택 원문·source_ref·SHA-256·항목·조건을 불변 버전으로 추가. expected_version과 최신 MAX를 대조 |
+| update | 활성 작업의 같은 범위 원문에 연결. 최신 계획 버전·항목·expected_update_id·완료 조건·작업 분류 확인 |
+| 완료 보고 | 모든 조건의 충족 보고와 contemporaneous·미정정 원문 필요. 직접 검사 통과나 작업 종료를 대신하지 않음 |
+| 새 버전 | 과거 원문/진행 보존, 새 항목은 모두 pending. MD의 체크도 source_checked일 뿐 진행 승계 없음 |
+| 후속 원문 정정 | 완료 보고의 연결 원문이 정정되면 needs_review로 파생, 진행률에서 제외하고 남은 항목으로 반환 |
+| 재시도 | 정규화한 원래 명령·키의 영수증 재생. 다른 내용은 충돌, 응답 유실은 영수증 확인 또는 persistence_unknown |
+
+계획 확장은 D1 전용 `D1Mutation.plan`이며 기존 공통 Mutation이나 SQLite API를 바꾸지 않는다.
+원문 작업/보고와는 별도의 plan command다. revision·버전/진행·영수증은 같은 배치로 확정한다.
+계획 snapshot을 읽고 **더 최신 revision으로 갈아끼우지 않으며**, 배치 안에서도 최신 버전·갱신 ID·
+활성 작업·정확한 원문 범위·완료 자격·분류 연결을 재확인한다. 이전 버전이나 이력 행은 UPDATE/DELETE하지 않는다.
+
+query는 최신 목록 또는 `{plan_key, version?, remaining_only?}` 상세를 단일 SQL snapshot으로 읽는다.
+진행률 분모는 전체 필수 항목이며 remaining_only는 표시 항목만 줄인다. 상세는 원문·진행 조건·
+버전 목록·명시 연결 작업 ID를 포함한다. 버전 목록과 연결 작업은 최근 20개 및 잘림 표시,
+이전 버전은 번호로 직접 조회한다. 상세 128 KiB, 목록 최대 10개/32 KiB와 live_offset 상한을 적용한다.
+큰 상세는 성공으로 잘라 숨기지 않고 resource_limit로 거절한다. 작업 제목은 200자와 잘림 표시를 제공한다.
+입력 원문/조건의 개별 상한과 별도로 전체 mutation 64 KiB/40문장 상한을 유지하므로 가장 큰 값들을
+한번에 조합한 요청은 저장 전에 거절할 수 있다. source_ref는 출처 문자열이며 파일을 열거나 실행하지 않는다.
+
+아직 `execution_ids`가 있는 진행 요청은 unsupported_capability로 거절한다. 응답의 evidence도
+unsupported이며 완료는 completed_reported·claims_verified=false다. 직접 검사 수집/코드 버전 비교까지
+D1에서 지원한다고 표시하지 않는다. 계획 쓰기는 별도 전송 큐에 자동 보관하지 않는다.
 
 ## 공통 저장 규칙
 
@@ -182,7 +239,8 @@ D1 어댑터의 현재 보수적 상한은 **요청 64 KiB, 영수증 16 KiB, �
 고정 응답을 반환하는 모의 저장소가 아니다.
 
 이 harness의 배치 트랜잭션은 Node SQLite로 직접 구현했다. 실제 D1 런타임의
-호환성 근거는 별도의 `tests/d1-runtime.test.mjs`와 `tests/d1-work.test.mjs`에서 구분한다.
+호환성 근거는 별도의 `tests/d1-runtime.test.mjs`, `tests/d1-work.test.mjs`,
+`tests/d1-decisions-plans.test.mjs`에서 구분한다.
 
 ### 실제 로컬 D1 런타임
 

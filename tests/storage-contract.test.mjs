@@ -152,10 +152,11 @@ for (const kind of ['sqlite', 'd1-shape']) {
 
 test('D1 shape: unsupported metadata, wrong binding and UTF-8 byte limits fail before any database call', async t => {
   const f = fixture(t, 'd1-shape'); await seed(f); const s = f.store(f.p.id), base = start(f), calls = f.binding.constraints.length;
-  for (const extra of [{ skill_usage: [] }, { decision: {} }, { unrecognized: true },
+  for (const extra of [{ skill_usage: [] }, { unrecognized: true },
     { work: { features: [{ key: 'x', name: 'X', aliases: [] }] } }]) {
     await assert.rejects(s.commit({ ...base, ...extra }), { code: 'unsupported_capability' });
   }
+  await assert.rejects(s.commit({ ...base, decision: {} }), { code: 'invalid_input' });
   await assert.rejects(s.getReceipt(randomUUID(), 'x'), { code: 'scope_mismatch' });
   await assert.rejects(s.commit({ ...base, run: { ...base.run, goal: '🧩'.repeat(17000) } }), { code: 'resource_limit' });
   await assert.rejects(s.commit({ ...base, receipt: { ...base.receipt, result: { output: '🧩'.repeat(4200) } } }), { code: 'resource_limit' });
