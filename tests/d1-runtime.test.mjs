@@ -10,6 +10,7 @@ import { Miniflare } from 'miniflare';
 import workerd, { version as workerdVersion } from 'workerd';
 import { D1AtomicCommitStore } from '../dist/adapters/storage/d1/atomic-store.js';
 import { commitWithReceipt } from '../dist/core/memory/atomic-commit.js';
+import { d1WorkerModules } from './support/d1-modules.mjs';
 
 const now = '2026-10-24T00:00:00.000Z';
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -47,17 +48,15 @@ function faultBinding(db, control) {
 test('Miniflare/workerd local D1 storage contract', { timeout: 90000 }, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'skilly-real-d1-'));
   const options = {
-    modules: true,
-    scriptPath: fileURLToPath(new URL('./support/d1-runtime-worker.mjs', import.meta.url)),
-    modulesRoot: fileURLToPath(new URL('../', import.meta.url)),
-    modulesRules: [{ type: 'ESModule', include: ['**/*.js'], fallthrough: true }],
+    ...d1WorkerModules(fileURLToPath(new URL('./support/d1-runtime-worker.mjs', import.meta.url))),
     compatibilityDate: '2026-07-30',
     d1Databases: { DB: randomUUID() }, d1Persist: join(directory, 'd1'),
     host: '127.0.0.1', port: 0,
     outboundService: () => new Response('external fetch disabled in local D1 tests', { status: 403 }),
   };
-  let mf = new Miniflare(options), db = await mf.getD1Database('DB');
+  let mf = new Miniflare(options);
   t.after(() => mf.dispose());
+  let db = await mf.getD1Database('DB');
   await db.batch(schemaStatements().map(sql => db.prepare(sql)));
   await db.prepare('CREATE TABLE runtime_fault (ok INTEGER NOT NULL CHECK(ok=1)) STRICT').run();
   const one = async (sql, ...values) => (await db.prepare(sql).bind(...values).all()).results[0];
@@ -194,7 +193,7 @@ test('Miniflare/workerd local D1 storage contract', { timeout: 90000 }, async t 
   await t.test('unsupported fields and UTF-8 byte overflow are rejected before real SQL submission', async () => {
     const f = await fixture(), before = await snapshot(f.p), control = {};
     const s = new D1AtomicCommitStore(faultBinding(db, control), f.p.id);
-    await assert.rejects(s.commit({ ...f.begin, reports: [] }), { code: 'unsupported_capability' });
+    await assert.rejects(s.commit({ ...f.begin, skill_usage: [] }), { code: 'unsupported_capability' });
     await assert.rejects(s.commit({ ...f.begin, run: { ...f.begin.run, goal: '🧩'.repeat(17000) } }), { code: 'resource_limit' });
     assert.equal(control.sessions ?? 0, 0); assert.equal(control.statements, undefined);
     assert.equal(await snapshot(f.p), before);

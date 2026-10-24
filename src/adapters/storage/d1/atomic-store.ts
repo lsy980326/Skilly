@@ -1,6 +1,7 @@
 import { validateMutationOwnership, type AtomicCommitStore } from "../../../core/memory/atomic-commit.js";
 import { MemoryError, parseJsonObject, type Mutation, type Receipt } from "../../../core/memory/model.js";
 import type { D1Binding, D1Statement } from "./binding.js";
+import { appendD1Work, validateD1Work } from "./work.js";
 
 export const D1_WRITE_LIMITS = Object.freeze({ mutation_bytes: 64 * 1024, receipt_bytes: 16 * 1024, records: 8, statements: 40 });
 const encoder = new TextEncoder();
@@ -44,10 +45,11 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     this.scope(change.receipt.scope);
     validateMutationOwnership(change);
     // Explicitly fail before I/O: these require their own atomic D1 implementations.
-    const allowed = new Set(["project", "expected_revision", "receipt", "run", "record", "records"]);
+    const allowed = new Set(["project", "expected_revision", "receipt", "run", "record", "records", "work", "reports"]);
     if (Object.keys(change).some(key => !allowed.has(key))) {
-      throw new MemoryError("unsupported_capability", "This D1 foundation does not store work, plans, decisions or skill metadata.");
+      throw new MemoryError("unsupported_capability", "This D1 slice does not store plans, decisions, skills, executions or events.");
     }
+    const work = validateD1Work(change);
     const records = [...(change.record ? [change.record] : []), ...(change.records ?? [])];
     if (records.some(record => record.superseded_by !== null)) {
       throw new MemoryError("unsupported_capability", "Historical import links require a separate validated import contract.");
@@ -101,6 +103,7 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
         assertOneChange();
       }
     }
+    for (const entry of work) appendD1Work(p.id, entry, sql, assertOneChange);
     sql("INSERT INTO receipts (scope,idempotency_key,payload_hash,result_json,commit_token) VALUES (?,?,?,?,?)",
       change.receipt.scope, change.receipt.key, change.receipt.hash, receiptJson, token);
     if (statements.length > D1_WRITE_LIMITS.statements) throw new MemoryError("resource_limit", "Too many statements. Nothing was submitted.");
