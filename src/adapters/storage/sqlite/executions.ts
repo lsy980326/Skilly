@@ -5,6 +5,7 @@ import { MemoryError } from "../../../core/memory/model.js";
 import { executionRowSchema, executionProjection, type ExecutionRow } from "../../../core/execution/model.js";
 import { executionSourceRowSchema, executionWorktreeRowSchema, sourceObservationSchema, sourceProjection, compareExecutionSource, type SourceObservation, type SourceProvider } from "../../../core/execution/currentness.js";
 import { readExecutionSources } from "./execution-sources.js";
+import { assertWritable } from "./project-authority.js";
 
 export function validateExecutionData(db: DatabaseSync): void {
   for (const row of db.prepare("SELECT * FROM executions").iterate()) {
@@ -48,6 +49,7 @@ export class SqliteExecutions {
     // Validate before any process runs. Keep association checks and insertion atomic.
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      assertWritable(this.db,input.project_id);
       const run = this.db.prepare("SELECT r.state,r.repository,r.environment,p.project_key FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.project_id=? AND r.id=?").get(input.project_id, input.run_id);
       if (!run || run["state"] !== "active") throw new MemoryError("run_closed", "Execution requires an active task in this project.");
       if (input.source_observation) {

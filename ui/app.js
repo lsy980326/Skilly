@@ -463,6 +463,13 @@ function renderDetail(task, counts = {}, animateNew = true) {
   panel.append(renderWorkBrief(state.records, element));
   const information = element("details", "task-information");
   information.dataset.panel = "information"; information.open = panelExpanded.get("information") ?? false;
+  if(task.write_authority?.managed || task.write_authority?.write_allowed===false) {
+    const a=task.write_authority, notice=element("section","task-recording");notice.setAttribute("aria-label","프로젝트 쓰기 위치");
+    notice.append(element("h3","","기록을 저장하는 위치"),element("p",a.write_allowed?"catalog-note":"recovery-note",a.write_allowed?"이 DB에 새 기록을 저장할 수 있습니다.":a.status==='fenced'?"이전 중인 사본입니다. 새 기록 저장이 차단됐습니다.":"쓰기 권한을 확인하지 못해 저장을 중단합니다."));
+    const roles={source:'원래 DB',target:'이전한 DB',return:'최신 기록을 보존한 복귀 사본'};
+    notice.append(element("p","catalog-note",`${roles[a.current_copy]??'확인 불가'} · 쓰기 세대 ${a.generation??'미확인'}`),element("small","recording-id",`이전 ID ${a.transfer_id??'미확인'} · 자동 전달·재실행 없음`));
+    panel.append(notice);
+  }
   information.append(element("summary", "", "작업 정보 · 저장 이력"), renderTaskRecording(task.task_recording, { element, date }));
   const request = element("details", "original-request");
   request.append(element("summary", "", "전체 작업 요청"), element("p", "record-body", task.goal));

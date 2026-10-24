@@ -1,0 +1,92 @@
+# 프로젝트 쓰기 DB 전환과 복귀
+
+이 명령은 사용자가 이전을 요청한 프로젝트 하나의 **쓰기 허용 위치**를 바꾼다.
+일반 백업·논리 교환은 [사본 이동 안내](local-transfer.md)를 따른다. 전환은 사본 만들기와
+별개이며, 모든 경로는 사용자가 지정한 정규화된 로컬 절대 경로여야 한다. 네트워크 요청,
+설정 파일 변경, 자동 재연결, 원본 삭제, 다른 프로젝트 전환은 하지 않는다.
+
+## 명령과 순서
+
+현재 본 DB v15와 지원되는 복구·이벤트 스키마를 사용한다. 먼저 모든 검사를 마치고
+진행 중인 검사 명령의 결과 저장이 끝난 시점에 준비한다. 미종료 실행 관측이 있으면
+실제 프로세스 생존 여부를 추정하지 않고 전환을 거부한다. 억지로 작업을 종료하거나 명령을 재실행하지 않는다.
+
+```sh
+node dist/runtime/local/main.js transfer-prepare --db /absolute/source.sqlite --project-id PROJECT_UUID --state /absolute/new-transfer
+node dist/runtime/local/main.js transfer-status --state /absolute/new-transfer
+node dist/runtime/local/main.js transfer-activate --state /absolute/new-transfer
+```
+
+`--state`의 부모 폴더는 있어야 하며 준비 폴더 자체는 새 경로여야 한다. `prepare`는
+프로젝트별 메타데이터·트리거를 원본 본 DB·복구 DB·이벤트 DB에 추가하고 쓰기를 막는다.
+기존 원문·ID·시각·설정은 보존한다. 다른 프로젝트는 계속 쓸 수 있다. 존재하지 않는
+보조 DB는 새로 생성하며, 기존 원시 이벤트 전용 DB에는 연결 테이블과 차단 트리거를 함께 추가한다.
+
+원본의 세 저장소가 닫힌 뒤 최종 프로젝트 묶음을 만들고, `state/target/memory.sqlite`에
+**쓰기 차단된 사본**을 만든다. 검증 후 `prepared`가 되며, 아직 쓰는 DB는 없다.
+세 파일의 하나의 원자적 스냅샷을 뜻하지 않는다. 수신되지 않은 기록까지 보장하지 않는다.
+
+`activate`는 원본이 같은 이전 ID·쓰기 세대로 계속 차단됐는지 확인한다. 대상을 열기
+전에 `activation.json`을 확정하고, 보조 DB 다음 본 DB 순으로 대상을 연다. 본 DB는 마지막에
+열기 때문에 작업 기록이 원본·대상 양쪽에 동시에 허용되는 구간을 만들지 않는다.
+성공 결과의 `active_db`로 사용자가 허용한 연결을 별도로 갱신한다. 이전 MCP 연결은 다른
+DB로 자동 전달하지 않으며, 기존 DB의 조회는 유지한다. 앱 신뢰를 대신 부여하지 않는다.
+
+## 실패 또는 중단 후 복귀
+
+```sh
+node dist/runtime/local/main.js transfer-recover --state /absolute/new-transfer
+```
+
+- 활성화 의도를 저장하기 **전**이면, 만들어진 대상은 차단한 채 원본 쓰기를 재개한다.
+  결과는 `aborted`, `active_db`는 원본이다.
+- 활성화 의도를 저장한 **후**면, 대상에 이미 쓰기가 생겼을 수 있다. 원본을 다시 열지 않는다.
+  대상을 먼저 차단하고 최신 원문·복구 요청·이벤트를 `state/return/memory.sqlite`로
+  다시 가져와 검증한 뒤 이 복귀 사본만 연다. 결과는 `returned`, 원본·이전 대상은 차단 상태다.
+  복귀는 원래 파일 덮어쓰기가 아니며 다른 프로젝트는 계속 원래 DB에 남는다.
+- 복귀 도중 중단되어도 활성화 의도는 지워지지 않는다. 이미 완성된 같은 이전의 복귀 사본은
+  재사용한다. 불완전한 출력이 있거나 소유권·경로·스키마가 다르면 양쪽을 닫은 채 거부한다.
+  이 버전은 불완전한 파일을 삭제하거나 임의로 병합하지 않는다. `incomplete_transfer`는
+  명시적 점검이 필요하며 자동 반복 호출이나 자동 원본 재개를 하지 않는다.
+
+전환·복귀는 프로세스 중단을 고려한 로컬 절차다. 디스크 손실·전원 장애에 대한 분산 트랜잭션,
+여러 컴퓨터 동시 전환이나 임의 SQL/파일 변조를 막는 보안 경계는 아니다. 같은 OS 사용자가
+차단 트리거·전환 상태를 직접 바꾸거나 파일을 복제한 상황까지 정본 단일성을 보장하지 않는다.
+
+## 읽기와 쓰기 차단
+
+MCP의 `memory_resolve_project`, `memory_get_status`, `memory_recovery_status`와 화면 상세의
+`run.write_authority`는 같은 투영을 사용한다. 절대 DB 경로를 MCP 기본 응답에 넣지 않는다.
+
+| 필드 | 의미 |
+|---|---|
+| `status` | `writable`, `fenced`, `unavailable` |
+| `write_allowed` | 이 DB 사본의 새 쓰기 허용 여부 |
+| `current_copy` | `source`, `target`, `return` |
+| `transfer_id`, `generation` | 이전 소유권과 쓰기 세대 |
+| `automatic_forwarding`, `automatic_replay` | 항상 false |
+| `claims_verified` | 항상 false. 저장 위치가 내용 검증을 뜻하지 않음 |
+
+`transfer-status`는 coordinator의 저장된 단계와 각 사본의 현재 main 권한을 함께 보여준다.
+단계만으로 마지막 활성화의 성공이나 실제 프로세스 실행을 추정하지 않는다. 상태 조회에는
+짧은 제어 DB 잠금이 필요하며 제어 기록·프로젝트 기록은 변경하지 않는다.
+
+차단은 메모리 캐시가 아닌 DB 트리거로 강제하므로 이미 열려 있던 이전 SQLite 연결에도
+적용된다. 본 DB의 작업·기록·계획·스킬·실행 결과·완료 확인·영수증, 복구 요청,
+이벤트·작업 연결의 INSERT/UPDATE/DELETE를 프로젝트 범위로 막는다. MCP는 복구 대기열에
+새 요청을 넣기 전에 거부하고, 실행기는 child 실행 전에 거부한다. 기존 프로세스는 차단
+오류를 일반 저장 오류로 표시할 수 있지만 기록이 통과하지는 않는다. 최신 화면의 쓰기 요청은
+HTTP 409 `project_write_blocked`로 같은 위치 재시도를 하지 말라고 안내한다.
+
+선택적 메타데이터는 알려진 스키마로 검증한다. 이를 모르는 이전 백업 도구는 알 수 없는
+스키마로 거부하므로 새 도구를 사용한다. 관리 프로젝트의 논리 내보내기는
+`requires_activation: true`로 표시하고 일반 `import`로 쓰기 권한을 상속하지 못하게 한다.
+전체 백업·복원 사본의 관리 권한도 차단 상태로 복사한다. 백업 사본이 자동 활성화되는 것은
+아니며, 손상된 원본을 대체하는 별도 백업 복구 활성화 절차는 이 명령 범위가 아니다.
+
+## 검증 범위
+
+`tests/project-cutover.test.mjs`는 합성 프로젝트·DB만 사용한다. 기존 열린 statement·복구·이벤트
+차단, 다른 프로젝트 격리, 활성화 전 복귀, 대상 신규 기록 후 복귀 사본, 합성 다중 중단 지점,
+미종료 실행 거부, 실행기 child 미실행, 백업 봉인, 인증 HTTP·새 stdio MCP 일치를 검사한다.
+합성 중단 지점은 실제 Codex 앱의 사용자 중지 이벤트 검증이 아니다.

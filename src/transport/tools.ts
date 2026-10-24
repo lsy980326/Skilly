@@ -118,7 +118,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
       input => service.getEvidence(input.project_id, input.record_id),
     ),
     memory_get_status: define(
-      "Read a local SQLite task's state and capture limitations. task_recording.imported_history preserves imported events and interruption saved points separately from current linkage. Imported observations cannot be current anchors and never prove live execution or verified content. No polling is needed during ordinary work.",
+      "Read a local SQLite task's state and capture limitations. write_authority separates this local copy's writable/fenced/unavailable state from task completion; old writes are never forwarded or replayed. task_recording.imported_history preserves imported events and interruption saved points separately from current linkage. Imported observations cannot be current anchors and never prove live execution or verified content. No polling is needed during ordinary work.",
       true,
       z.strictObject(runId),
       async input => ({ ...await service.getStatus(input.project_id, input.run_id), pending_queue_supported: Boolean(recovery),
@@ -237,7 +237,8 @@ export class ToolDispatcher {
   private bytes = 0;
   private closed = false;
 
-  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans) {
+  constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans,
+    private readonly authority?: { status(id:string):JsonObject; assert(id:string):void }) {
     this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans);
   }
 
@@ -257,10 +258,18 @@ export class ToolDispatcher {
       const parsed = definition.schema.safeParse(input);
       if (!parsed.success) throw new MemoryError("invalid_input", "Invalid tool input.");
       await this.bound?.assertScope(name, parsed.data);
+      const args=parsed.data as Record<string,unknown>;
+      if(!definition.readOnly && typeof args["project_id"]==="string") this.authority?.assert(args["project_id"]);
       if (this.recovery && isRecoverableWrite(name)) {
         return this.recovery.execute(name, parseJsonObject(JSON.stringify(parsed.data)), () => definition.invoke(parsed.data));
       }
-      return definition.invoke(parsed.data);
+      const result=await definition.invoke(parsed.data);
+      if(this.authority && ["memory_resolve_project","memory_get_status","memory_recovery_status"].includes(name)) {
+        const project=result["project"];
+        const resolved=project && typeof project==="object" && !Array.isArray(project) ? project["id"] : args["project_id"];
+        if(typeof resolved==="string")return {...result,write_authority:this.authority.status(resolved)};
+      }
+      return result;
     });
     this.pending.add(task);
     try { return await task; }

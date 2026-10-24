@@ -17,6 +17,7 @@ import { SqliteWorkReader, writeWork } from "./work.js";
 
 import type { InstallationComponent } from "../../../core/viewer/components.js";
 import { componentWhere } from "./component-links.js";
+import { readAuthority, assertWritable } from "./project-authority.js";
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -50,6 +51,8 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   close(): void { this.db.close(); }
+  authority(projectId:string) { return readAuthority(this.db,projectId); }
+  assertWritable(projectId:string) { assertWritable(this.db,projectId); }
   taskEvents(root?: string) { return new SqliteTaskEvents(this.db, this.path, root); }
 
   private migrate(): void {
@@ -172,6 +175,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async commit(change: Mutation): Promise<"committed" | "conflict"> {
     try { this.db.exec("BEGIN IMMEDIATE"); } catch (error) { throw storageError(error); }
     try {
+      assertWritable(this.db,change.project.id);
       const receipt = change.receipt;
       if (this.db.prepare("SELECT 1 FROM receipts WHERE scope = ? AND idempotency_key = ?").get(receipt.scope, receipt.key)) {
         this.db.exec("ROLLBACK");
@@ -281,6 +285,7 @@ function recordFrom(row: Row): MemoryRecord {
 }
 function storageError(error: unknown): Error {
   if (error instanceof MemoryError) return error;
+  if(error instanceof Error && error.message.includes("project_write_blocked")) return new MemoryError("project_write_blocked","This project copy is fenced; no forwarding or automatic retry.");
   if (error instanceof Error && "errcode" in error && (error.errcode === 5 || error.errcode === 6)) {
     return new MemoryError("busy", "Database is busy. Retry with the same idempotency key.", true);
   }

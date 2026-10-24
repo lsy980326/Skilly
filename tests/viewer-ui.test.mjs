@@ -101,7 +101,7 @@ test("current events and imported interruption history remain separate in the re
 
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
-  recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, taskSkills = { items: [], next_offset: null }, taskSkillPage = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false } = {}) {
+  recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, taskSkills = { items: [], next_offset: null }, taskSkillPage = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false,writeAuthority } = {}) {
   const initial = Date.parse("2026-10-21T01:00:00Z");
   let now = initial, scheduled, calls = 0, hangNext = false;
   const deadlines = new Set();
@@ -121,6 +121,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     addEventListener(name, callback) { this.listeners[name] = callback; },
   };
   const run = {
+    write_authority:writeAuthority,
     id: "run", goal: "시간 표시 회귀 테스트", actor: "Codex", mode: "change", state: active ? "active" : "completed",
     activity: "completed", repository: "main", environment: "test",
     created_at: new Date(initial).toISOString(), updated_at: new Date(initial).toISOString(),
@@ -212,6 +213,13 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
     },
   };
 }
+
+test('project authority is visible without unfolding technical history and changes on refresh',async()=>{
+ const authority={managed:true,status:'fenced',write_allowed:false,current_copy:'source',generation:1,transfer_id:'transfer-id'};
+ const app=await viewer({writeAuthority:authority});assert.match(app.node('#detail').textContent,/이전 중인 사본입니다/);assert.match(app.node('#detail').textContent,/원래 DB · 쓰기 세대 1/);
+ authority.status='writable';authority.write_allowed=true;authority.current_copy='return';authority.generation=2;await app.tick();
+ assert.match(app.node('#detail').textContent,/이 DB에 새 기록을 저장할 수 있습니다/);assert.match(app.node('#detail').textContent,/최신 기록을 보존한 복귀 사본/);
+});
 
 test('all detailed tabs request their saved sort, preserve selection and keep it after reload',async()=>{
  const storage=new Map(),app=await viewer({storage});

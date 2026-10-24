@@ -6,6 +6,7 @@ import type { Manifest } from "../../../core/transfer/format.js";
 import { readDatabase } from "./database.js";
 import { checkFile, digest, fail, newDirectory, readManifest, writeNew } from "./files.js";
 import { readEvents, validateEventPair } from "./events.js";
+import { hasAuthority } from "../sqlite/project-authority.js";
 
 export function openSnapshots(path: string, includeEvents = false) {
   let recovery: DatabaseSync | undefined, main: DatabaseSync | undefined, events: DatabaseSync | undefined;
@@ -33,7 +34,11 @@ export async function copySnapshot(db: DatabaseSync, path: string): Promise<void
   chmodSync(path, 0o600);
   // Bundle hashes must cover all data: turn only this newly owned copy into a self-contained file.
   const copy = new DatabaseSync(path);
-  try { copy.exec("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;"); } finally { copy.close(); }
+  try {
+    copy.exec("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;");
+    // A physical backup is a retained copy, never a second active writer.
+    if(hasAuthority(copy))copy.prepare("UPDATE project_authority SET state='blocked'").run();
+  } finally { copy.close(); }
 }
 export async function copyDatabase(path: string, output: string) {
   const snapshots = openSnapshots(path, true);

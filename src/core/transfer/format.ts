@@ -57,7 +57,8 @@ export const manifestSchema = z.strictObject({
   project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable(), events: file.optional() }),
   rows: integer.nonnegative().max(MAX_ROWS).nullable(),
   event_rows: integer.nonnegative().max(MAX_ROWS).optional(), events_snapshot_at: text.optional(),
-}).refine(value => value.version === 3
+  requires_activation: z.literal(true).optional(),
+}).refine(value => value.requires_activation === undefined || value.kind === "project", "Write activation applies only to project bundles.").refine(value => value.version === 3
   ? value.kind === "project" && value.files.events !== undefined && value.event_rows !== undefined && value.events_snapshot_at !== undefined
     && value.rows !== null && value.rows + value.event_rows <= MAX_ROWS && value.files.main.bytes + value.files.events.bytes <= MAX_DATA_BYTES
   : value.event_rows === undefined && value.events_snapshot_at === undefined && (value.version === 2 ? value.kind === "backup" && value.files.events !== undefined : value.files.events === undefined),

@@ -5,6 +5,7 @@ import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { fileDescriptor, fail } from "./files.js";
 import { eventImportSchemaSql, hasEventImports } from "../sqlite/event-imports.js";
 import { eventRowSchemas, eventTables, savedPointSchema } from "../../../core/transfer/events.js";
+import { authoritySql, hasAuthority, validateAuthority } from "../sqlite/project-authority.js";
 
 function schema(db: DatabaseSync) {
   return JSON.stringify(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name").all());
@@ -30,6 +31,7 @@ export function validateEventStore(db: DatabaseSync): void {
     expected.exec(lifecycleSchemaSql);
     if (linked) expected.exec(taskLinkSchema);
     if (version === 2) expected.exec(eventImportSchemaSql + "PRAGMA user_version=2;");
+    if (hasAuthority(db)) { expected.exec(authoritySql("events",linked)); validateAuthority(db); }
     if (schema(db) !== schema(expected) || db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446995
       || db.prepare("PRAGMA integrity_check").all().some(r => r["integrity_check"] !== "ok")) {
       fail("invalid_event_store", "Unsupported or damaged event companion; existing files preserved.");

@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { recoverySchemaSql } from "../sqlite/recovery-schema.js";
 import { fileDescriptor, fail } from "./files.js";
 import { closeSync } from "node:fs";
+import { authoritySql, hasAuthority, validateAuthority } from "../sqlite/project-authority.js";
 
 export function initialize(db: DatabaseSync, recovery = false, version = 15): void {
   if (recovery) db.exec(recoverySchemaSql);
@@ -25,6 +26,7 @@ export function validateDatabase(db: DatabaseSync, recovery = false): void {
     const version = Number(db.prepare("PRAGMA user_version").get()?.["user_version"]);
     if (recovery ? version !== 1 : ![4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(version)) fail("unsupported_database", "Unsupported database version.");
     initialize(expected, recovery, version);
+    if (hasAuthority(db)) { expected.exec(authoritySql(recovery ? "recovery" : "main")); validateAuthority(db); }
     if (db.prepare("PRAGMA application_id").get()?.["application_id"] !== (recovery ? 1397446994 : 1397446988)
       || db.prepare("PRAGMA user_version").get()?.["user_version"] !== (recovery ? 1 : version)
       || schema(db) !== schema(expected)) fail("unsupported_database", "Expected the supported Skilly schema (main v4–v15 / recovery v1), without custom SQL objects.");

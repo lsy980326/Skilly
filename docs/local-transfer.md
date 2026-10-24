@@ -5,6 +5,9 @@
 명령은 Skilly 저장소에서 빌드한 CLI로 실행한다. 경로는 심볼릭 링크가 없는 정규화된
 절대 경로를 사용한다. macOS에서는 `/tmp` 대신 `/private/tmp` 같은 실제 경로를 쓴다.
 
+이 안내의 backup/restore/export/import는 사본 생성이다. 프로젝트의 실제 쓰기 허용 위치를
+바꾸는 별도 명령은 [쓰기 DB 전환과 복귀](project-write-transfer.md)를 따른다.
+
 ## 전체 DB 백업과 복원
 
 ```sh

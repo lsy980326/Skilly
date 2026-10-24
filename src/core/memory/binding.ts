@@ -13,17 +13,20 @@ export interface ProjectBinding {
 
 /** A configured MCP connection has one scope, even when the DB holds many projects. */
 export class BoundMemory {
-  constructor(private readonly service: MemoryService, readonly binding: ProjectBinding) {}
+  constructor(private readonly service: MemoryService, readonly binding: ProjectBinding, private readonly writable?: (id:string)=>boolean) {}
 
   async resolve(): Promise<JsonObject> {
-    const result = await this.service.registerProject({
+    const existing=await this.service.findProject(this.binding.key);
+    if(existing && existing.name!==this.binding.name)throw new MemoryError("scope_mismatch","Configured project name differs.");
+    const readOnly=existing && this.writable?.(existing.id)===false;
+    const result = readOnly ? { project: {id:existing.id} } : await this.service.registerProject({
       key: this.binding.key, name: this.binding.name,
       idempotency_key: `binding:v1:${this.binding.key}`,
     });
     const project = object(result["project"]);
     const id = project["id"];
     if (typeof id !== "string") throw new MemoryError("invalid_data", "Project identity is missing.");
-    if (this.binding.component) await this.service.registerComponent(id, this.binding.component);
+    if (this.binding.component && !readOnly) await this.service.registerComponent(id, this.binding.component);
     return {
       project: { id, key: this.binding.key, name: this.binding.name },
       scope: { repository: this.binding.repository, environment: this.binding.environment },

@@ -19,6 +19,8 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
   skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory
   skilly import --input /absolute/export-directory --output /absolute/new-db-directory [--db /absolute/base.sqlite]
+  skilly transfer-prepare --db /absolute/source.sqlite --project-id <UUID> --state /absolute/new-transfer-directory
+  skilly transfer-status|transfer-activate|transfer-recover --state /absolute/transfer-directory
   skilly skill-export --db /absolute/memory.sqlite --project-id <UUID> --skill <key> [--version <version>] --output /absolute/new-package.json
   skilly skill-install --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
   skilly skill-verify --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
@@ -33,7 +35,8 @@ serve uses MCP over stdin/stdout. call reads one JSON object from stdin.
 This CLI/MCP uses no network server, AI model, file watcher or automatic execution collector.
 The optional local viewer is a separate command: npm run view -- --db /absolute/path/memory.sqlite
 Maintenance never overwrites an existing output directory. Import with --db adds to a NEW COPY of that DB.
-Incomplete outputs are retained without a completion marker; never use them. No transfer switches the live connection.
+Incomplete outputs are retained without a completion marker; never use them.
+transfer-* explicitly changes project write permissions; it never edits client settings or forwards old writes.
 `;
 
 async function main(): Promise<void> {
@@ -56,6 +59,15 @@ async function main(): Promise<void> {
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
   const [command, tool] = positionals;
+  if(command && ["transfer-prepare","transfer-status","transfer-activate","transfer-recover"].includes(command)) {
+    if(positionals.length!==1 || !values.state || values.project || values.input || values.output || values.skill || values.version || values.tool || values.folder || values.from || values.expect
+      || (command==="transfer-prepare" ? !values.db || !values["project-id"] : values.db || values["project-id"]))
+      throw new MemoryError("invalid_input","Use transfer-prepare with --db --project-id --state, or transfer-status/activate/recover with --state only.");
+    const {prepareTransfer,transferStatus,activateTransfer,recoverTransfer}=await import("../../adapters/storage/transfer/cutover.js");
+    const result=command==="transfer-prepare"?await prepareTransfer(values.db!,values["project-id"]!,values.state)
+      :command==="transfer-status"?transferStatus(values.state):command==="transfer-activate"?activateTransfer(values.state):await recoverTransfer(values.state);
+    process.stdout.write(`${JSON.stringify(result)}\n`);return;
+  }
   if (command && ["skill-export", "skill-install", "skill-verify", "skill-update-preview", "skill-update", "skill-update-recover"].includes(command)) {
     if (positionals.length !== 1) throw new MemoryError("invalid_command", "Use one skill package command.");
     const { skillPackageCommand } = await import("./skill-package.js");

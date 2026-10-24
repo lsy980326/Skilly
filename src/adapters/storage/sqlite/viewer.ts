@@ -23,6 +23,7 @@ import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { componentSelection, type InstallationComponent } from "../../../core/viewer/components.js";
 import { recoveryRows } from "./recovery-components.js";
 import { componentProjection } from "./component-links.js";
+import { readAuthority } from "./project-authority.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -276,7 +277,7 @@ export class SqliteViewer {
     const counts = this.db.prepare("SELECT kind, count(*) AS total FROM records WHERE project_id = ? AND run_id = ? GROUP BY kind")
       .all(projectId, runId);
     return {
-      run: { ...this.task(row), task_recording: new SqliteTaskEvents(this.db, this.path).status(projectId, runId) }, records: {
+      run: { ...this.task(row), write_authority:readAuthority(this.db,projectId), task_recording: new SqliteTaskEvents(this.db, this.path).status(projectId, runId) }, records: {
         items: records.slice(0, PAGE_SIZE),
         next_before: records.length > PAGE_SIZE ? records[PAGE_SIZE - 1]?.seq : null,
       }, claims_verified: false,

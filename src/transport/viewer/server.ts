@@ -159,6 +159,9 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       }
       json(response, 404, { error: "페이지를 찾을 수 없습니다." });
     } catch (error) {
+      if(error instanceof Error && ((error instanceof MemoryError && error.code==='project_write_blocked') || error.message.includes('project_write_blocked'))) {
+        json(response,409,{code:'project_write_blocked',error:'이 DB의 프로젝트는 이전으로 쓰기가 차단됐습니다. 같은 위치로 재시도하지 말고 현재 쓰기 DB를 확인해 주세요. 자동 전달·재실행은 하지 않습니다.'});return;
+      }
       if (error instanceof MemoryError) {
         if (reviewPost) { json(response, 503, { error: "확인 상태를 저장하지 못했습니다. 원래 기록은 그대로이며, 새로고침 후 다시 시도해 주세요." }); return; }
         const invalid = ["invalid_path", "invalid_document", "document_limit", "source_changed"].includes(error.code);

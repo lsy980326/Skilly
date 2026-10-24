@@ -21,6 +21,7 @@ import { lifecycleSchemaSql } from "../sqlite/lifecycle.js";
 import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { eventImportSchemaSql } from "../sqlite/event-imports.js";
 import { readEvents, validateEventPair, validateEventStore } from "./events.js";
+import { putAuthority, readAuthority, type AuthorityRow } from "../sqlite/project-authority.js";
 
 type Row = Record<string, SQLOutputValue>;
 function columns(table: Table): string[] { return Object.keys(rowSchemas[table].shape); }
@@ -95,7 +96,8 @@ export function exportProject(path: string, projectId: string, output: string) {
       created_at: new Date().toISOString(), main_snapshot_at: snapshots.mainAt, recovery_snapshot_at: snapshots.recoveryAt,
       project_id: projectId, rows: count, files: { main: digest(join(output, "data.ndjson")), recovery: null,
         ...(eventData ? { events: eventData.descriptor } : {}) },
-      ...(eventData ? { event_rows: eventData.rows, events_snapshot_at: snapshots.eventsAt! } : {}) };
+      ...(eventData ? { event_rows: eventData.rows, events_snapshot_at: snapshots.eventsAt! } : {}),
+      ...(readAuthority(snapshots.main,projectId)["managed"] ? {requires_activation:true as const} : {}) };
     writeNew(join(output, "manifest.json"), JSON.stringify(manifest));
     return { status: "completed", directory: output, project_id: projectId, rows: count, events: eventData ? "included" : "absent",
       event_rows: eventData?.rows ?? 0, automatic_replay: false, transfer: "copy_not_cutover", atomic_cross_database_snapshot: false };
@@ -128,8 +130,10 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
   }
   if (projects !== 1 || count !== manifest.rows) fail("invalid_bundle", "Project or row count mismatch.");
 }
-export async function importProject(input: string, output: string, base?: string) {
+export async function importProject(input: string, output: string, base?: string, quarantine?: AuthorityRow) {
   const manifest = readManifest(input, "project"), data = join(input, "data.ndjson");
+  if(manifest.requires_activation && !quarantine)fail("activation_required","A managed project requires the transfer workflow; a copy must not inherit write authority.");
+  if (quarantine && (base || quarantine.project_id!==manifest.project_id || quarantine.state!=="blocked")) fail("invalid_input","Quarantine requires a fresh single-project blocked copy.");
   rejectProjectCompanions(input, manifest.version === 3);
   if (manifest.files.main.bytes > MAX_DATA_BYTES) fail("transfer_limit", "Bundle exceeds the import limit.");
   checkFile(data, manifest.files.main);
@@ -143,6 +147,7 @@ export async function importProject(input: string, output: string, base?: string
       if (table === "records" && manifest.version === 3) sourceRecords.set(String(row["id"]), { seq: Number(row["source_seq"]), run: String(row["run_id"]), recordedAt: String(row["recorded_at"]) });
     });
     const eventScope = { id: manifest.project_id!, key: projectKey, runs: sourceRuns, records: sourceRecords };
+    if (quarantine && quarantine.project_key!==projectKey) fail("scope_mismatch","Quarantine project differs.");
     if (manifest.version === 3) {
       checkFile(join(input, "events.ndjson"), manifest.files.events!);
       eventFd = fileDescriptor(join(input, "events.ndjson"), MAX_DATA_BYTES);
@@ -205,6 +210,10 @@ export async function importProject(input: string, output: string, base?: string
         }
         checkFile(data, manifest.files.main);
         rejectProjectCompanions(input, manifest.version === 3);
+        if(quarantine) {
+          putAuthority(main,"main",quarantine); putAuthority(journal,"recovery",quarantine);
+          if(events)putAuthority(events,"events",quarantine);
+        }
         main.exec("COMMIT"); journal.exec("COMMIT"); events?.exec("COMMIT");
       } catch (error) {
         if (main.isTransaction) main.exec("ROLLBACK");
