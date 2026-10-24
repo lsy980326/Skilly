@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "test:d1": "npm run build && node --test --test-concurrency=2 tests/d1-runtime.test.mjs tests/d1-work.test.mjs tests/d1-decisions-plans.test.mjs tests/d1-executions.test.mjs tests/d1-task-events.test.mjs",
+    "test:d1": "npm run build && node --test --test-concurrency=2 tests/d1-runtime.test.mjs tests/d1-work.test.mjs tests/d1-decisions-plans.test.mjs tests/d1-executions.test.mjs tests/d1-task-events.test.mjs tests/d1-skills.test.mjs",
     "start": "node dist/runtime/local/main.js serve",
     "view": "npm run build && node dist/runtime/local/viewer.js",
     "viewer": "node dist/runtime/local/viewer-manager.js",

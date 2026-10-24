@@ -11,7 +11,7 @@ export async function prepareD1Event(db:D1Binding,change:D1Mutation):Promise<((s
   if(change.lifecycle===undefined)return undefined;
   const parsed=eventCommandSchema.safeParse(change.lifecycle);
   if(!parsed.success)throw new MemoryError("invalid_input","Invalid host lifecycle command.");
-  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.plan||change.execution)
+  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.plan||change.execution||change.skill)
     throw new MemoryError("invalid_input","Lifecycle metadata is separate from work and process reports.");
   const c=parsed.data,i=c.input;
   if(i.project_id!==change.project.id||i.idempotency_key!==change.receipt.key)throw new MemoryError("scope_mismatch","Lifecycle and receipt scope differ.");

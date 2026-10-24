@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { skillKey } from "./model.js";
+import { skillKey } from "./schema.js";
 import type { JsonObject, Run } from "../memory/model.js";
 
 /** A declared use of an immutable catalog version; never proof of model loading. */

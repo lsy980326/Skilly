@@ -6,6 +6,7 @@ import { d1ScopeSchema, hashText, rows, type Sql } from "./query.js";
 import type { D1Binding } from "./binding.js";
 import type { D1ExecutionChange } from "./execution-mutation.js";
 import { hasExecutionSchema } from "./execution-mutation.js";
+import type { D1SkillChange } from "./skill-model.js";
 import type { D1EventChange } from "./event-model.js";
 
 const task = { run_id:z.uuid(), idempotency_key:z.string().min(1).max(200) };
@@ -15,14 +16,14 @@ const saveCommand=z.strictObject({operation:z.literal("save"),input:d1SavePlanSc
 const updateCommand=z.strictObject({operation:z.literal("update"),input:d1UpdatePlanSchema.extend(d1ScopeSchema.shape),id:z.uuid(),created_at:z.iso.datetime()});
 const command=z.discriminatedUnion("operation",[saveCommand,updateCommand]);
 export type D1PlanChange=z.infer<typeof command>;
-export type D1Mutation=Mutation & {plan?:D1PlanChange;execution?:D1ExecutionChange;lifecycle?:D1EventChange};
+export type D1Mutation=Mutation & {plan?:D1PlanChange;execution?:D1ExecutionChange;lifecycle?:D1EventChange;skill?:D1SkillChange};
 
 /** Sidecar preparation is pure validation/read. Only the caller's original project CAS can commit it. */
 export async function prepareD1Plan(db:D1Binding,change:D1Mutation):Promise<((sql:Sql,assertOne:()=>void)=>void)|"conflict"|undefined> {
   if(change.plan===undefined)return undefined;
   const parsed=command.safeParse(change.plan);
   if(!parsed.success)throw new MemoryError("invalid_input","Invalid D1 plan command.");
-  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.skill_usage||change.execution||change.lifecycle)
+  if(change.run||change.record||change.records||change.work||change.reports||change.decision||change.skill_usage||change.execution||change.lifecycle||change.skill)
     throw new MemoryError("invalid_input","Plan commands use their own atomic mutation and a previously saved task/report.");
   const c=parsed.data,i=c.input;
   if(i.project_id!==change.project.id||i.idempotency_key!==change.receipt.key)throw new MemoryError("scope_mismatch","Plan command and receipt scope differ.");

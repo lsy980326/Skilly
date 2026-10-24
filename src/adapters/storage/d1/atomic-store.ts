@@ -5,6 +5,7 @@ import { appendD1Work, validateD1Work } from "./work.js";
 import { prepareD1Decision } from "./decisions.js";
 import { prepareD1Plan, type D1Mutation } from "./plan-mutation.js";
 import { prepareD1Execution } from "./execution-mutation.js";
+import { prepareD1Skill } from "./skill-mutation.js";
 import { prepareD1Event } from "./event-mutation.js";
 
 export const D1_WRITE_LIMITS = Object.freeze({ mutation_bytes: 64 * 1024, receipt_bytes: 16 * 1024, records: 8, statements: 40 });
@@ -49,9 +50,9 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     this.scope(change.receipt.scope);
     validateMutationOwnership(change);
     // Explicitly fail before I/O: these require their own atomic D1 implementations.
-    const allowed = new Set(["project", "expected_revision", "receipt", "run", "record", "records", "work", "reports", "decision", "plan", "execution", "lifecycle"]);
+    const allowed = new Set(["project", "expected_revision", "receipt", "run", "record", "records", "work", "reports", "decision", "plan", "execution", "lifecycle", "skill"]);
     if (Object.keys(change).some(key => !allowed.has(key))) {
-      throw new MemoryError("unsupported_capability", "This D1 slice does not store skills or imported history.");
+      throw new MemoryError("unsupported_capability", "This D1 slice does not store imported history.");
     }
     const work = validateD1Work(change);
     const records = [...(change.record ? [change.record] : []), ...(change.records ?? [])];
@@ -71,6 +72,9 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     if(execution==="conflict")return "conflict";
     const lifecycle=await prepareD1Event(this.binding,change);
     if(lifecycle==="conflict")return "conflict";
+
+    const skill=await prepareD1Skill(this.binding,change);
+    if(skill==="conflict")return "conflict";
 
     const token = crypto.randomUUID();
     const session = this.binding.withSession("first-primary"), statements: D1Statement[] = [];
@@ -120,6 +124,7 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     plan?.(sql,assertOneChange);
     execution?.(sql,assertOneChange);
     lifecycle?.(sql,assertOneChange);
+    skill?.(sql,assertOneChange);
     sql("INSERT INTO receipts (scope,idempotency_key,payload_hash,result_json,commit_token) VALUES (?,?,?,?,?)",
       change.receipt.scope, change.receipt.key, change.receipt.hash, receiptJson, token);
     if (statements.length > D1_WRITE_LIMITS.statements) throw new MemoryError("resource_limit", "Too many statements. Nothing was submitted.");

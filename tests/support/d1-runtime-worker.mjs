@@ -5,6 +5,7 @@ import { D1Decisions } from '../../dist/adapters/storage/d1/decisions.js';
 import { D1Plans } from '../../dist/adapters/storage/d1/plans.js';
 import { D1Executions } from '../../dist/adapters/storage/d1/executions.js';
 import { D1TaskEvents } from '../../dist/adapters/storage/d1/task-events.js';
+import { D1Skills } from '../../dist/adapters/storage/d1/skills.js';
 
 export default {
   async fetch(request, env) {
@@ -28,6 +29,14 @@ export default {
       if (input.operation === 'event-link') return Response.json(await new D1TaskEvents(env.DB,input.scope).link(input.input));
       if (input.operation === 'event-status') return Response.json(await new D1TaskEvents(env.DB,input.scope).status(input.run_id));
       if (input.operation === 'event-observations') return Response.json(await new D1TaskEvents(env.DB,input.scope).observations(input.offset));
+      if (input.operation === 'skill-register') return Response.json(await new D1Skills(env.DB,input.scope).register(input.input));
+      if (input.operation === 'skill-assign') return Response.json(await new D1Skills(env.DB,input.scope).assign(input.input));
+      if (input.operation === 'skill-checkpoint') return Response.json(await new D1Skills(env.DB,input.scope).checkpoint(input.input));
+      if (input.operation === 'skills') return Response.json(await new D1Skills(env.DB,input.scope).list(input.query,input.offset));
+      if (input.operation === 'skill') return Response.json(await new D1Skills(env.DB,input.scope).detail(input.key,input.version,input.offset));
+      if (input.operation === 'skill-package') return Response.json(await new D1Skills(env.DB,input.scope).package(input.key,input.version));
+      if (input.operation === 'skill-history') return Response.json(await new D1Skills(env.DB,input.scope).history(input.id,input.kind,input.offset));
+      if (input.operation === 'task-skills') return Response.json(await new D1Skills(env.DB,input.scope).taskSkills(input.run_id,input.offset));
       return new Response(null, { status: 404 });
     } catch (error) {
       return Response.json({ error: error.code ?? 'unexpected_error', retryable: error.retryable ?? false }, { status: 409 });
