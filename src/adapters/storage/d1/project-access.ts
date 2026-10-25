@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { AccessError,accessScopeSchema,principalSchema,roleSchema,permits,type Principal,type AccessScope,type AccessAction } from '../../../core/access/model.js';
+import { AccessError,accessScopeSchema,principalSchema,roleSchema,permits,type Principal,type AccessScope,type AccessAction,type CredentialLease } from '../../../core/access/model.js';
 import { MemoryError } from '../../../core/memory/model.js';
 import type { D1Binding,D1Statement } from './binding.js';
 import { rows } from './query.js';
+import { credentialGuard,credentialError } from './credential-guard.js';
 
 const grantSchema=z.strictObject({version:z.int().positive(),role:roleSchema,state:z.enum(['active','revoked'])});
 type Grant=z.infer<typeof grantSchema>;
@@ -25,9 +26,9 @@ export class D1ProjectAccess {
   if(!grant||grant.state!=='active'||!permits(grant.role,action))throw new AccessError(403);
   return grant;
  }
- async bind(principal:Principal,scope:AccessScope,action:AccessAction,fresh:()=>void){
+ async bind(principal:Principal,scope:AccessScope,action:AccessAction,fresh:()=>void|Promise<void>,credential?:CredentialLease){
   const p=principalSchema.parse(principal),s=accessScopeSchema.parse(scope),grant=await this.authorize(p,s,action),raw=this.db;
-  const check=async()=>{fresh();const current=await this.authorize(p,s,action);if(current.version!==grant.version)throw new AccessError(403);};
+  const check=async()=>{await fresh();const current=await this.authorize(p,s,action);if(current.version!==grant.version)throw new AccessError(403);};
   const binding:D1Binding={...(raw.writeGeneration===undefined?{}:{writeGeneration:raw.writeGeneration}),withSession:constraint=>{
    const session=raw.withSession(constraint),originals=new WeakMap<D1Statement,D1Statement>();
    const wrap=(statement:D1Statement,sql:string):D1Statement=>{const wrapped:D1Statement={bind:(...v)=>wrap(statement.bind(...v),sql),async all<T>(){
@@ -40,8 +41,9 @@ export class D1ProjectAccess {
       WHERE issuer=? AND subject=? AND project_id=? AND repository=? AND environment=? AND version=? AND state='active' AND role IN ('owner','editor')
       AND version=(SELECT MAX(version) FROM cloud_project_access WHERE issuer=? AND subject=? AND project_id=? AND repository=? AND environment=?)) THEN 1 ELSE 0 END)`)
      .bind(...values(p,s),grant.version,...values(p,s));
-    try{const result=await session.batch([guard,session.prepare('DELETE FROM cloud_access_guard WHERE id=1'),...native]);return result.slice(2);}
-    catch(e){if(e instanceof Error&&e.message.includes('skilly_cloud_access_allowed'))throw new AccessError(403);throw e;}
+    const credentials=credential?credentialGuard(session,credential):[];
+    try{const result=await session.batch([...credentials,guard,session.prepare('DELETE FROM cloud_access_guard WHERE id=1'),...native]);return result.slice(credentials.length+2);}
+    catch(e){credentialError(e);if(e instanceof Error&&e.message.includes('skilly_cloud_access_allowed'))throw new AccessError(403);throw e;}
    }};
   }};
   return {binding,check,version:grant.version};

@@ -13,5 +13,6 @@ export function permits(role:AccessRole,action:AccessAction){return action==='re
 export class AccessError extends MemoryError {
  constructor(public readonly status:401|403|503,code='access_denied') {super(code,status===401?'Authentication required.':status===403?'Project access denied.':'Authentication or access policy unavailable.');}
 }
-export interface Authentication {principal:Principal;assertFresh():void}
+export interface CredentialLease {policy_id:string;version:number;expires_at:number}
+export interface Authentication {principal:Principal;expires_at:number;assertFresh():void|Promise<void>;credential?:CredentialLease}
 export interface Authenticator {authenticate(request:Request):Promise<Authentication>}
