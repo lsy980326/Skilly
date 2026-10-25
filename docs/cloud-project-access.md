@@ -11,7 +11,7 @@ Cloudflare 계정·로그인·DNS·Access 정책·실사용 DB·기존 MCP/화�
 | 이메일 헤더·본문의 user/role/authenticated | 권한 근거로 사용하지 않음 |
 | Access 서비스 토큰 | 개인 사용자와 섞지 않도록 빈 sub는 거절. 별도 머신 주체 계약은 후속 |
 | 쿠키·임의 Bearer 토큰 | fallback 없음. `Cf-Access-Jwt-Assertion`만 검증 |
-| 사전 제공 Access JWT의 MCP HTTP 연결 | 고정 scope의 26개 도구. 결정·계획·검사 근거·이벤트·스킬·기능 검색 연결과 로컬 SDK/HTTP/D1 검증 범위는 [인증된 MCP 연결](cloud-mcp.md) 참조 |
+| 사전 제공 Access JWT의 MCP HTTP 연결 | 고정 scope의 27개 도구. 결정·계획·검사 근거·이벤트·스킬·기능 검색 연결과 로컬 SDK/HTTP/D1 검증 범위는 [인증된 MCP 연결](cloud-mcp.md) 참조 |
 | OIDC/OAuth 로그인·토큰 발급·갱신 | 구현 범위 밖. 실제 계정·클라이언트 설정 연동은 별도 검증 필요 |
 
 등록·키 수명 관리에는 `createManagedCloudHandler(binding, policyId)`를 사용한다.

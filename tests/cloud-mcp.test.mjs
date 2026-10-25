@@ -68,7 +68,7 @@ test('authenticated MCP over real loopback HTTP and local Worker D1',{timeout:18
   assert.equal((await all(db,'SELECT count(*) n FROM runs'))[0].n,0);
  });
  await t.test('SDK initialize, list and ping work with stateless JSON and a fixed project resolver',async()=>{
-  client=await connect(jwt);const tools=await client.listTools();assert.equal(tools.tools.length,26);assert.equal(tools.tools.some(x=>x.name==='memory_begin_task'),true);assert.equal(tools.tools.some(x=>x.name==='memory_register_project'),false);
+  client=await connect(jwt);const tools=await client.listTools();assert.equal(tools.tools.length,27);assert.equal(tools.tools.some(x=>x.name==='memory_begin_task'),true);assert.equal(tools.tools.some(x=>x.name==='memory_register_project'),false);
   for(const name of ['memory_save_plan','memory_update_plan_item','memory_link_task_events'])assert.equal(tools.tools.find(x=>x.name===name).annotations.readOnlyHint,false);
   for(const name of ['memory_query_plans','memory_query_decisions','memory_list_executions','memory_list_task_events','memory_get_status'])assert.equal(tools.tools.find(x=>x.name===name).annotations.readOnlyHint,true);
   await client.ping();const resolved=value(await client.callTool({name:'memory_resolve_project',arguments:{}}));assert.equal(resolved.project.id,project);assert.deepEqual(resolved.scope,scope);assert.equal(resolved.claims_verified,false);

@@ -36,13 +36,17 @@ const definitions:Record<CloudCommand['operation'],{name:string;description:stri
  'skill-register':{name:'memory_register_skill',description:'Register supplied immutable skill text/version/package/instructions in this project catalog. Requires the resolved project ID. Never fetch source URLs or execute supplied content.'},
  'skill-assign':{name:'memory_assign_skill',description:'Append desired installation metadata in the host-bound root with explicit expected assignment ID. Does not install files. No automatic conflict overwrite.'},
  'skill-checkpoint':{name:'memory_checkpoint_skill_usage',description:'Save a readable note/change/issue with AI-reported exact skill versions and optional saved observation IDs. Separate write operation/key/receipt from memory_checkpoint; do not use for structured decisions.'},
+ 'write-context':{name:'memory_get_write_context',description:'Read an opaque retry namespace for one write operation, bound to authenticated principal, fixed project and host root/session. A changed context blocks recovery; this is not authorization or a save receipt.'},
  receipt:{name:'memory_get_receipt',description:'Read this authenticated principal and scope\'s original write receipt. Retry the original input/key after an uncertain write.'}
 };
 interface Definition {name:string;description:string;schema:z.ZodType<Record<string,unknown>>;operation?:CloudCommand['operation'];readOnly:boolean}
 const tools:Definition[]=[{name:'memory_resolve_project',description:'Identify this host-bound project and scope; never guess project IDs.',schema:z.strictObject({}),readOnly:true}];
 for(const option of [...cloudWriteSchema.options,...cloudReadSchema.options]){
  const operation=option.shape.operation.value;
- tools.push({...definitions[operation],schema:option.shape.input.safeExtend(operation==='skill-register'?{repository:common.repository,environment:common.environment}:common),operation,readOnly:cloudReadSchema.options.some(read=>read.shape.operation.value===operation)});
+ const guarded=operation==='receipt'||cloudWriteSchema.options.some(write=>write.shape.operation.value===operation);
+ const schema=option.shape.input.safeExtend(operation==='skill-register'?{repository:common.repository,environment:common.environment}:common);
+ tools.push({...definitions[operation],schema:guarded?schema.safeExtend({expected_write_context:z.string().regex(/^[a-f0-9]{64}$/).optional()}):schema,
+  operation,readOnly:cloudReadSchema.options.some(read=>read.shape.operation.value===operation)});
 }
 export const cloudMcpInstructions='Skilly D1 stores reports without calling a model. This endpoint is bound to one project/repository/environment. '
  +'Resolve it, recall tasks/current knowledge, begin a task, checkpoint meaningful changes and finish with a handoff. Ordinary journals belong in the DB. '
@@ -53,15 +57,16 @@ export const cloudMcpInstructions='Skilly D1 stores reports without calling a mo
   +'For event linking use this remote host\'s lifecycle_context.current_observation_id, not a local Codex hook ID. Missing host event context means unsupported capability, not disconnected MCP. Interrupt is not task completion and unreceived omissions cannot be counted. '
   +'Skill operations require an explicit host-root binding independent of hooks. Catalog text is project-shared; installation/observation history is root-bound. Assigning metadata does not install files; only a separate host inspector reads registered files. '
   +'Use memory_checkpoint_skill_usage for AI use reports, never as file or model-loading proof. Follow all returned section offsets, installation offsets and skill/history offsets; pages are live, bounded, and not complete snapshots. '
-  +'Missing observations remain unknown. After an uncertain write use the original request key and receipt; there is no automatic queue or replay.';
+  +'Missing observations remain unknown. After an uncertain write preserve the original input and request key. '
+  +'The server has no automatic queue or replay. An explicitly configured host outbox can retain requests and recover them with a pinned write context; never claim retention without its local receipt.';
 export function listCloudTools(){return tools.map(t=>({name:t.name,description:t.description,inputSchema:z.toJSONSchema(t.schema,{target:'draft-7',unrepresentable:'any'}),
  annotations:{readOnlyHint:t.readOnly,destructiveHint:false,idempotentHint:true,openWorldHint:false}}));}
-export async function callCloudTool(db:D1Binding,auth:Authentication,scope:AccessScope,name:string,args:unknown,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider){
+export async function callCloudTool(db:D1Binding,auth:Authentication,scope:AccessScope,name:string,args:unknown,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider,storageIdentity?:string){
  const tool=tools.find(t=>t.name===name);if(!tool)throw new MemoryError('invalid_input','Unknown tool.');
- const input=tool.schema.parse(args),{project_id,repository,environment,...parameters}=input;
+ const input=tool.schema.parse(args),{project_id,repository,environment,expected_write_context,...parameters}=input;
  if((project_id!==undefined&&project_id!==scope.project_id)||(repository!==undefined&&repository!==scope.repository)||(environment!==undefined&&environment!==scope.environment))throw new AccessError(403);
  if(tool.operation){const request=cloudRequestSchema.parse({repository:scope.repository,environment:scope.environment,command:{operation:tool.operation,input:tool.operation==='skill-register'?{...parameters,project_id:scope.project_id}:parameters}});
-  return executeCloudCommand(db,auth,scope,request.command,sources,events,skills);}
+  return executeCloudCommand(db,auth,scope,request.command,sources,events,skills,typeof expected_write_context==='string'?expected_write_context:undefined,storageIdentity);}
  const permit=await new D1ProjectAccess(db).bind(auth.principal,scope,'read',()=>auth.assertFresh(),auth.credential);
  const [project]=await rows(permit.binding,'SELECT id,project_key AS key,name FROM projects WHERE id=?',[scope.project_id],1);if(!project)throw new AccessError(403);
  const context=resolveCloudEventContext(events,scope,auth.principal);

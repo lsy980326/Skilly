@@ -9,7 +9,7 @@ import { D1CurrentKnowledge } from './current-knowledge.js';
 import { D1Decisions } from './decisions.js';
 import { D1Plans } from './plans.js';
 import { D1CloudPlans } from './cloud-plans.js';
-import { cloudWriteSchema } from '../../../core/access/commands.js';
+import { cloudWriteSchema,cloudReceiptOperation } from '../../../core/access/commands.js';
 import { D1ExecutionReader } from './execution-reader.js';
 import { cloudExecutionReceipt } from './cloud-executions.js';
 import type { SourceProvider } from '../../../core/execution/currentness.js';
@@ -22,11 +22,20 @@ import { D1CloudSkills,resolveCloudSkillScope,type CloudSkillContextProvider } f
 import { D1SkillReader } from './skill-reader.js';
 import { D1FeatureReader } from './feature-reader.js';
 
+import { bindCloudWriteContext } from './cloud-write-context.js';
+
 export type CloudCommand=z.infer<typeof cloudRequestSchema>['command'];
 /** Shared HTTP/MCP business boundary. Inputs never choose the authenticated scope. */
-export async function executeCloudCommand(db:D1Binding,auth:Authentication,scope:AccessScope,command:CloudCommand,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider){
+export async function executeCloudCommand(db:D1Binding,auth:Authentication,scope:AccessScope,command:CloudCommand,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider,expectedContext?:string,storageIdentity?:string){
  const write=cloudWriteSchema.options.some(option=>option.shape.operation.value===command.operation);
  const permit=await new D1ProjectAccess(db).bind(auth.principal,scope,write?'write':'read',()=>auth.assertFresh(),auth.credential);
+ let boundContext:string|undefined;
+ if(expectedContext!==undefined||command.operation==='write-context'){
+  const operation=cloudReceiptOperation.parse(command.operation==='receipt'||command.operation==='write-context'?command.input.write_operation:command.operation);
+  const bound=await bindCloudWriteContext(permit.binding,storageIdentity,scope,auth.principal,operation,events,skills);boundContext=bound.id;
+  if(expectedContext!==undefined&&expectedContext!==bound.id)throw new MemoryError('write_context_changed','Retry namespace changed; original request was preserved.');
+  events=bound.events;skills=bound.skills;
+ }
  const work=new D1CloudWork(permit.binding,scope,auth.principal),reader=new D1TaskReader(permit.binding,scope);
  const eventContext=()=>{
   const context=resolveCloudEventContext(events,scope,auth.principal);
@@ -38,6 +47,7 @@ export async function executeCloudCommand(db:D1Binding,auth:Authentication,scope
  const skillReader=()=>new D1SkillReader(permit.binding,skillScope());
  let result:unknown;
  switch(command.operation){
+  case 'write-context':result={operation:command.input.write_operation,context_id:boundContext,claims_verified:false};break;
   case 'begin':case 'checkpoint':case 'finish':result=await work.write(command);break;
   case 'save-plan':case 'update-plan':result=await new D1CloudPlans(permit.binding,scope,auth.principal).write(command);break;
   case 'tasks':result=await reader.listTasks(command.input);break;

@@ -51,6 +51,7 @@ export const cloudReadSchema=z.discriminatedUnion('operation',[
  z.strictObject({operation:z.literal('executions'),input:z.strictObject({run_id:id,offset:z.int().min(0).max(100000).optional()})}),
  z.strictObject({operation:z.literal('event-observations'),input:z.strictObject({offset:z.int().min(0).max(100000).optional()})}),
  z.strictObject({operation:z.literal('event-status'),input:z.strictObject({run_id:id})}),
+ z.strictObject({operation:z.literal('write-context'),input:z.strictObject({write_operation:cloudReceiptOperation})}),
  z.strictObject({operation:z.literal('receipt'),input:z.strictObject({write_operation:cloudReceiptOperation,idempotency_key:key})}),
 ]);
 export const cloudRequestSchema=z.strictObject({repository:text(100),environment:text(100),command:z.union([cloudWriteSchema,cloudReadSchema])});
