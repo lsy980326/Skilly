@@ -2,10 +2,7 @@ import { z } from 'zod';
 import { AccessError,type Authenticator } from '../../core/access/model.js';
 import { cloudRequestSchema } from '../../core/access/commands.js';
 import { MemoryError } from '../../core/memory/model.js';
-import { D1ProjectAccess } from '../../adapters/storage/d1/project-access.js';
-import { D1CloudWork } from '../../adapters/storage/d1/cloud-work.js';
-import { D1TaskReader } from '../../adapters/storage/d1/task-reader.js';
-import { D1CurrentKnowledge } from '../../adapters/storage/d1/current-knowledge.js';
+import { executeCloudCommand } from '../../adapters/storage/d1/cloud-session.js';
 import type { D1Binding } from '../../adapters/storage/d1/binding.js';
 
 const headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'};
@@ -32,19 +29,8 @@ export function createCloudHandler(db:D1Binding,authenticator:Authenticator){
   const url=new URL(request.url),match=/^\/v1\/projects\/([a-fA-F0-9-]{36})\/memory$/.exec(url.pathname);
   if(request.method!=='POST'||!match||url.search) return cloudResponse({error:{code:'not_found'}},404);
   const projectId=z.uuid().parse(match[1]),body=cloudRequestSchema.parse(await cloudInput(request)),command=body.command;
-  const scope={project_id:projectId,repository:body.repository,environment:body.environment},write=['begin','checkpoint','finish'].includes(command.operation);
-  const permit=await new D1ProjectAccess(db).bind(auth.principal,scope,write?'write':'read',()=>auth.assertFresh(),auth.credential);
-  const work=new D1CloudWork(permit.binding,scope,auth.principal),reader=new D1TaskReader(permit.binding,scope);
-  let result:unknown;
-  switch(command.operation){
-   case 'begin':case 'checkpoint':case 'finish':result=await work.write(command);break;
-   case 'tasks':result=await reader.listTasks(command.input);break;
-   case 'task':result=await reader.getTask(command.input.run_id);break;
-   case 'record':result=await reader.getRecord(command.input.record_id);break;
-   case 'context':result=await new D1CurrentKnowledge(permit.binding,scope).query();break;
-   case 'receipt':result=await work.receipt(command.input.write_operation,command.input.idempotency_key);break;
-  }
-  await permit.check();await auth.assertFresh();return cloudResponse(result);
+  const scope={project_id:projectId,repository:body.repository,environment:body.environment};
+  return cloudResponse(await executeCloudCommand(db,auth,scope,command));
  }catch(e){
   return cloudError(e);
  }};
