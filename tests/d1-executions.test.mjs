@@ -11,10 +11,10 @@ import { D1Executions } from '../dist/adapters/storage/d1/executions.js';
 import { D1Plans } from '../dist/adapters/storage/d1/plans.js';
 import { observeCommand } from '../dist/runtime/local/process-observer.js';
 import { observeSource } from '../dist/adapters/project/source-version.js';
+import {sourceRepository} from './support/source-repository.mjs';
 import { d1WorkerModules } from './support/d1-modules.mjs';
 
 const at='2026-10-24T00:00:00.000Z',hash=x=>createHash('sha256').update(x).digest('hex');
-const repo=fileURLToPath(new URL('../',import.meta.url));
 // Synthetic observation fixtures exercise boundaries. Actual child-process collection is tested separately.
 const result={outcome:'exited',exit_code:0,signal:null,error_code:null,duration_ms:1,stdout_bytes:0,stderr_bytes:0,
   stdout_hash:hash(''),stderr_hash:hash(''),stdout_hashed_bytes:0,stderr_hashed_bytes:0,output_complete:1};
@@ -32,7 +32,7 @@ function fault(db,c) {
 }
 
 test('actual local D1 runner evidence and plan links',{timeout:120000},async t=>{
-  const root=mkdtempSync(join(tmpdir(),'skilly-d1-evidence-'));
+  const root=mkdtempSync(join(tmpdir(),'skilly-d1-evidence-')),repo=sourceRepository(root);
   const options={...d1WorkerModules(fileURLToPath(new URL('./support/d1-runtime-worker.mjs',import.meta.url))),
     compatibilityDate:'2026-07-30',d1Databases:{DB:randomUUID()},d1Persist:join(root,'d1'),host:'127.0.0.1',port:0,
     outboundService:()=>new Response('outbound disabled',{status:403})};

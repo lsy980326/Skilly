@@ -14,8 +14,9 @@ import {D1Plans} from '../dist/adapters/storage/d1/plans.js';
 import {D1Executions} from '../dist/adapters/storage/d1/executions.js';
 import {observeCommand} from '../dist/runtime/local/process-observer.js';
 import {observeSource} from '../dist/adapters/project/source-version.js';
+import {sourceRepository} from './support/source-repository.mjs';
 import {d1WorkerModules} from './support/d1-modules.mjs';
-const at='2026-10-25T00:00:00.000Z',hash=s=>createHash('sha256').update(s).digest('hex'),repo=fileURLToPath(new URL('../',import.meta.url));
+const at='2026-10-25T00:00:00.000Z',hash=s=>createHash('sha256').update(s).digest('hex');
 const feature={key:'comments',name:'댓글 해결',description:'대화 상태 관리',aliases:['해결 처리','ＲＥＶＩＥＷ'],code_paths:['./src\\reviews\\comments']};
 const component={key:'api',name:'API'};
 function wrap(db,c){return {withSession(constraint){const s=db.withSession(constraint),native=new WeakMap();return {
@@ -28,6 +29,7 @@ const result={outcome:'exited',exit_code:0,signal:null,error_code:null,duration_
 const details={status:'collected',framework:'node_test',counts:{tests:1,passed:1,failed:0,cancelled:0,skipped:0,todo:0,suites:0},suite_success:true,failures:[],failures_truncated:false};
 test('actual local D1 feature search and revision-checked current context',{timeout:150000},async t=>{
  const root=mkdtempSync(join(tmpdir(),'skilly-d1-context-')),options={...d1WorkerModules(fileURLToPath(new URL('./support/d1-runtime-worker.mjs',import.meta.url))),compatibilityDate:'2026-07-30',d1Databases:{DB:randomUUID()},d1Persist:join(root,'d1'),host:'127.0.0.1',port:0,outboundService:()=>new Response('outbound disabled',{status:403})};
+ const repo=sourceRepository(root);
  let mf=new Miniflare(options);t.after(()=>mf.dispose());let db=await mf.getD1Database('DB');
  const all=async(sql,...args)=>(await db.prepare(sql).bind(...args).all()).results;
  const apply=async names=>{for(const name of names){const sql=readFileSync(new URL('../migrations/d1/'+name,import.meta.url),'utf8').replace(/^--[^\n]*$/gm,'').trim().split(/;\s*(?=CREATE\s|$)/i).filter(Boolean);await db.batch(sql.map(s=>db.prepare(s)));}};

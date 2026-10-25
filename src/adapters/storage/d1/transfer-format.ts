@@ -1,5 +1,7 @@
+import { validateTransferOrigins } from "./transfer-origins.js";
 import { z } from "zod";
-import { eventRowSchemas } from "../../../core/transfer/events.js";
+import { storageOriginSchema } from "../../../core/transfer/origins.js";
+import { eventRowSchemas, savedPointSchema as sqliteSavedPoint } from "../../../core/transfer/events.js";
 import { rowSchemas as local } from "../../../core/transfer/format.js";
 import { executionRowSchema } from "../../../core/execution/model.js";
 import { sourceObservationSchema } from "../../../core/execution/currentness.js";
@@ -14,10 +16,14 @@ import { hashText,canonical,json,bytes } from "./query.js";
 
 const id=z.uuid(),text=z.string(),nullable=text.nullable(),seq=z.int().positive(),hash=text.regex(/^[a-f0-9]{64}$/);
 const encoded=<T>(schema:z.ZodType<T>)=>text.refine(v=>{try{return schema.safeParse(JSON.parse(v)).success;}catch{return false;}},"Invalid stored JSON.");
-const savedPoint=z.strictObject({stage:z.enum(['record','start','unknown']),record_id:id.nullable(),seq:seq.optional(),recorded_at:z.iso.datetime().optional(),
+const nativeSavedPoint=z.strictObject({stage:z.enum(['record','start','unknown']),record_id:id.nullable(),seq:seq.optional(),recorded_at:z.iso.datetime().optional(),
  record_visible:z.boolean(),receipt_confirmed:z.boolean(),read_at:z.iso.datetime(),meaning:z.literal('Server receive transaction snapshot; not the physical interruption time.')}).superRefine((v,c)=>{
  if(v.stage==='record'?(!v.record_id||!v.seq||!v.recorded_at||!v.record_visible):(v.record_id!==null||v.seq!==undefined||v.recorded_at!==undefined||v.record_visible||v.receipt_confirmed!==(v.stage==='start')))
   c.addIssue({code:'custom',message:'Saved checkpoint stage differs from its fields.'});
+});
+const savedPoint=z.union([nativeSavedPoint,sqliteSavedPoint.extend({meaning:z.literal("Record visible during hook processing; not an atomic cutoff across databases.")})]).superRefine((v,c)=>{
+ if(v.stage==='record'?(!v.record_id||!v.seq||!v.recorded_at||!v.record_visible):(v.record_id!==null||v.seq!==undefined||v.recorded_at!==undefined||v.record_visible||v.receipt_confirmed!==(v.stage==='start')))
+ c.addIssue({code:'custom',message:'Checkpoint stage differs from its fields.'});
 });
 export const transferSchemas={
  projects:local.projects,runs:local.runs,run_actors:local.run_actors,components:local.components,features:local.features,
@@ -40,9 +46,9 @@ export const transferSchemas={
 };
 export type TransferTable=keyof typeof transferSchemas;
 export const transferTables=Object.keys(transferSchemas) as TransferTable[];
-export type TransferRows=Record<TransferTable,JsonObject[]>;
+export type TransferRows=Record<TransferTable,JsonObject[]> & {storage_origins?:JsonObject[]};
 export const D1_TRANSFER_LIMITS=Object.freeze({bytes:1024*1024,rows:2000,table_bytes:256*1024,row_bytes:64*1024});
-const header=z.strictObject({format:z.literal('skilly-d1-project'),version:z.literal(1),schema:z.literal(8),source_store_id:text.regex(/^[a-f0-9]{32}$/),project_id:id,
+const header=z.strictObject({format:z.literal('skilly-d1-project'),version:z.literal(1),schema:z.union([z.literal(8),z.literal(9)]),source_store_id:text.regex(/^[a-f0-9]{32}$/),project_id:id,
  project_revision:z.int().nonnegative(),tables:z.record(text,z.array(z.record(text,z.json()))),sha256:hash});
 export type D1ProjectBundle=Omit<z.infer<typeof header>,'tables'> & {tables:TransferRows};
 function fail(message:string):never {throw new MemoryError('invalid_transfer',message);}
@@ -50,13 +56,17 @@ const same=(a:JsonObject,b:JsonObject,fields=['repository','environment'])=>fiel
 export async function validateBundle(raw:unknown):Promise<D1ProjectBundle> {
  if(bytes(raw)>D1_TRANSFER_LIMITS.bytes)throw new MemoryError('resource_limit','D1 project bundle exceeds its byte limit; nothing imported.');
  const parsed=header.safeParse(raw);if(!parsed.success)fail('Invalid D1 project bundle header.');const b=parsed.data;
- if(JSON.stringify(Object.keys(b.tables).sort())!==JSON.stringify([...transferTables].sort()))fail('Exact D1 business table catalog required.');
+ if(JSON.stringify(Object.keys(b.tables).sort())!==JSON.stringify([...transferTables,...(b.schema===9?["storage_origins"]:[])].sort()))fail('Exact D1 business table catalog required.');
  const {sha256,...body}=b;if(await hashText(canonical(body))!==sha256)fail('Bundle content hash differs.');
  let count=0;for(const table of transferTables){const data=b.tables[table]!;count+=data.length;
   if(bytes(data)>D1_TRANSFER_LIMITS.table_bytes||data.some(r=>bytes(r)>D1_TRANSFER_LIMITS.row_bytes)||count>D1_TRANSFER_LIMITS.rows)throw new MemoryError('resource_limit','Bounded D1 bundle capacity exceeded.');
   for(const row of data){if(!transferSchemas[table].safeParse(row).success)fail('Invalid row in '+table);
    if(table==='projects'?row['id']!==b.project_id:table==='receipts'?row['scope']!==b.project_id:table!=='run_actors'&&row['project_id']!==b.project_id)fail('Foreign project row.');}}
+ const origins=b.tables["storage_origins"]??[];count+=origins.length;
+ if(count>D1_TRANSFER_LIMITS.rows||bytes(origins)>D1_TRANSFER_LIMITS.table_bytes)throw new MemoryError("resource_limit","Origin archive limit exceeded.");
+ for(const row of origins){storageOriginSchema.parse(row);if(row['project_id']!==b.project_id||bytes(row)>D1_TRANSFER_LIMITS.row_bytes)fail('Foreign or oversized archive row.');}
  const t=b.tables as TransferRows;if(t.projects.length!==1||t.projects[0]!['revision']!==b.project_revision)fail('Missing project/revision.');
+ await validateTransferOrigins(origins as JsonObject[],b.project_id,String(t.projects[0]!['project_key']),transferSchemas);
  const find=(table:TransferTable,id:unknown,field='id')=>t[table].find(r=>r[field]===id)??fail('Missing '+table+' reference.');
  const task=(row:JsonObject)=>{const r=find('runs',row['run_id']);if(!same(r,row))fail('Task scope differs.');return r;};
  const record=(row:JsonObject)=>{const r=find('records',row['record_id']);if(r['run_id']!==row['run_id']||!same(r,row))fail('Record/task scope differs.');return r;};
@@ -84,7 +94,7 @@ export async function validateBundle(raw:unknown):Promise<D1ProjectBundle> {
  for(const e of t.lifecycle_events)if(e['project_key']!==t.projects[0]!['project_key'])fail('Event project key differs.');
  for(const x of t.event_task_snapshots){const e=find('lifecycle_events',x['event_id']),l=find('task_event_links',x['link_id']);
   if(!same(e,l,['repository','environment','root_hash','session_hash'])||e['association_status']!=='linked'||Number(e['seq'])<Number(l['from_seq']))fail('Event snapshot scope differs.');
-  const saved=savedPoint.parse(JSON.parse(String(x['saved_json'])));if(saved.read_at!==e['received_at'])fail('Checkpoint receive time differs.');if(saved.record_id){const r=find('records',saved.record_id);if(r['run_id']!==l['run_id']||saved.seq!==r['seq']||saved.recorded_at!==r['recorded_at'])fail('Saved checkpoint differs.');
+  const saved=savedPoint.parse(JSON.parse(String(x['saved_json'])));if(saved.meaning.startsWith('Server receive')&&saved.read_at!==e['received_at'])fail('Checkpoint receive time differs.');if(saved.record_id){const r=find('records',saved.record_id);if(r['run_id']!==l['run_id']||saved.seq!==r['seq']||saved.recorded_at!==r['recorded_at'])fail('Saved checkpoint differs.');
    if(saved.receipt_confirmed&&!t.receipts.some(q=>{const v=JSON.parse(String(q['result_json']));return v.record_id===r['id']||Array.isArray(v.record_ids)&&v.record_ids.includes(r['id']);}))fail('Checkpoint receipt was not saved.');
   }else if(saved.stage==='start'&&!t.receipts.some(q=>JSON.parse(String(q['result_json'])).run?.id===l['run_id']))fail('Task start receipt missing.');}
  for(const e of t.lifecycle_events)if((e['association_status']==='linked')!==t.event_task_snapshots.some(x=>x['event_id']===e['id']))fail('Linked event checkpoint is missing or unassociated.');

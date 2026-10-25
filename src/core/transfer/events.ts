@@ -5,7 +5,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/), scope = z.string().min(1).max(1
 const sequence = z.int().positive();
 export const savedPointSchema = z.strictObject({ stage: z.enum(["record", "start", "unknown"]), record_id: z.uuid().nullable(),
   seq: sequence.optional(), source_seq: sequence.optional(), recorded_at: time.optional(), record_visible: z.boolean(), receipt_confirmed: z.boolean(),
-  read_at: time, meaning: z.literal("Record visible during hook processing; not an atomic cutoff across databases.") });
+  read_at: time, meaning: z.enum(["Record visible during hook processing; not an atomic cutoff across databases.", "Server receive transaction snapshot; not the physical interruption time."]) });
 export const eventRowSchemas = {
   events: z.strictObject({ seq: sequence, id, project_key: scope, repository: scope, environment: scope, root_hash: hash,
     session_hash: hash, turn_hash: hash.nullable(), event: z.enum(["SessionStart", "PostToolUse", "PreCompact", "Stop", "Interrupt", "SessionEnd"]),

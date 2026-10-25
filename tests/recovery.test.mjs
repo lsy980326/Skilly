@@ -434,11 +434,11 @@ test("newer and foreign databases are preserved rather than migrated", () => {
   try {
     const path = join(directory, "future.sqlite");
     const db = new DatabaseSync(path);
-    db.exec("PRAGMA application_id = 1397446988; PRAGMA user_version = 16;");
+    db.exec("PRAGMA application_id = 1397446988; PRAGMA user_version = 17;");
     db.close();
     assert.throws(() => new SqliteMemoryStore(path), { code: "schema_too_new" });
     const after = new DatabaseSync(path, { readOnly: true });
-    assert.equal(after.prepare("PRAGMA user_version").get().user_version, 16);
+    assert.equal(after.prepare("PRAGMA user_version").get().user_version, 17);
     after.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

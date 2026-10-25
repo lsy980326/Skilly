@@ -152,3 +152,8 @@ node dist/runtime/local/main.js import --input /absolute/exports/new-project --d
 합치기 충돌, 손상 입력·과대한 행·지원하지 않는 버전·WAL 덧씌우기 거부를 확인한다.
 프로젝트 이벤트 격리·순번 변환·과거 이력 분리·새 MCP/인증 HTTP 일치도 합성 DB로 검사한다.
 이 검사는 실제 사용자 DB의 백업 성공이나 실제 Codex 중단·AI 기록 내용의 정확성을 증명하지 않는다.
+
+## SQLite와 D1 연결
+
+명시적 로컬 binding 사이의 왕복 이전은 [SQLite ↔ 로컬 D1 프로젝트 이전](sqlite-d1-project-transfer.md)을 따른다.
+실사용 DB 전환·원격 전송은 자동으로 수행하지 않는다.

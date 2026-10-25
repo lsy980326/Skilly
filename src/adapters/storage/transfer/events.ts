@@ -80,7 +80,7 @@ export function validateEventPair(main: DatabaseSync, events: DatabaseSync): voi
       }
       if (saved.receipt_confirmed) {
         const receipt = saved.stage === "record"
-          ? main.prepare("SELECT 1 FROM receipts WHERE scope=? AND json_extract(result_json,'$.record_id')=?").get(link["project_id"]!, saved.record_id)
+          ? main.prepare("SELECT 1 FROM receipts q WHERE scope=? AND (json_extract(q.result_json,'$.record_id')=?2 OR EXISTS(SELECT 1 FROM json_each(q.result_json,'$.record_ids') j WHERE j.value=?2))").get(link["project_id"]!, saved.record_id)
           : saved.stage === "start" ? main.prepare("SELECT 1 FROM receipts WHERE scope=? AND json_extract(result_json,'$.run.id')=?").get(link["project_id"]!, link["run_id"]!) : undefined;
         if (!receipt) fail("invalid_event_link", "Saved-point receipt is missing from the main snapshot.");
       }

@@ -1,3 +1,4 @@
+import { storageOriginSchema } from "../../../core/transfer/origins.js";
 import { MemoryError,type JsonObject } from "../../../core/memory/model.js";
 import { rows,canonical,hashText,type Sql } from "./query.js";
 import { hasTransferSchema,d1WriteAuthority } from "./authority.js";
@@ -31,7 +32,9 @@ export async function exportD1Project(db:D1Binding,projectId:string):Promise<D1P
    count+=data.length;if(count>D1_TRANSFER_LIMITS.rows)throw new MemoryError('resource_limit','D1 project row limit exceeded; no partial bundle returned.');
    tables[table]=data.sort((a,b)=>typeof a['seq']==='number'&&typeof b['seq']==='number'?a['seq']-b['seq']:canonical(a).localeCompare(canonical(b)));}
   const [after]=await rows(db,'SELECT revision FROM projects WHERE id=?',[projectId],1);if(after?.['revision']!==before['revision'])continue;
-  const body={format:'skilly-d1-project' as const,version:1 as const,schema:8 as const,source_store_id:source,project_id:projectId,project_revision:Number(before['revision']),tables};
+  const portable=(await rows(db,"SELECT name FROM sqlite_master WHERE name='storage_origins'",[],1)).length>0;
+  if(portable)tables.storage_origins=await rows(db,'SELECT * FROM storage_origins WHERE project_id=? ORDER BY origin,table_name,row_key',[projectId],D1_TRANSFER_LIMITS.rows+1);
+  const body={format:'skilly-d1-project' as const,version:1 as const,schema:portable?9 as const:8 as const,source_store_id:source,project_id:projectId,project_revision:Number(before['revision']),tables};
   return validateBundle({...body,sha256:await hashText(canonical(body))});
  }
  throw new MemoryError('conflict','Project changed during export; no complete bundle returned.',true);
@@ -45,6 +48,7 @@ export async function importD1Project(db:D1Binding,raw:unknown,authority:ImportA
  const [prior]=await rows(db,'SELECT * FROM d1_transfer_imports WHERE project_id=?',[b.project_id],1);
  if(prior){if(prior['bundle_hash']!==b.sha256||prior['transfer_id']!==authority.transfer_id||prior['generation']!==authority.generation||prior['role']!==authority.role)transferFail('Different import already owns this project.');
   return {status:'already_imported',project_id:b.project_id,sha256:b.sha256,write_authority:await d1WriteAuthority(db,b.project_id),claims_verified:false};}
+ if(b.schema===9 && !(await rows(db,"SELECT name FROM sqlite_master WHERE name='storage_origins'",[],1)).length)throw new MemoryError('unsupported_capability','Apply explicit D1 009 portability schema first.');
  await transferBatch(db,sql=>{
   // Required by forward correction pointers. Never disable FK enforcement.
   sql('PRAGMA defer_foreign_keys=ON');
@@ -52,6 +56,7 @@ export async function importD1Project(db:D1Binding,raw:unknown,authority:ImportA
   for(const table of transferTables){const data=b.tables[table];if(!data.length)continue;
    const cols=Object.keys(transferSchemas[table].shape);
    sql(`INSERT INTO ${table}(${cols.map(c=>'"'+c+'"').join(',')}) SELECT ${cols.map(c=>`json_extract(j.value,'$.${c}')`).join(',')} FROM json_each(?) j`,JSON.stringify(data));}
+  if(b.schema===9){const cols=Object.keys(storageOriginSchema.shape);sql(`INSERT INTO storage_origins(${cols.join(',')}) SELECT ${cols.map(c=>`json_extract(j.value,'$.${c}')`).join(',')} FROM json_each(?) j`,JSON.stringify(b.tables.storage_origins));}
   sql(`INSERT INTO d1_import_origins SELECT project_id,'event',id FROM lifecycle_events WHERE project_id=?`,b.project_id);
   sql(`INSERT INTO d1_import_origins SELECT project_id,'link',id FROM task_event_links WHERE project_id=?`,b.project_id);
   sql(`INSERT INTO d1_project_authority VALUES(?,?,?,?,?,'blocked',0,?,?)`,b.project_id,String(b.tables.projects[0]!['project_key']),authority.transfer_id,authority.generation,authority.role,b.sha256,new Date().toISOString());

@@ -10,6 +10,11 @@ function event(row:JsonObject):JsonObject {
   const {saved_json,...original}=row;
   return {...original,saved_during_event:typeof saved_json==="string"?parseJsonObject(saved_json):null,claims_verified:false};
 }
+async function sqliteHistory(db:D1Binding){
+ const supported=(await rows(db,"SELECT name FROM sqlite_master WHERE name='storage_origins'",[],1)).length>0;
+ return supported?{source:`CASE WHEN EXISTS(SELECT 1 FROM storage_origins o WHERE o.project_id=e.project_id AND o.origin='sqlite' AND o.table_name='event_events' AND json_extract(o.row_json,'$.id')=e.id) THEN 'sqlite_hook_history' ELSE 'd1_receive' END`,
+ association:`coalesce((SELECT json_extract(o.row_json,'$.status') FROM storage_origins o WHERE o.project_id=e.project_id AND o.origin='sqlite' AND o.table_name='event_event_link_failures' AND json_extract(o.row_json,'$.event_id')=e.id LIMIT 1),e.association_status)`}:{source:"'d1_receive'",association:'e.association_status'};
+}
 const fields="e.id AS observation_id,e.seq,e.event,e.session_hash,e.turn_hash,e.source,e.tool_group,e.observed_at,e.received_at,e.association_status";
 export class D1EventReader {
   protected readonly scope:D1EventScope;
@@ -17,8 +22,8 @@ export class D1EventReader {
   async observations(offset=0):Promise<JsonObject> {
     if(!Number.isSafeInteger(offset)||offset<0||offset>100000)throw new MemoryError("invalid_input","Invalid event page.");
     if(!await hasEventSchema(this.db))return {schema_supported:false,status:"unsupported",...eventCoverage};
-    const native=await nativeOnly(this.db,"e","event");
-    const s=this.scope,data=await rows(this.db,`SELECT ${fields},NOT (${native}) AS imported_history FROM lifecycle_events e
+    const native=await nativeOnly(this.db,"e","event"),history=await sqliteHistory(this.db);
+    const s=this.scope,data=await rows(this.db,`SELECT ${fields},${history.source} AS snapshot_origin,${history.association} AS source_association_status,NOT (${native}) AS imported_history FROM lifecycle_events e
       WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 21 OFFSET ?`,
       [s.project_id,s.repository,s.environment,s.root_hash,s.session_hash,offset],21);
     const next=offset+20;
@@ -33,7 +38,8 @@ export class D1EventReader {
     const relation=`FROM lifecycle_events e JOIN event_task_snapshots x ON x.project_id=e.project_id AND x.event_id=e.id
       JOIN task_event_links l ON l.project_id=x.project_id AND l.id=x.link_id
       WHERE l.project_id=r.project_id AND l.run_id=r.id AND l.repository=r.repository AND l.environment=r.environment AND l.root_hash=?`;
-    const projection=`json_object('observation_id',e.id,'seq',e.seq,'event',e.event,'session_hash',e.session_hash,'observed_at',e.observed_at,
+    const history=await sqliteHistory(this.db);
+    const projection=`json_object('snapshot_origin',${history.source},'source_association_status',${history.association},'observation_id',e.id,'seq',e.seq,'event',e.event,'session_hash',e.session_hash,'observed_at',e.observed_at,
       'received_at',e.received_at,'association_status',e.association_status,'saved_json',x.saved_json,'imported_history',json(CASE WHEN ${native} THEN 'false' ELSE 'true' END))`;
     const details=supported?`,(SELECT json_group_array(json(v)) FROM (SELECT ${projection} AS v ${relation} ORDER BY e.seq DESC LIMIT 21)) AS events_json,
       (SELECT ${projection} ${relation} AND e.event='Interrupt' ORDER BY e.seq DESC LIMIT 1) AS interruption_json,

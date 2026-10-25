@@ -236,7 +236,7 @@ test("viewer never creates, migrates or follows a linked database", async t => {
   assert.throws(() => new SqliteViewer("relative.sqlite"), { code: "invalid_input" });
   const path = join(f.directory, "future.sqlite");
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version=16; PRAGMA application_id=1397446988;"); db.close();
+  db.exec("PRAGMA user_version=17; PRAGMA application_id=1397446988;"); db.close();
   const before = readFileSync(path);
   assert.throws(() => new SqliteViewer(path), { code: "unavailable" });
   assert.deepEqual(readFileSync(path), before);

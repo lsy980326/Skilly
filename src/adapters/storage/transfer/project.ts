@@ -21,7 +21,7 @@ import { lifecycleSchemaSql } from "../sqlite/lifecycle.js";
 import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { eventImportSchemaSql } from "../sqlite/event-imports.js";
 import { readEvents, validateEventPair, validateEventStore } from "./events.js";
-import { putAuthority, readAuthority, type AuthorityRow } from "../sqlite/project-authority.js";
+import { putAuthority, readAuthority, hasAuthority, authoritySql, type AuthorityRow } from "../sqlite/project-authority.js";
 
 type Row = Record<string, SQLOutputValue>;
 function columns(table: Table): string[] { return Object.keys(rowSchemas[table].shape); }
@@ -68,6 +68,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (table === "storage_origins" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 16) continue;
         if (table === "task_skill_usage" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 15) continue;
         if (table === "decision_events" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 13) continue;
         if (table === "execution_worktrees" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 12) continue;
@@ -112,6 +113,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (entry === null || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).sort().join() !== "row,table"
       || !("table" in entry) || typeof entry.table !== "string" || !tables.includes(entry.table as Table) || !("row" in entry)) fail("invalid_bundle", "Unknown table or entry.");
     const table = entry.table as Table, index = tables.indexOf(table);
+    if (manifest.schema_version < 16 && table === "storage_origins") fail("invalid_bundle","Storage origins require v16.");
     if (manifest.schema_version < 15 && table === "task_skill_usage") fail("invalid_bundle","Task skill usage requires schema v15.");
     if (manifest.schema_version < 13 && table === "decision_events") fail("invalid_bundle","Decision data requires schema v13.");
     if (index < lastTable || ++count > MAX_ROWS) fail("invalid_bundle", "Invalid row order/count.");
@@ -161,7 +163,7 @@ export async function importProject(input: string, output: string, base?: string
     let journal: DatabaseSync | undefined;
     let events: DatabaseSync | undefined;
     try {
-      if (!base) initialize(main);
+      if (!base) initialize(main,false,manifest.schema_version===16?16:15);
       else if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 4) main.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 5) main.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 6) main.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
@@ -173,6 +175,8 @@ export async function importProject(input: string, output: string, base?: string
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 12) main.exec(readFileSync(new URL("../../../../migrations/013-decisions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 13) main.exec(readFileSync(new URL("../../../../migrations/014-decision-guards.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 14) main.exec(readFileSync(new URL("../../../../migrations/015-task-skill-usage.sql", import.meta.url), "utf8"));
+      if (manifest.schema_version === 16 && Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 15) main.exec(readFileSync(new URL("../../../../migrations/016-storage-origins.sql", import.meta.url), "utf8"));
+      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 16 && hasAuthority(main)) main.exec(authoritySql("main",true,true));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {

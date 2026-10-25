@@ -10,11 +10,11 @@ export type AuthorityKind = "main" | "recovery" | "events";
 export function hasAuthority(db: DatabaseSync): boolean { return Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='project_authority'").get()); }
 
 /** Fixed SQL only. Triggers also fence connections opened before this metadata existed. */
-export function authoritySql(kind: AuthorityKind, linked = true): string {
+export function authoritySql(kind: AuthorityKind, linked = true, portable = false): string {
   let sql = `CREATE TABLE IF NOT EXISTS project_authority (
     project_id TEXT PRIMARY KEY, project_key TEXT NOT NULL UNIQUE, transfer_id TEXT NOT NULL,
     generation INTEGER NOT NULL, role TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;`;
-  const guarded = kind === "main" ? tables.filter(t=>t!=="requests") : kind === "recovery" ? ["requests"]
+  const guarded = kind === "main" ? tables.filter(t=>t!=="requests" && (t!=="storage_origins" || portable)) : kind === "recovery" ? ["requests"]
     : ["events", ...(linked ? ["task_links","event_task_links","event_link_failures"] : [])];
   for (const table of guarded) {
     const owner = (row:string) => kind === "events"
@@ -53,7 +53,7 @@ export function assertWritable(db: DatabaseSync, projectId: string): void {
 }
 export function putAuthority(db: DatabaseSync, kind: AuthorityKind, row: AuthorityRow, linked = true): void {
   authorityRow.parse(row);
-  db.exec(authoritySql(kind,linked));
+  db.exec(authoritySql(kind,linked,Number(db.prepare("PRAGMA user_version").get()?.["user_version"])>=16));
   const existing=db.prepare("SELECT * FROM project_authority WHERE project_id=? OR project_key=?").get(row.project_id,row.project_key);
   if(existing) {
     const old=authorityRow.parse(existing);

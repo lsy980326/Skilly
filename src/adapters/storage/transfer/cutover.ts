@@ -102,7 +102,7 @@ export async function prepareTransfer(source:string,projectId:string,directory:s
   safePath(source);safePath(directory);const check=readDatabase(source);
   let plan:Plan;
   try {
-    if(check.prepare("PRAGMA user_version").get()?.["user_version"]!==15)fail("unsupported_database","Transfer activation requires a current v15 database; original was not migrated.");
+    if(![15,16].includes(Number(check.prepare("PRAGMA user_version").get()?.["user_version"])))fail("unsupported_database","Transfer activation requires a current v15/v16 database; original was not migrated.");
     const project=check.prepare("SELECT project_key FROM projects WHERE id=?").get(projectId);if(!project)fail("not_found","Project absent.");
     const authority=readAuthority(check,projectId);if(authority["write_allowed"]!==true)fail("authority_conflict","Source is already fenced.");
     const stat=lstatSync(source);plan={id:randomUUID(),project_id:projectId,project_key:String(project["project_key"]),source,
