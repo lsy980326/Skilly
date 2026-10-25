@@ -15,6 +15,7 @@ export class D1Plans extends D1PlanReader {
   private readonly store:D1AtomicCommitStore;
   constructor(private readonly binding:D1Binding,s:D1Scope,sources?:SourceProvider){super(binding,s,sources);this.writeScope=scope(s);this.store=new D1AtomicCommitStore(binding,s.project_id);}
   private async write(c:D1PlanChange,result:JsonObject):Promise<JsonObject> {
+    result={...result,scope:json(this.writeScope)};
     const s=this.writeScope,digest=await hashText(canonical({operation:c.operation,input:c.input}));
     return commitWithReceipt(this.store,s.project_id,c.input.idempotency_key,digest,async()=>{
       const [p]=await rows(this.binding,"SELECT id,project_key AS key,name,revision,created_at FROM projects WHERE id=?",[s.project_id],1);

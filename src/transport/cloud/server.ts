@@ -21,7 +21,8 @@ export async function cloudInput(request:Request,signal?:AbortSignal){
 export function cloudError(e:unknown){
  if(e instanceof AccessError)return cloudResponse({error:{code:e.code}},e.status);
  if(e instanceof z.ZodError)return cloudResponse({error:{code:'invalid_input'}},400);
- if(e instanceof MemoryError){const status=e.code==='resource_limit'?413:e.code==='not_found'?404:e.code==='scope_mismatch'?403:e.code==='invalid_input'?400:['conflict','idempotency_conflict','task_finished','project_write_blocked','owner_conflict'].includes(e.code)?409:503;
+ if(e instanceof MemoryError&&e.code==='unsupported_capability')return cloudResponse({error:{code:e.code}},501);
+ if(e instanceof MemoryError){const status=e.code==='resource_limit'?413:e.code==='not_found'?404:e.code==='scope_mismatch'?403:['invalid_input','completion_conditions_missing','invalid_evidence'].includes(e.code)?400:['conflict','idempotency_conflict','task_finished','project_write_blocked','owner_conflict','plan_conflict'].includes(e.code)?409:503;
   return cloudResponse({error:{code:status===503?'storage_unavailable':e.code}},status);}
  return cloudResponse({error:{code:'request_failed'}},503);
 }

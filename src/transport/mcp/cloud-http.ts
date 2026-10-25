@@ -9,16 +9,20 @@ import type { D1Binding } from '../../adapters/storage/d1/binding.js';
 import { cloudInput,cloudResponse } from '../cloud/server.js';
 import { listCloudTools,callCloudTool,cloudMcpInstructions } from './cloud-tools.js';
 import { CloudRequest,CloudRequestStorage } from './cloud-request.js';
+import type { SourceProvider } from '../../core/execution/currentness.js';
+import type { CloudEventContextProvider } from '../../core/access/event-context.js';
+
+import type { CloudSkillContextProvider } from '../../adapters/storage/d1/cloud-skills.js';
 
 const configSchema=z.strictObject({endpoint:z.url(),policy_id:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),scope:accessScopeSchema,
  timeout_ms:z.int().min(25).max(60000).optional(),storage_timeout_ms:z.int().min(25).max(30000).optional()})
  .refine(c=>(c.storage_timeout_ms??5000)<=(c.timeout_ms??30000),'Storage timeout must not exceed request timeout.');
 export type CloudMcpConfig=z.infer<typeof configSchema>;
 const envelope=z.strictObject({jsonrpc:z.literal('2.0'),id:z.union([z.string().min(1).max(100),z.int()]).optional(),method:z.string().max(80),params:z.unknown().optional()});
-const errorCode=(e:unknown)=>e instanceof AccessError?e.code:e instanceof z.ZodError?'invalid_input':e instanceof MemoryError&&['conflict','idempotency_conflict','task_finished','project_write_blocked','scope_mismatch','resource_limit','persistence_unknown'].includes(e.code)?e.code:'request_failed';
+const errorCode=(e:unknown)=>e instanceof AccessError?e.code:e instanceof z.ZodError?'invalid_input':e instanceof MemoryError&&['conflict','idempotency_conflict','task_finished','project_write_blocked','scope_mismatch','resource_limit','persistence_unknown','plan_conflict','completion_conditions_missing','invalid_evidence','invalid_input','not_found','unsupported_capability','stale_anchor','link_conflict','run_closed','link_store_full','version_conflict','source_conflict','assignment_conflict','observation_provider_required'].includes(e.code)?e.code:'request_failed';
 const noStore=(response:Response)=>{const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');headers.set('Pragma','no-cache');headers.set('X-Content-Type-Options','nosniff');return new Response(response.body,{status:response.status,headers});};
 /** Standard SDK transport, deliberately limited to stateless JSON request/response methods. */
-export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
+export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider){
  const config=configSchema.parse(structuredClone(raw)),endpoint=new URL(config.endpoint),storage=new CloudRequestStorage(db);
  if(endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!==`/v1/projects/${config.scope.project_id}/mcp`
   ||(endpoint.protocol!=='https:'&&!(endpoint.protocol==='http:'&&['127.0.0.1','[::1]','localhost'].includes(endpoint.hostname))))throw new Error('Invalid fixed MCP endpoint.');
@@ -55,7 +59,7 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
       case 'tools/list':{const r=ListToolsRequestSchema.parse(message);if(r.params?.cursor)throw new MemoryError('invalid_input','No tool pagination.');result={tools:listCloudTools()};break;}
       case 'tools/call':{
        const r=CallToolRequestSchema.parse(message);if(r.params.task||r.params._meta)throw new MemoryError('invalid_input','Task extensions are not supported.');
-       const value=await callCloudTool(scoped,auth,config.scope,r.params.name,r.params.arguments??{});
+       const value=await callCloudTool(scoped,auth,config.scope,r.params.name,r.params.arguments??{},sources,events,skills);
        result={content:[{type:'text',text:JSON.stringify(value)}]};break;
       }
       default:throw new MemoryError('invalid_input','Unsupported method.');

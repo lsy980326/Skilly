@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { MemoryError,type JsonObject } from "../../../core/memory/model.js";
-import { workKey } from "../../../core/work/schema.js";
 import { assessFeatureKnowledge } from "../../../core/work/knowledge.js";
 import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { D1Discovery } from "./discovery-reader.js";
@@ -10,8 +9,8 @@ import { rows,json,scope,type D1Scope } from "./query.js";
 import { readPage } from "./read-page.js";
 import type { D1Binding } from "./binding.js";
 
-export const featureQuerySchema=z.strictObject({query:z.string().trim().max(200).default(""),component:workKey.optional(),feature:workKey.optional(),
-  offset:z.int().min(0).max(100000).default(0),limit:z.int().min(1).max(6).default(4)});
+export { featureQuerySchema } from "../../../core/work/feature-query.js";
+import { featureQuerySchema } from "../../../core/work/feature-query.js";
 export function taskComponent(alias:string,component:string|undefined):{sql:string;params:string[]} {
   if(component==="unclassified")return {sql:`AND NOT EXISTS(SELECT 1 FROM run_components rc WHERE rc.project_id=${alias}.project_id AND rc.run_id=${alias}.id)`,params:[]};
   return component?{sql:`AND EXISTS(SELECT 1 FROM run_components rc WHERE rc.project_id=${alias}.project_id AND rc.run_id=${alias}.id AND rc.component_key=?)`,params:[component]}:{sql:"",params:[]};

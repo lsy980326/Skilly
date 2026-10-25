@@ -2,6 +2,8 @@ import { z } from "zod";
 import { MemoryError } from "../memory/model.js";
 
 export const planKey = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
+export const planQuerySchema=z.strictObject({plan_key:planKey.optional(),version:z.int().min(1).max(100000).optional(),remaining_only:z.boolean().optional(),
+  component:planKey.optional(),offset:z.int().min(0).max(100000).optional(),limit:z.int().min(1).max(10).optional()});
 const text = (max: number) => z.string().trim().min(1).max(max);
 export const criterionSchema = z.strictObject({ key: planKey, text: text(300) });
 export const planItemSchema = z.strictObject({ key: planKey, title: text(200), required: z.boolean().default(true),

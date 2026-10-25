@@ -48,10 +48,10 @@ export class D1EventReader {
       EXISTS(SELECT 1 FROM task_event_links l WHERE l.project_id=r.project_id AND l.run_id=r.id AND l.repository=r.repository AND l.environment=r.environment AND l.root_hash=? AND ${native}) AS has_native_history,
       ((SELECT run_id FROM task_event_links l WHERE l.project_id=r.project_id AND l.repository=r.repository AND l.environment=r.environment
         AND l.root_hash=? AND l.session_hash=? AND ${native} ORDER BY seq DESC LIMIT 1)=r.id) AS current_binding`:"";
-    const data=await rows(this.db,`WITH context AS (SELECT ? AS read_at) SELECT r.id,r.state,
-      ${lastSavedSql("r.project_id","r.id","(SELECT read_at FROM context)")} AS last_saved_json ${details}
-      FROM runs r WHERE r.project_id=? AND r.id=? AND r.repository=? AND r.environment=?`,
-      [new Date().toISOString(),...(supported?[s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.session_hash]:[]),s.project_id,runId,s.repository,s.environment],1);
+    const data=await rows(this.db,`SELECT r.id,r.state,
+      ${lastSavedSql("r.project_id","r.id","context.read_at")} AS last_saved_json ${details}
+      FROM runs r CROSS JOIN (SELECT ? AS read_at) context WHERE r.project_id=? AND r.id=? AND r.repository=? AND r.environment=?`,
+      [...(supported?[s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.session_hash]:[]),new Date().toISOString(),s.project_id,runId,s.repository,s.environment],1);
     const row=data[0];if(!row)throw new MemoryError("not_found","Task not found in this exact scope.");
     const entries=supported?array(row["events_json"]):[];
     return bounded(json({run_id:runId,task_state:row["state"],last_saved:parseJsonObject(String(row["last_saved_json"])),

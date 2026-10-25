@@ -4,6 +4,7 @@ import { workKey } from "../work/schema.js";
 
 const ids = z.array(z.uuid()).max(200).refine(v => new Set(v).size === v.length, "Duplicate IDs.");
 const text = (n: number) => z.string().trim().min(1).max(n);
+export const decisionSubjectSchema=z.strictObject({subject:workKey,component_key:workKey.optional(),feature_key:workKey.optional(),history_offset:z.int().min(0).max(200).optional()});
 export const decisionSchema = z.strictObject({
   subject: workKey, title: text(160), action: z.enum(["decide", "replace", "withdraw", "propose"]),
   choice_key: workKey.optional(), targets: z.array(z.uuid()).max(8), expected_current_ids: ids,

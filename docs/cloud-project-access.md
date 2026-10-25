@@ -11,7 +11,7 @@ Cloudflare 계정·로그인·DNS·Access 정책·실사용 DB·기존 MCP/화�
 | 이메일 헤더·본문의 user/role/authenticated | 권한 근거로 사용하지 않음 |
 | Access 서비스 토큰 | 개인 사용자와 섞지 않도록 빈 sub는 거절. 별도 머신 주체 계약은 후속 |
 | 쿠키·임의 Bearer 토큰 | fallback 없음. `Cf-Access-Jwt-Assertion`만 검증 |
-| 사전 제공 Access JWT의 MCP HTTP 연결 | 고정 scope의 9개 도구. 로컬 SDK/HTTP/D1 검증 범위는 [인증된 MCP 연결](cloud-mcp.md) 참조 |
+| 사전 제공 Access JWT의 MCP HTTP 연결 | 고정 scope의 26개 도구. 결정·계획·검사 근거·이벤트·스킬·기능 검색 연결과 로컬 SDK/HTTP/D1 검증 범위는 [인증된 MCP 연결](cloud-mcp.md) 참조 |
 | OIDC/OAuth 로그인·토큰 발급·갱신 | 구현 범위 밖. 실제 계정·클라이언트 설정 연동은 별도 검증 필요 |
 
 등록·키 수명 관리에는 `createManagedCloudHandler(binding, policyId)`를 사용한다.
@@ -99,8 +99,10 @@ CORS 허용이나 자격증명/SQL을 포함한 에러 응답을 추가하지 �
 임의 권한 부여·프로젝트 생성·raw mutation·실행 관측/파일 관측·이벤트 수신·역사 가져오기·이전
 활성화는 이 memory HTTP 입력으로 제공하지 않는다. 관리형 핸들러의 별도 owner 경로도
 호스트가 사전 지정한 최초 소유자만 확정한다. 보고의 checks가 passed여도 직접 검사 관측은
-생성하지 않으며 `claims_verified=false`를 유지한다. 구조화 결정·계획·스킬 등 더 넓은 쓰기
-표면은 별도 계약으로 연결해야 한다. 현재 MCP 도구 전체를 제공하는 API가 아니다.
+생성하지 않으며 `claims_verified=false`를 유지한다. 구조화 결정은 checkpoint, 계획 저장·항목
+갱신과 상세 조회는 같은 인증·권한 경계를 사용한다. 스킬 등록·설치 지정·사용 보고는
+[원격 스킬 계약](cloud-mcp.md#스킬기능-검색과-호스트-경계)의 호스트 root 바인딩이 필요하다.
+기본 memory HTTP 핸들러는 이 바인딩을 제공하지 않는다. 로컬 MCP 도구 전체를 제공하는 API가 아니다.
 
 영수증 키는 서버가 주체·project/repository/environment·쓰기 종류·요청 키의 해시로 만든다.
 같은 프로젝트의 다른 사용자나 저장소가 같은 키를 써도 영수증을 공유하지 않는다.

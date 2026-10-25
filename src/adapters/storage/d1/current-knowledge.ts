@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { MemoryError,type JsonObject } from "../../../core/memory/model.js";
-import { workKey } from "../../../core/work/schema.js";
 import { planProgress } from "../../../core/plans/model.js";
 import type { SourceProvider,SourceObservation } from "../../../core/execution/currentness.js";
 import { D1Decisions } from "./decisions.js";
@@ -10,8 +9,7 @@ import { objects,pick,readPage } from "./read-page.js";
 import { rows,bounded,json,scope,type D1Scope } from "./query.js";
 import type { D1Binding } from "./binding.js";
 
-const offset=z.int().min(0).max(100000).default(0);
-const query=z.strictObject({component:workKey.optional(),limit:z.int().min(1).max(6).default(4),decisions_offset:offset,plans_offset:offset,features_offset:offset});
+import { cloudKnowledgeQuery as query } from "../../../core/work/current-knowledge.js";
 const clipped=(value:unknown,max:number)=>typeof value==="string"?value.slice(0,max):null;
 
 /** Multi-read composition checked against monotonic project revisions, not a cross-query D1 transaction. */

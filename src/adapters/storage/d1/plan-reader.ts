@@ -1,14 +1,12 @@
 import { z } from "zod";
 import { MemoryError, type JsonObject } from "../../../core/memory/model.js";
-import { planItemsSchema, planProgress, planKey, criterionResultsSchema } from "../../../core/plans/model.js";
+import { planItemsSchema, planProgress, planQuerySchema, criterionResultsSchema } from "../../../core/plans/model.js";
 import type { D1Binding } from "./binding.js";
 import { hasExecutionSchema } from "./execution-mutation.js";
 import { planExecutionProjection, planExecutionIds, planEvidence, type CurrentSources, type ExecutionDetails } from "./execution-reader.js";
 import type { SourceProvider } from "../../../core/execution/currentness.js";
 import { array, bounded, bytes, json, rows, scope, type D1Scope } from "./query.js";
 
-const querySchema=z.strictObject({plan_key:planKey.optional(),version:z.int().min(1).max(100000).optional(),remaining_only:z.boolean().optional(),
-  component:planKey.optional(),offset:z.int().min(0).max(100000).optional(),limit:z.int().min(1).max(10).optional()});
 const updateProjection=(withExecutions:boolean)=>`(SELECT json_group_array(json_object('key',json_extract(j.value,'$.key'),'update',json((
   SELECT json_object('id',u.id,'run_id',u.run_id,'record_id',u.record_id,'state',u.state,'note',u.note,'criteria_json',u.criteria_json,
     'created_at',u.created_at,'superseded_by',r.superseded_by,'task_title',substr(coalesce(d.title,t.goal),1,200),
@@ -43,8 +41,8 @@ function items(row:JsonObject,withExecutions:boolean,pool:ExecutionDetails,sourc
 export class D1PlanReader {
   private readonly scope:D1Scope;
   constructor(private readonly db:D1Binding,s:D1Scope,private readonly sources?:SourceProvider){this.scope=scope(s);}
-  async query(options:z.infer<typeof querySchema>={}):Promise<JsonObject> {
-    const parsed=querySchema.safeParse(options);
+  async query(options:z.infer<typeof planQuerySchema>={}):Promise<JsonObject> {
+    const parsed=planQuerySchema.safeParse(options);
     if(!parsed.success||(parsed.data.version!==undefined&&!parsed.data.plan_key))throw new MemoryError("invalid_input","Invalid bounded plan query.");
     const o=parsed.data,s=this.scope,values:(string|number|null)[]=[s.project_id,s.repository,s.environment];
     const withExecutions=await hasExecutionSchema(this.db);

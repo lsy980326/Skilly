@@ -25,7 +25,8 @@ export class D1Skills extends D1SkillReader {
       const [p]=await rows(this.db,"SELECT id,project_key AS key,name,revision,created_at FROM projects WHERE id=?",[this.scope.project_id],1);
       if(!p)throw new MemoryError("not_found","Project not found.");
       const project:Project=z.strictObject({id:z.uuid(),key:z.string(),name:z.string(),revision:z.int().nonnegative(),created_at:z.string()}).parse(p);
-      return {project:{...project,revision:project.revision+1},expected_revision:project.revision,...await build()};
+      const change=await build();
+      return {project:{...project,revision:project.revision+1},expected_revision:project.revision,...change,result:{...change.result,scope:{...this.scope}}};
     });
   }
   async register(input:z.input<typeof registerSkillSchema>):Promise<JsonObject> {

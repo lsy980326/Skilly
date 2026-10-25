@@ -80,6 +80,11 @@ npm run setup:hooks -- --project /absolute/existing-project \
 
 ## 작업과 명시적으로 연결
 
+이 절은 기존 로컬 Codex 훅/SQLite 연결이다. 원격 D1 MCP는 원격 호스트가 제공한
+`memory_resolve_project.lifecycle_context.current_observation_id`를 사용하며 로컬 안내의 ID를
+복사하지 않는다. 호스트 세션 매핑·수신·권한·중단 저장 지점의 차이는
+[원격 이벤트 연결](cloud-mcp.md#이벤트작업-연결과-중단-저장-지점)을 따른다.
+
 새 MCP의 `memory_link_task_events`에 자신의 `project_id`, 저장된 활성 `run_id`,
 **현재 훅 안내가 제공한** `observation_id`를 보낸다. 원시 목록에서 다른 채팅의
 ID를 고르거나 시간·프로젝트 이름으로 연결하지 않는다. 연결은 AI의 명시적 선언이며

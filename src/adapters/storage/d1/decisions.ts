@@ -1,24 +1,20 @@
 import { z } from "zod";
-import { assessDecisions, decisionSchema, decisionRecordSchema, validateDecision, MAX_DECISION_EVENTS, type Decision, type DecisionEvent } from "../../../core/decisions/model.js";
+import { assessDecisions, decisionSchema, decisionRecordSchema, decisionSubjectSchema, validateDecision, MAX_DECISION_EVENTS, type Decision, type DecisionEvent } from "../../../core/decisions/model.js";
 import { MemoryError, type Mutation, type JsonObject } from "../../../core/memory/model.js";
 import type { D1Binding } from "./binding.js";
 import { array, bounded, json, rows, scope, type D1Scope, type Sql } from "./query.js";
-import { workKey } from "../../../core/work/schema.js";
-
-const subjectSchema = z.strictObject({ subject: workKey, component_key: workKey.optional(), feature_key: workKey.optional(), history_offset: z.int().min(0).max(200).optional() });
-type Subject = z.infer<typeof subjectSchema>;
+type Subject = z.infer<typeof decisionSubjectSchema>;
 
 /** One primary SQL snapshot, including revision. Never pair old history with a later revision. */
 async function snapshot(db: D1Binding, s: D1Scope, d: Pick<Decision,"subject"|"component_key"|"feature_key">) {
-  const data = await rows(db, `WITH history AS (
+  const data = await rows(db, `SELECT p.revision,
+      (SELECT CASE WHEN coalesce(sum(length(CAST(metadata_json AS BLOB))),0)<=100000 THEN
+        json_group_array(json_object('id',id,'run_id',run_id,'seq',seq,'body',body,'recorded_at',recorded_at,
+          'report_origin',report_origin,'decision',json(metadata_json))) ELSE NULL END FROM (
     SELECT r.id,r.run_id,r.seq,substr(r.body,1,1200) AS body,r.recorded_at,r.report_origin,d.metadata_json
     FROM decision_events d JOIN records r ON r.project_id=d.project_id AND r.id=d.record_id
     WHERE d.project_id=? AND r.repository=? AND r.environment=? AND d.subject_key=? AND d.component_key=? AND d.feature_key=?
-    ORDER BY r.seq LIMIT 201)
-    SELECT p.revision,(SELECT count(*) FROM history) AS total,
-      (SELECT CASE WHEN coalesce(sum(length(CAST(metadata_json AS BLOB))),0)<=100000 THEN
-        json_group_array(json_object('id',id,'run_id',run_id,'seq',seq,'body',body,'recorded_at',recorded_at,
-          'report_origin',report_origin,'decision',json(metadata_json))) ELSE NULL END FROM history) AS events_json
+    ORDER BY r.seq LIMIT 201)) AS events_json
     FROM projects p WHERE p.id=?`, [s.project_id,s.repository,s.environment,d.subject,d.component_key??"",d.feature_key??"",s.project_id],1);
   if (!data[0]) throw new MemoryError("not_found", "Project not found.");
   const events: DecisionEvent[] = array(data[0]["events_json"]).map(row=>({ record: decisionRecordSchema.parse(row), decision:decisionSchema.parse(row["decision"]) }));
@@ -57,7 +53,7 @@ export class D1Decisions {
   private readonly scope: D1Scope;
   constructor(private readonly db:D1Binding, s:D1Scope) { this.scope=scope(s); }
   async query(input:Subject):Promise<JsonObject> {
-    const parsed=subjectSchema.safeParse(input);
+    const parsed=decisionSubjectSchema.safeParse(input);
     if (!parsed.success) throw new MemoryError("invalid_input","Select an exact decision subject and scope.");
     const d=parsed.data, history=await snapshot(this.db,this.scope,d), state=assessDecisions(history.events,history.truncated);
     const offset=d.history_offset??0, active=[...state.active.values()];

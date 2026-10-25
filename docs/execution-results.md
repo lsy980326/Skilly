@@ -7,6 +7,11 @@ Skilly는 명시적으로 실행기를 거친 **프로세스 관측**을 AI 보�
 조회 도구 `memory_list_executions`와 기존 기록의 `memory_get_evidence.executions`로 읽는다.
 로컬 파일·가져온 묶음은 변조 가능한 자료이므로 이 출처는 암호학적 인증이나 기능 검증이 아니다.
 
+원격 D1도 호스트 전용 수집기와 읽기 전용 MCP 조회를 분리한다. 승인된 호스트가
+`CloudExecutionCollector`를 연결하며, AI가 종료 코드·검사 상세를 제출하는 쓰기 도구는 없다.
+실제 계정/배포 없이 테스트 D1에서 검증하는 범위와 중복 실행 방지·저장 재시도 계약은
+[원격 실행 수집](cloud-mcp.md#호스트의-실행-수집과-원격-조회)을 따른다. 기존 로컬 CLI 경로는 유지한다.
+
 2026-10-22 [공식 Codex Hooks 문서](https://learn.chatgpt.com/docs/hooks)에서
 `PostToolUse`와 Bash/unified exec 결과 경로, 프로젝트·훅 정의별 신뢰가 필요함을 확인했다.
 설치된 CLI `0.163.0-alpha.10.2`의 `features list`도 `hooks stable true`를 표시했다.

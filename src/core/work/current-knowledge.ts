@@ -10,3 +10,7 @@ export const currentKnowledgeQuery = z.strictObject({
 });
 export type CurrentKnowledgeQuery = z.infer<typeof currentKnowledgeQuery>;
 export interface CurrentKnowledgeReader { query(input: CurrentKnowledgeQuery): JsonObject; }
+
+/** Bounded D1/remote projection; local readers retain their existing larger cursor domain. */
+export const cloudKnowledgeQuery=z.strictObject({component:workKey.optional(),limit:z.int().min(1).max(6).default(4),
+ decisions_offset:z.int().min(0).max(100000).default(0),plans_offset:z.int().min(0).max(100000).default(0),features_offset:z.int().min(0).max(100000).default(0)});

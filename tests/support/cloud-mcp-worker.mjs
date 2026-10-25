@@ -7,5 +7,8 @@ export default {fetch(request,env){
   prepare:sql=>session.prepare(sql),async batch(statements){const result=await session.batch(statements);
    if(!delayed){delayed=true;await new Promise(resolve=>setTimeout(resolve,env.MCP_TEST_BATCH_DELAY_MS));}return result;}
  };}}:env.DB;
- handler??=createCloudMcpHandler(db,env.MCP_CONFIG);return handler(request);
+ // Host-owned test bindings only; request headers/body cannot select this mapping.
+ const events=env.MCP_TEST_EVENT_CONTEXTS?(_scope,principal)=>env.MCP_TEST_EVENT_CONTEXTS[principal.subject]:undefined;
+ const skills=env.MCP_TEST_SKILL_CONTEXTS?(_scope,principal)=>env.MCP_TEST_SKILL_CONTEXTS[principal.subject]:undefined;
+ handler??=createCloudMcpHandler(db,env.MCP_CONFIG,undefined,events,skills);return handler(request);
 }};

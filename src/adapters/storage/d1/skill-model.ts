@@ -1,20 +1,14 @@
 import { z } from "zod";
 import { MemoryError, type JsonObject } from "../../../core/memory/model.js";
-import { registerSkillSchema, skillKey, observationFilesSchema, skillContentText } from "../../../core/skills/schema.js";
+import { registerSkillSchema, observationFilesSchema, skillContentText } from "../../../core/skills/schema.js";
 import { skillUsagesSchema } from "../../../core/skills/usage.js";
-import { reportSchema } from "../../../core/work/schema.js";
 import { d1ScopeSchema, hashText } from "./query.js";
 
 const key=z.string().min(1).max(128),digest=z.string().regex(/^[a-f0-9]{64}$/);
 export const skillScopeSchema=d1ScopeSchema.extend({root_hash:digest});
 export type D1SkillScope=z.infer<typeof skillScopeSchema>;
-export const assignSkillSchema=z.strictObject({skill_key:skillKey,version:z.string().min(1).max(80),tool:z.enum(["codex","cursor"]),
-  folder:skillKey,expected_assignment_id:z.uuid().nullable(),idempotency_key:key});
-export const inspectSkillSchema=z.strictObject({installation_id:z.uuid(),idempotency_key:key});
-export const skillCheckpointSchema=z.strictObject({run_id:z.uuid(),topic:z.string().min(1).max(160),
-  kind:z.enum(["note","decision","change","issue","summary"]),body:z.string().min(1).max(48000),
-  report_origin:z.enum(["unspecified","contemporaneous","retrospective"]).default("contemporaneous"),
-  supersedes:z.uuid().optional(),report:reportSchema.optional(),skill_usage:skillUsagesSchema,idempotency_key:key});
+export { assignSkillSchema,inspectSkillSchema,skillCheckpointSchema } from "../../../core/skills/operations.js";
+import { assignSkillSchema,inspectSkillSchema } from "../../../core/skills/operations.js";
 const registerCommand=z.strictObject({operation:z.literal("register"),input:registerSkillSchema.safeExtend(skillScopeSchema.shape),at:z.iso.datetime()});
 const assignCommand=z.strictObject({operation:z.literal("assign"),input:assignSkillSchema.extend(skillScopeSchema.shape),
   installation_id:z.uuid(),assignment_id:z.uuid(),at:z.iso.datetime()});
