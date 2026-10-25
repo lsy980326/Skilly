@@ -22,6 +22,7 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly transfer-prepare --db /absolute/source.sqlite --project-id <UUID> --state /absolute/new-transfer-directory
   skilly transfer-status|transfer-activate|transfer-recover --state /absolute/transfer-directory
   skilly transfer-restore --state /absolute/transfer-directory --input /absolute/backup-directory
+  skilly project-transfer preview|execute|status|resume|return --db /absolute/source.sqlite --project-id <UUID> --d1 /absolute/local-d1 --state /absolute/operation [--expect <preview-hash>] [--output /absolute/new-return]
   skilly skill-export --db /absolute/memory.sqlite --project-id <UUID> --skill <key> [--version <version>] --output /absolute/new-package.json
   skilly skill-install --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
   skilly skill-verify --input /absolute/package.json --project /absolute/project --tool codex|cursor [--folder <name>]
@@ -33,7 +34,8 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
 Default DB: ~/.skilly/memory.sqlite
 --project binds this connection to skilly.project.json in that directory.
 serve uses MCP over stdin/stdout. call reads one JSON object from stdin.
-This CLI/MCP uses no network server, AI model, file watcher or automatic execution collector.
+serve/call use no network server, AI model, file watcher or automatic execution collector.
+project-transfer uses an installed local D1 emulator on loopback only; outbound requests are denied.
 The optional local viewer is a separate command: npm run view -- --db /absolute/path/memory.sqlite
 Maintenance never overwrites an existing output directory. Import with --db adds to a NEW COPY of that DB.
 Incomplete outputs are retained without a completion marker; never use them.
@@ -41,6 +43,11 @@ transfer-* explicitly changes project write permissions; it never edits client s
 `;
 
 async function main(): Promise<void> {
+  if (process.argv[2] === "project-transfer") {
+    const { projectTransferCommand } = await import("./project-transfer.js");
+    process.stdout.write(`${JSON.stringify(await projectTransferCommand(process.argv.slice(3)))}\n`);
+    return;
+  }
   if (process.argv[2] === "codex-hook") {
     const { codexHook } = await import("./codex-hook.js");
     await codexHook(process.argv.slice(3));

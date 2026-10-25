@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { D1Binding } from '../d1/binding.js';
-import { rows } from '../d1/query.js';
+import { rows,canonical,hashText } from '../d1/query.js';
 import { d1WriteAuthority } from '../d1/authority.js';
 import { storeIdentity,importD1Project,exportD1Project,openImported,transferBatch,assertSql } from '../d1/transfer-store.js';
 import { validateBundle } from '../d1/transfer-format.js';
@@ -31,12 +31,13 @@ export class SqliteD1ProjectTransfer {
   }catch(e){db.close();throw e;}
  }
  private selection():string|undefined {const f=join(this.directory,'return.json');if(!existsSync(f))return;closeSync(fileDescriptor(f,4096));const p=z.strictObject({directory:z.string()}).parse(JSON.parse(readFileSync(f,'utf8'))).directory;safePath(p);return p;}
- async prepare(){
+ async prepare(expectedSnapshotHash?:string){
+  const checkedSnapshot=async()=>{const snapshot=readLocalProject(this.source,this.projectId);if(expectedSnapshotHash && await hashText(canonical(snapshot))!==expectedSnapshotHash)fail('preview_changed','Source changed since preview. Nothing new was imported; inspect status before recovery.');return snapshot;};
   if(!existsSync(this.directory)){
    const a=localAuthority(this.source,this.projectId);if(!a['write_allowed'])fail('authority_conflict','Source is already fenced.');
    if(!(await rows(this.target,"SELECT name FROM sqlite_master WHERE name='storage_origins'",[],1)).length)fail('unsupported_capability','Explicit D1 009 schema required.');
    if((await rows(this.target,'SELECT id FROM projects LIMIT 1',[],1)).length)fail('destination_exists','D1 target must be empty.');
-   const snapshot=readLocalProject(this.source,this.projectId),identity=localIdentity(this.source),target_id=await storeIdentity(this.target);
+   const snapshot=await checkedSnapshot(),identity=localIdentity(this.source),target_id=await storeIdentity(this.target);
    await localToD1(snapshot,randomUUID().replaceAll('-','')); // Pure bounded preflight; no source fence yet.
    const p:Plan={id:randomUUID(),project_id:this.projectId,project_key:String(snapshot.tables.projects[0]!['project_key']),source:this.source,...identity,target_id,generation:Number(a['generation']??0)+1};
    newDirectory(this.directory);writeNew(join(this.directory,'operation.sqlite'),'');const init=new DatabaseSync(join(this.directory,'operation.sqlite'));try{init.exec(controlSql);init.prepare("INSERT INTO operation VALUES(?,'preparing')").run(JSON.stringify(p));}finally{init.close();}
@@ -47,7 +48,7 @@ export class SqliteD1ProjectTransfer {
    setLocalAuthority(this.source,this.row(c.p,'source','blocked'));assertLocalAuthority(this.source,this.row(c.p,'source','blocked'));
    const bundlePath=join(this.directory,'outbound.json');let bundle:unknown;
    if(existsSync(bundlePath)){closeSync(fileDescriptor(bundlePath,1024*1024));bundle=JSON.parse(readFileSync(bundlePath,'utf8'));}
-   else{bundle=await localToD1(readLocalProject(this.source,this.projectId),c.p.id.replaceAll('-',''));writeNew(bundlePath,JSON.stringify(bundle));}
+   else{bundle=await localToD1(await checkedSnapshot(),c.p.id.replaceAll('-',''));writeNew(bundlePath,JSON.stringify(bundle));}
    const checked=await validateBundle(bundle);if(checked.project_id!==c.p.project_id||checked.source_store_id!==c.p.id.replaceAll('-','')||checked.tables.projects[0]?.['project_key']!==c.p.project_key)fail('scope_mismatch','Retained bundle differs from this bridge operation.');
    await importD1Project(this.target,checked,{transfer_id:c.p.id,generation:c.p.generation,role:'target'});
    c.db.prepare("UPDATE operation SET phase='prepared'").run();c.db.exec('COMMIT');return this.result(c.p,'prepared');

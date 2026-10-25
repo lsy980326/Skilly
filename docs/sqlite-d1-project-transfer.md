@@ -27,6 +27,68 @@ const returned = await move.returnToSqlite(newReturnDirectory);
 D1 프로젝트의 독립적인 가져오기 명령은 아직 없으며, `d1ToLocal` 변환 경계는 명시적인
 설치 루트 매핑이 필요한 경우 `root_mapping_required`로 중단한다. 파일 경로를 추정하지 않는다.
 
+## 로컬 실행 명령
+
+설치된 개발용 Miniflare/workerd를 사용하는 **로컬 이전 명령**이다. 클라우드 계정·원격 D1·
+HTTP/MCP 저장소 선택이나 실사용 연결을 제공하지 않는다. 개발 의존성이 없으면 명확하게
+거절하고 패키지를 다운로드하지 않는다. 명령이 끝나면 로컬 실행기도 종료한다.
+
+모든 명령에 원본 DB·프로젝트 ID·로컬 D1 디렉터리·상태 디렉터리를 명시한다.
+아래 경로는 예시이며 실제 사용 중인 DB 대신 테스트 DB로 먼저 확인한다.
+
+```sh
+# 1. 원문을 출력하거나 파일을 만들지 않는 사전 검사
+node dist/runtime/local/main.js project-transfer preview \
+  --db /absolute/test/memory.sqlite --project-id <UUID> \
+  --d1 /absolute/new-local-d1 --state /absolute/new-operation
+
+# 2. 위 결과의 expected_hash를 그대로 전달. 선택한 원본 프로젝트를 차단하고 D1을 연다.
+node dist/runtime/local/main.js project-transfer execute \
+  --db /absolute/test/memory.sqlite --project-id <UUID> \
+  --d1 /absolute/new-local-d1 --state /absolute/new-operation --expect <expected_hash>
+
+# 3. 같은 명시 경로로 상태 확인 또는 재개
+node dist/runtime/local/main.js project-transfer status \
+  --db /absolute/test/memory.sqlite --project-id <UUID> \
+  --d1 /absolute/new-local-d1 --state /absolute/new-operation
+node dist/runtime/local/main.js project-transfer resume \
+  --db /absolute/test/memory.sqlite --project-id <UUID> \
+  --d1 /absolute/new-local-d1 --state /absolute/new-operation
+
+# 4. D1을 차단한 뒤 새로운 SQLite 사본으로 복귀
+node dist/runtime/local/main.js project-transfer return \
+  --db /absolute/test/memory.sqlite --project-id <UUID> \
+  --d1 /absolute/new-local-d1 --state /absolute/new-operation --output /absolute/new-return
+```
+
+- `preview`: 선택한 프로젝트의 변환·한도·미종료 실행·경로를 검사한다. 원문 내용 대신
+  테이블별 행 수·크기·변경 효과와 해시를 반환한다. D1을 시작하거나 원본을 봉인하지 않는다.
+  대상 D1·상태 폴더는 존재하지 않아야 한다. 해시는 원본 스냅샷·파일 식별·프로젝트·경로·
+  스키마에 연결되며 인증이나 서명이 아니다. 미리보기 후 바뀐 자료는 실행 전에 거절한다.
+- `execute`: 확인한 해시로 새 상태 폴더와 전용 로컬 D1을 준비하고 이전한다. 새 D1에만
+  001–009를 단일 batch로 초기화한다. 미지의 기존 D1이나 다른 상태 폴더를 채택하지 않는다.
+  초기화만 중단돼 bridge가 없다면 원본은 봉인되지 않았다. 같은 `execute --expect`로 다시
+  시도한다. 보존한 승인·원본이 달라지면 자동 진행하지 않는다.
+- `status`: 저장된 단계, 원본·대상의 쓰기 허용, 최신 저장 기록 ID, 중단 때의 저장 지점,
+  복귀 사본 경로를 반환한다. `preparing`도 이미 원본이 차단된 상태일 수 있다.
+  `active`는 D1 쓰기 허용 상태이며 AI나 작업 프로세스가 실행 중이라는 뜻이 아니다.
+- `resume`: 같은 bridge만 이어간다. 준비 중이면 같은 원문 묶음으로 다시 가져오고,
+  준비 완료면 활성화한다. 복귀 위치가 선택됐다면 그 복귀만 이어가며 D1을 다시 열지 않는다.
+  상태 폴더 오타·사라진 D1·다른 파일 식별을 새 이전으로 해석하지 않는다.
+- `return`: 새 복귀 위치를 한 번 선택한다. 같은 위치의 재호출은 기존 선택 사본을 재사용하고
+  복귀 후 새 기록을 보존한다. 다른 위치로 바꾸거나 원래 DB를 재활성화하지 않는다.
+
+상태 폴더의 `intent.json`·`command.sqlite`·`bridge`와 D1 폴더를 함께 보존한다.
+명령은 상태 잠금으로 직렬화한다. `status/resume/return`은 새 대상·스키마를 초기화하지 않는다.
+작업·D1·복귀 폴더와 원본/companion DB는 동일·하위 경로를 사용할 수 없고 심볼릭 링크도
+거절한다. Worker는 loopback에서만 열고 외부 요청은 403으로 거절한다.
+원격 주소·임의 SQL·설정 모듈·기록 안의 명령은 실행하지 않는다.
+
+복귀 결과 `active_sqlite_db`는 **새 사본 경로**다. 이를 MCP나 화면에 연결하는 것은 별도
+명시적 선택이며 이 명령은 기존 설정·인증을 바꾸지 않는다. D1 활성화 중에도 기존 로컬
+화면이 D1을 자동 조회하는 것은 아니다. 쓰기가 실패하면 임의 DB로 우회하지 말고 같은
+상태를 조회한다. 중단 저장 지점과 수신되지 않은 누락은 다르며 누락 개수는 알 수 없다.
+
 ## 정보 보존
 
 D1의 `skilly-d1-project` schema 9는 기존 schema 8의 26개 업무 테이블에
@@ -88,3 +150,7 @@ D1 묶음은 보존 자료를 포함해 1 MiB / 2,000행, 테이블 JSON 256 KiB
 새 SQLite MCP 및 화면의 읽기 모델로 왕복을 확인한다. 중단·응답 유실·연결 실패·검사 자료는
 합성 주입이며 실제 Codex 중지나 원격 네트워크 장애 관측과 구분한다. 복귀 사본의 저장 성공도
 원문 내용이나 AI 완료 보고를 검증 완료로 바꾸지 않는다.
+
+`tests/project-transfer-cli.test.mjs`는 별도 CLI 프로세스의 사전 검사·실행·조회·재개·복귀,
+오래된 승인/잘못된 경로 거부, 주입한 가져오기 실패와 부분 복귀 보존, 이전 SQLite 및 D1
+세대의 쓰기 거부를 확인한다. 실제 로컬 실행과 테스트가 합성한 중단 상태를 구분한다.
