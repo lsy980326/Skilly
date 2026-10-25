@@ -19,7 +19,8 @@ import {d1WorkerModules} from './support/d1-modules.mjs';
 const names=['001-atomic-memory.sql','002-work.sql','003-decisions-plans.sql','004-execution-evidence.sql','005-task-events.sql','006-skills.sql','007-feature-discovery.sql','008-project-transfer.sql','009-storage-origins.sql','010-project-access.sql','011-owner-key-lifecycle.sql'];
 const all=async(db,q,...v)=>(await db.withSession('first-primary').prepare(q).bind(...v).all()).results;
 const value=r=>{assert.equal(r.isError,undefined,JSON.stringify(r));return JSON.parse(r.content[0].text);};
-function wrapped(db,{beforeBatch,afterRead}={}){return {withSession(c){const s=db.withSession(c),native=new WeakMap();const wrap=(st,q)=>{const w={bind:(...v)=>wrap(st.bind(...v),q),async all(){const r=await st.all();if(afterRead)await afterRead(q);return r;}};native.set(w,st);return w;};return {prepare:q=>wrap(s.prepare(q),q),async batch(statements){if(beforeBatch)await beforeBatch();return s.batch(statements.map(x=>native.get(x)));}};}};}
+function wrapped(db,{beforeBatch,afterBatch,afterRead}={}){return {withSession(c){const s=db.withSession(c),native=new WeakMap();const wrap=(st,q)=>{const w={bind:(...v)=>wrap(st.bind(...v),q),async all(){const r=await st.all();if(afterRead)await afterRead(q);return r;}};native.set(w,st);return w;};return {prepare:q=>wrap(s.prepare(q),q),async batch(statements){if(beforeBatch)await beforeBatch();const result=await s.batch(statements.map(x=>native.get(x)));if(afterBatch)await afterBatch();return result;}};}};}
+const gate=()=>{let release;const promise=new Promise(r=>release=r);return {promise,release};};
 
 test('authenticated MCP over real loopback HTTP and local Worker D1',{timeout:180000},async t=>{
  const root=realpathSync(mkdtempSync(join(tmpdir(),'skilly-cloud-mcp-'))),at=Math.floor(Date.now()/1000),issuer='https://skilly-test.cloudflareaccess.com',audience='mcp-test-only';
@@ -119,6 +120,97 @@ test('authenticated MCP over real loopback HTTP and local Worker D1',{timeout:18
   const blocked={withSession(c){const s=db.withSession(c);const wrap=st=>({bind:(...v)=>wrap(st.bind(...v)),async all(){entered++;if(entered<=16){if(entered===16)ready();await gate;}return st.all();}});return {prepare:q=>wrap(s.prepare(q)),batch:statements=>s.batch(statements)};}};
   const handler=createCloudMcpHandler(blocked,config),make=id=>new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify({...initialize,id})});
   const pending=Array.from({length:16},(_,i)=>handler(make(i)));await arrived;assert.equal((await handler(make(17))).status,429);release();const results=await Promise.all(pending);assert.equal(results.every(r=>r.status===200),true);assert.equal((await handler(make(18))).status,200);
+ });
+ await t.test('a progressing slow body reaches the absolute deadline even when source cancellation never settles',async()=>{
+  let cancelled=false,interval;
+  const stream=new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('{'));interval=setInterval(()=>c.enqueue(new TextEncoder().encode(' ')),40);},cancel(){cancelled=true;clearInterval(interval);return new Promise(()=>{});}});
+  const handler=createCloudMcpHandler(db,{...config,timeout_ms:1000,storage_timeout_ms:800});
+  try{
+   const r=await handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:stream,duplex:'half'}));
+   assert.equal(r.status,504);const body=await r.json();assert.equal(body.error.code,'request_timeout');assert.equal(body.delivery.write_dispatch,'not_dispatched');assert.equal(body.delivery.persistence,'not_checked');assert.equal(cancelled,true);
+   assert.equal((await raw()).status,200);
+  }finally{clearInterval(interval);}
+ });
+ await t.test('client abort stops body reads, and a previously aborted request starts no D1 call',async()=>{
+  const read=gate(),abort=new AbortController();let cancelled=false,reads=0;
+  const stream=new ReadableStream({pull(c){c.enqueue(new TextEncoder().encode(' '));read.release();},cancel(){cancelled=true;}},{highWaterMark:0});
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async()=>{reads++;}}),{...config,timeout_ms:3000,storage_timeout_ms:1000});
+  const pending=handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:stream,signal:abort.signal,duplex:'half'}));
+  await read.promise;abort.abort();const r=await pending;assert.equal(r.status,408);assert.equal((await r.json()).error.code,'request_aborted');assert.equal(cancelled,true);
+  const count=reads;const again=await handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify(initialize),signal:abort.signal}));assert.equal(again.status,408);assert.equal(reads,count);
+  const next=await connect(jwt);await next.ping();
+ });
+ await t.test('a stalled D1 read times out without follow-up SQL and reconnects after it settles',async()=>{
+  const blocked=gate();let calls=0;
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async()=>{if(++calls===1)await blocked.promise;}}),{...config,timeout_ms:3000,storage_timeout_ms:300});
+  const make=()=>new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify(initialize)});
+  try{
+   const response=await handler(make());assert.equal(response.status,504);const body=await response.json();assert.equal(body.error.code,'storage_timeout');assert.equal(body.delivery.write_dispatch,'not_dispatched');assert.equal(body.delivery.persistence,'not_checked');assert.equal(calls,1);
+  }finally{blocked.release();}
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);assert.equal((await handler(make())).status,200);
+ });
+ await t.test('timeout before batch submission never writes, including a delayed lookup for an older saved key',async()=>{
+  const blocked=gate();let calls=0,batches=0;
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async q=>{calls++;if(q==='SELECT * FROM projects WHERE id=?')await blocked.promise;},beforeBatch:async()=>{batches++;}}),{...config,timeout_ms:3000,storage_timeout_ms:300});
+  const call={jsonrpc:'2.0',id:60,method:'tools/call',params:{name:'memory_begin_task',arguments:{goal:'must-not-write-after-timeout',mode:'change',idempotency_key:'before-batch-timeout'}}};
+  let count;
+  try{const r=await handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify(call)}));assert.equal(r.status,504);const body=await r.json();assert.equal(body.delivery.write_dispatch,'not_dispatched');assert.equal(body.delivery.persistence,'not_checked');count=calls;}
+  finally{blocked.release();}
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,count);assert.equal(batches,0);assert.equal((await all(db,"SELECT count(*) n FROM runs WHERE goal='must-not-write-after-timeout'"))[0].n,0);
+  const previous=gate();const reader=createCloudMcpHandler(wrapped(db,{afterRead:async q=>{if(q.includes('FROM receipts'))await previous.promise;}}),{...config,timeout_ms:3000,storage_timeout_ms:300});
+  call.params.arguments={goal:'MCP 일반 작업 테스트',mode:'change',actor:'Codex',components:[{key:'web',name:'Web'}],idempotency_key:'normal-start'};
+  try{const r=await reader(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify(call)}));assert.equal(r.status,504);const body=await r.json();assert.equal(body.delivery.persistence,'not_checked');assert.equal(body.delivery.dispatch_scope,'current_request_only');}
+  finally{previous.release();}
+  const next=await connect(jwt);assert.equal(value(await next.callTool({name:'memory_get_receipt',arguments:{write_operation:'begin',idempotency_key:'normal-start'}})).result.run.id,runId);
+ });
+ await t.test('a committed batch with a stalled response stays unknown until a new authenticated connection reads its receipt',async()=>{
+  const blocked=gate();let calls=0;
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async()=>{calls++;},afterBatch:async()=>{await blocked.promise;}}),{...config,timeout_ms:3000,storage_timeout_ms:300});
+  const args={goal:'stored-before-timeout',mode:'change',idempotency_key:'late-batch-receipt'},call={name:'memory_begin_task',arguments:args};let count;
+  try{
+   const r=await handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify({jsonrpc:'2.0',id:61,method:'tools/call',params:call})}));assert.equal(r.status,504);const body=await r.json();assert.equal(body.error.code,'storage_timeout');assert.equal(body.delivery.write_dispatch,'dispatched');assert.equal(body.delivery.persistence,'unknown');assert.equal(body.delivery.automatic_replay,false);assert.equal(JSON.stringify(body).includes('stored-before-timeout'),false);count=calls;
+   const next=await connect(jwt),receipt=value(await next.callTool({name:'memory_get_receipt',arguments:{write_operation:'begin',idempotency_key:args.idempotency_key}}));assert.equal(receipt.found,true);
+   const saved=value(await next.callTool(call));assert.equal(saved.run.id,receipt.result.run.id);assert.equal((await all(db,"SELECT count(*) n FROM runs WHERE goal='stored-before-timeout'"))[0].n,1);
+   value(await next.callTool({name:'memory_finish_task',arguments:{run_id:saved.run.id,summary:'응답 지연 시험 종료',outcome:'completed',idempotency_key:'late-batch-finish'}}));
+  }finally{blocked.release();}
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,count);
+ });
+ await t.test('client abort after batch dispatch reports unknown without undoing or repeating a real write',async()=>{
+  const blocked=gate(),submitted=gate(),abort=new AbortController();
+  const handler=createCloudMcpHandler(wrapped(db,{afterBatch:async()=>{submitted.release();await blocked.promise;}}),{...config,timeout_ms:5000,storage_timeout_ms:3000});
+  const call={name:'memory_begin_task',arguments:{goal:'abort-after-dispatch',mode:'change',idempotency_key:'abort-after-dispatch'}};
+  const pending=handler(new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},signal:abort.signal,body:JSON.stringify({jsonrpc:'2.0',id:62,method:'tools/call',params:call})}));
+  try{
+   await submitted.promise;abort.abort();const r=await pending;assert.equal(r.status,408);const body=await r.json();assert.equal(body.error.code,'request_aborted');assert.equal(body.delivery.persistence,'unknown');assert.equal(body.delivery.write_dispatch,'dispatched');
+   const next=await connect(jwt),receipt=value(await next.callTool({name:'memory_get_receipt',arguments:{write_operation:'begin',idempotency_key:'abort-after-dispatch'}}));assert.equal(receipt.found,true);assert.equal((await all(db,"SELECT count(*) n FROM runs WHERE goal='abort-after-dispatch'"))[0].n,1);
+   value(await next.callTool({name:'memory_finish_task',arguments:{run_id:receipt.result.run.id,summary:'중단 뒤 영수증 확인 시험 종료',outcome:'completed',idempotency_key:'abort-after-finish'}}));
+  }finally{blocked.release();}
+ });
+ await t.test('a late native rejection after timeout is contained and its slot becomes reusable',async()=>{
+  const blocked=gate();let calls=0;
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async()=>{if(++calls===1){await blocked.promise;throw new Error('private-storage-diagnostic');}}}),{...config,timeout_ms:3000,storage_timeout_ms:300});
+  const make=()=>new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify(initialize)});
+  try{const r=await handler(make());assert.equal(r.status,504);assert.equal((await r.text()).includes('private-storage-diagnostic'),false);}finally{blocked.release();}
+  await new Promise(resolve=>setImmediate(resolve));assert.equal((await handler(make())).status,200);
+ });
+ await t.test('timed-out native calls remain bounded until settlement, without accumulating retries',async()=>{
+  const blocked=gate();let calls=0;
+  const handler=createCloudMcpHandler(wrapped(db,{afterRead:async()=>{if(++calls<=16)await blocked.promise;}}),{...config,timeout_ms:5000,storage_timeout_ms:600});
+  const make=id=>new Request(endpoint,{method:'POST',headers:{...headers(jwt),Host:new URL(endpoint).host},body:JSON.stringify({...initialize,id})});
+  try{
+   const responses=await Promise.all(Array.from({length:16},(_,id)=>handler(make(id))));assert.equal(responses.every(r=>r.status===504),true);assert.equal(calls,16);
+   for(let i=0;i<3;i++){const r=await handler(make(90+i));assert.equal(r.status,503);assert.equal(r.headers.get('Retry-After'),'1');assert.equal((await r.json()).error.code,'storage_busy');}assert.equal(calls,16);
+  }finally{blocked.release();}
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,16);assert.equal((await handler(make(100))).status,200);
+ });
+ await t.test('real SDK HTTP timeout after a Worker D1 commit is recovered by receipt on a new connection',async()=>{
+  await mf.dispose();mf=new Miniflare({...options,bindings:{...options.bindings,MCP_CONFIG:{...config,timeout_ms:5000,storage_timeout_ms:250},MCP_TEST_BATCH_DELAY_MS:700}});
+  db=await mf.getD1Database('DB');policies=new D1AuthPolicies(db);access=new D1ProjectAccess(db);
+  const first=await connect(jwt),call={name:'memory_begin_task',arguments:{goal:'worker-stored-response-timeout',mode:'change',idempotency_key:'worker-late-start'}};
+  await assert.rejects(first.callTool(call),{code:504});
+  const next=await connect(jwt),receipt=value(await next.callTool({name:'memory_get_receipt',arguments:{write_operation:'begin',idempotency_key:'worker-late-start'}}));assert.equal(receipt.found,true);assert.equal(receipt.result.status,'persisted');assert.equal(receipt.result.claims_verified,false);
+  const saved=value(await next.callTool(call));assert.equal(saved.run.id,receipt.result.run.id);assert.equal((await all(db,"SELECT count(*) n FROM runs WHERE goal='worker-stored-response-timeout'"))[0].n,1);
+  value(await next.callTool({name:'memory_finish_task',arguments:{run_id:saved.run.id,summary:'Worker 응답 지연 시험 종료',outcome:'completed',idempotency_key:'worker-late-finish'}}));
  });
  await t.test('key retirement blocks existing and new connections; a new valid key and restarted Worker retain the original record',async()=>{
   await policies.revokeKey('personal-mcp','old',1);assert.equal((await raw()).status,503);await assert.rejects(client.listTools());

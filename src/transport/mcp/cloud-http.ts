@@ -6,17 +6,20 @@ import { MemoryError } from '../../core/memory/model.js';
 import { D1AccessAuthenticator } from '../../adapters/auth/d1-access.js';
 import { D1ProjectAccess } from '../../adapters/storage/d1/project-access.js';
 import type { D1Binding } from '../../adapters/storage/d1/binding.js';
-import { cloudInput,cloudResponse,cloudError } from '../cloud/server.js';
+import { cloudInput,cloudResponse } from '../cloud/server.js';
 import { listCloudTools,callCloudTool,cloudMcpInstructions } from './cloud-tools.js';
+import { CloudRequest,CloudRequestStorage } from './cloud-request.js';
 
-const configSchema=z.strictObject({endpoint:z.url(),policy_id:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),scope:accessScopeSchema});
+const configSchema=z.strictObject({endpoint:z.url(),policy_id:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),scope:accessScopeSchema,
+ timeout_ms:z.int().min(25).max(60000).optional(),storage_timeout_ms:z.int().min(25).max(30000).optional()})
+ .refine(c=>(c.storage_timeout_ms??5000)<=(c.timeout_ms??30000),'Storage timeout must not exceed request timeout.');
 export type CloudMcpConfig=z.infer<typeof configSchema>;
 const envelope=z.strictObject({jsonrpc:z.literal('2.0'),id:z.union([z.string().min(1).max(100),z.int()]).optional(),method:z.string().max(80),params:z.unknown().optional()});
 const errorCode=(e:unknown)=>e instanceof AccessError?e.code:e instanceof z.ZodError?'invalid_input':e instanceof MemoryError&&['conflict','idempotency_conflict','task_finished','project_write_blocked','scope_mismatch','resource_limit','persistence_unknown'].includes(e.code)?e.code:'request_failed';
 const noStore=(response:Response)=>{const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');headers.set('Pragma','no-cache');headers.set('X-Content-Type-Options','nosniff');return new Response(response.body,{status:response.status,headers});};
 /** Standard SDK transport, deliberately limited to stateless JSON request/response methods. */
 export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
- const config=configSchema.parse(structuredClone(raw)),endpoint=new URL(config.endpoint),authenticator=new D1AccessAuthenticator(db,config.policy_id);
+ const config=configSchema.parse(structuredClone(raw)),endpoint=new URL(config.endpoint),storage=new CloudRequestStorage(db);
  if(endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!==`/v1/projects/${config.scope.project_id}/mcp`
   ||(endpoint.protocol!=='https:'&&!(endpoint.protocol==='http:'&&['127.0.0.1','[::1]','localhost'].includes(endpoint.hostname))))throw new Error('Invalid fixed MCP endpoint.');
  let active=0;
@@ -25,11 +28,14 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
   if(url.href!==endpoint.href||host!==endpoint.host||(origin!==null&&origin!==endpoint.origin))return cloudResponse({error:{code:'access_denied'}},403);
   if(active>=16)return cloudResponse({error:{code:'resource_limit'}},429);
   active++;let transport:WebStandardStreamableHTTPServerTransport|undefined;
-  try{
-   const auth=await authenticator.authenticate(request),permit=await new D1ProjectAccess(db).bind(auth.principal,config.scope,'read',()=>auth.assertFresh(),auth.credential);
+  const life=new CloudRequest(request,config.timeout_ms??30000,config.storage_timeout_ms??5000),scoped=storage.bind(life);
+  const operation=async()=>{
+   life.check();
+   const authenticator=new D1AccessAuthenticator(scoped,config.policy_id);
+   const auth=await authenticator.authenticate(request),permit=await new D1ProjectAccess(scoped).bind(auth.principal,config.scope,'read',()=>auth.assertFresh(),auth.credential);
    if(request.method!=='POST'){await permit.check();const response=cloudResponse({error:{code:'method_not_allowed'}},405);response.headers.set('Allow','POST');return response;}
    if(request.headers.has('Mcp-Session-Id')||request.headers.has('Last-Event-ID'))throw new MemoryError('invalid_input','Sessions and replay are not supported.');
-   const body=envelope.parse(await cloudInput(request));
+   const body=envelope.parse(await cloudInput(request,life.signal));life.check();
    if(body.id===undefined&&body.method!=='notifications/initialized')throw new MemoryError('invalid_input','Unsupported notification.');
    if(!['initialize','notifications/initialized','ping','tools/list','tools/call'].includes(body.method))throw new MemoryError('invalid_input','Unsupported method.');
    if(body.method==='notifications/initialized'&&(body.id!==undefined||body.params!==undefined))throw new MemoryError('invalid_input','Invalid initialization notification.');
@@ -49,13 +55,14 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
       case 'tools/list':{const r=ListToolsRequestSchema.parse(message);if(r.params?.cursor)throw new MemoryError('invalid_input','No tool pagination.');result={tools:listCloudTools()};break;}
       case 'tools/call':{
        const r=CallToolRequestSchema.parse(message);if(r.params.task||r.params._meta)throw new MemoryError('invalid_input','Task extensions are not supported.');
-       const value=await callCloudTool(db,auth,config.scope,r.params.name,r.params.arguments??{});
+       const value=await callCloudTool(scoped,auth,config.scope,r.params.name,r.params.arguments??{});
        result={content:[{type:'text',text:JSON.stringify(value)}]};break;
       }
       default:throw new MemoryError('invalid_input','Unsupported method.');
      }
-     await permit.check();await current.send({jsonrpc:'2.0',id:message.id,result});
+     await permit.check();life.check();await current.send({jsonrpc:'2.0',id:message.id,result});
     }catch(e){
+     life.check();
      const code=errorCode(e);
      await current.send(message.method==='tools/call'?{jsonrpc:'2.0',id:message.id,result:{isError:true,content:[{type:'text',text:JSON.stringify({error:{code},claims_verified:false})}]}}
       :{jsonrpc:'2.0',id:message.id,error:{code:-32602,message:'Invalid request'}});
@@ -69,8 +76,13 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig){
    await permit.check();await auth.assertFresh();
    if(!response.ok)return cloudResponse({jsonrpc:'2.0',id:body.id??null,error:{code:-32600,message:'Invalid request'}},response.status);
    const text=await response.text();if(new TextEncoder().encode(text).length>65536)throw new MemoryError('resource_limit','Response limit reached; use the original receipt.');
-   await permit.check();return noStore(new Response(text||null,{status:response.status,headers:response.headers}));
-  }catch(e){return cloudError(e);}
-  finally{try{if(transport)await transport.close();}finally{active--;}}
+   await permit.check();life.check();return noStore(new Response(text||null,{status:response.status,headers:response.headers}));
+  };
+  try{return await life.wait(operation());}catch(e){return await life.error(e);}
+  finally{
+   life.close();
+   try{if(transport)await transport.close();}catch(e){if(!life.failure)return await life.error(e);}
+   finally{active--;}
+  }
  };
 }

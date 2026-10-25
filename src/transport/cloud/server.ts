@@ -7,11 +7,14 @@ import type { D1Binding } from '../../adapters/storage/d1/binding.js';
 
 const headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'};
 export function cloudResponse(value:unknown,status=200){return Response.json(value,{status,headers});}
-export async function cloudInput(request:Request){
+export async function cloudInput(request:Request,signal?:AbortSignal){
  if(request.headers.get('Content-Type')?.split(';')[0]?.trim().toLowerCase()!=='application/json')throw new MemoryError('invalid_input','JSON required.');
  const reader=request.body?.getReader();if(!reader)throw new MemoryError('invalid_input','Body required.');let size=0;const parts:Uint8Array[]=[];
- try{while(true){const r=await reader.read();if(r.done)break;size+=r.value.byteLength;if(size>65536){await reader.cancel();throw new MemoryError('resource_limit','Request too large.');}parts.push(r.value);}}
- finally{reader.releaseLock();}
+ // A source's cancel promise can hang. Close the reader without waiting on that source.
+ const cancel=()=>{void reader.cancel().catch(()=>{});};
+ signal?.addEventListener('abort',cancel,{once:true});
+ try{signal?.throwIfAborted();while(true){const r=await reader.read();signal?.throwIfAborted();if(r.done)break;size+=r.value.byteLength;if(size>65536){cancel();throw new MemoryError('resource_limit','Request too large.');}parts.push(r.value);}}
+ finally{signal?.removeEventListener('abort',cancel);reader.releaseLock();}
  const bytes=new Uint8Array(size);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
  try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;}catch{throw new MemoryError('invalid_input','JSON required.');}
 }
