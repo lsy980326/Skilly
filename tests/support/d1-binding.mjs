@@ -36,7 +36,7 @@ class Statement {
     return { success: true, results, meta: { changes: db.prepare('SELECT changes() AS n').get().n } };
   }
   async all() {
-    if (this.binding.failReads) throw Error('receipt read unavailable');
+    if (this.binding.failReads || this.binding.failReceiptReads && this.sql.startsWith('SELECT payload_hash')) throw Error('receipt read unavailable');
     return this.execute();
   }
 }

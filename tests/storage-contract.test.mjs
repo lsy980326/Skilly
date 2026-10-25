@@ -209,9 +209,9 @@ test('D1 shape: failures during correction keep the old source and search index 
 
 test('D1 shape: a lost response plus failed receipt read stays unknown until reconnection', async t => {
   const f = fixture(t, 'd1-shape'); await seed(f); const s = f.store(f.p.id), c = start(f);
-  f.binding.loseResponse = true; f.binding.failReads = true;
+  f.binding.loseResponse = true; f.binding.failReceiptReads = true;
   await assert.rejects(s.commit(c), { code: 'persistence_unknown', retryable: true });
-  f.binding.failReads = false;
+  f.binding.failReceiptReads = false;
   assert.deepEqual(await s.getReceipt(f.p.id, c.receipt.key), c.receipt);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM runs').get().n, 1);
 });

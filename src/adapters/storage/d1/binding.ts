@@ -13,5 +13,6 @@ export interface D1Session {
   batch(statements: D1Statement[]): Promise<D1Result[]>;
 }
 export interface D1Binding {
+  readonly writeGeneration?: number;
   withSession(constraint: "first-primary"): D1Session;
 }

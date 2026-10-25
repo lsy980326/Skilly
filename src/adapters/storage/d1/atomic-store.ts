@@ -1,3 +1,4 @@
+import { prepareWriteGuard } from "./authority.js";
 import { validateMutationOwnership, type AtomicCommitStore } from "../../../core/memory/atomic-commit.js";
 import { MemoryError, parseJsonObject, type Receipt } from "../../../core/memory/model.js";
 import type { D1Binding, D1Statement } from "./binding.js";
@@ -14,7 +15,9 @@ const encoder = new TextEncoder();
 
 /** First cloud seam only: not a full MemoryStore, HTTP endpoint, authenticator or transfer target. */
 export class D1AtomicCommitStore implements AtomicCommitStore {
+  private readonly generation:number;
   constructor(private readonly binding: D1Binding, private readonly projectId: string) {
+    this.generation=binding.writeGeneration??0;
     if (!projectId || projectId.length > 100) throw new MemoryError("invalid_input", "Bind storage to an explicit project.");
   }
 
@@ -80,6 +83,7 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     const discovery=await prepareD1Discovery(this.binding,change,work);
     if(discovery==="conflict")return "conflict";
 
+    const guard=await prepareWriteGuard(this.binding,change.project.id,this.generation);
     const token = crypto.randomUUID();
     const session = this.binding.withSession("first-primary"), statements: D1Statement[] = [];
     const sql = (text: string, ...values: (string | number | null)[]) => statements.push(session.prepare(text).bind(...values));
@@ -88,6 +92,7 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
       sql("INSERT INTO skilly_write_assertions (id, ok) VALUES (1, CASE WHEN changes()=1 THEN 1 ELSE 0 END)");
       sql("DELETE FROM skilly_write_assertions WHERE id=1");
     };
+    guard?.(sql);
     const p = change.project;
     if (change.expected_revision === null) {
       sql(`INSERT INTO projects (id,project_key,name,revision,created_at)
@@ -132,16 +137,20 @@ export class D1AtomicCommitStore implements AtomicCommitStore {
     skill?.(sql,assertOneChange);
     sql("INSERT INTO receipts (scope,idempotency_key,payload_hash,result_json,commit_token) VALUES (?,?,?,?,?)",
       change.receipt.scope, change.receipt.key, change.receipt.hash, receiptJson, token);
+    // D1 meta.changes may include deferred FTS/trigger work at batch end.
+    // Guarded schemas assert the receipt row count inside SQL instead.
+    if(guard)assertOneChange();
     if (statements.length > D1_WRITE_LIMITS.statements) throw new MemoryError("resource_limit", "Too many statements. Nothing was submitted.");
     try {
       const result = await session.batch(statements);
       if (!Array.isArray(result) || result.length !== statements.length || result.some(row => !row || row.success !== true)
-        || result[0]?.meta?.changes !== 1 || result.at(-1)?.meta?.changes !== 1) {
+        || result[guard?2:0]?.meta?.changes !== 1 || (!guard && result.at(-1)?.meta?.changes !== 1)) {
         throw new MemoryError("persistence_unknown", "Write response is incomplete. Recheck the same receipt; do not claim it was queued or lost.", true);
       }
       return "committed";
     } catch (error) {
       if (error instanceof MemoryError) throw error;
+      if(error instanceof Error && /project_write_blocked|skilly_generation_allowed/.test(error.message))throw new MemoryError("project_write_blocked","The project generation was fenced before this batch. No work was committed.");
       // Only our named in-batch assertion proves a clean CAS rejection.
       if (error instanceof Error && error.message.includes("CHECK constraint failed: skilly_atomic_change")) return "conflict";
       // A receipt UNIQUE race, or a committed response lost in transit, is resolved at the primary.

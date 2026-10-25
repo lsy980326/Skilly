@@ -1,3 +1,4 @@
+import { nativeOnly } from "./authority.js";
 import { z } from "zod";
 import { MemoryError,type Project,type JsonObject } from "../../../core/memory/model.js";
 import { commitWithReceipt } from "../../../core/memory/atomic-commit.js";
@@ -28,7 +29,7 @@ export class D1TaskEvents extends D1EventReader {
         const i=linkEventSchema.parse(input);
         // Older schemas still return an explicit capability error from preparation.
         const prior=await hasEventSchema(this.db)?await rows(this.db,`SELECT id,run_id FROM task_event_links
-          WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 1`,
+          WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? AND ${await nativeOnly(this.db,"task_event_links","link")} ORDER BY seq DESC LIMIT 1`,
           [s.project_id,s.repository,s.environment,s.root_hash,s.session_hash],1):[];
         const id=prior[0]?.["run_id"]===i.run_id?String(prior[0]["id"]):crypto.randomUUID();
         lifecycle={operation,input:{...i,...s},id,at:new Date().toISOString()};

@@ -1,3 +1,4 @@
+import { nativeOnly,hasTransferSchema } from "./authority.js";
 import { z } from "zod";
 import { MemoryError,type JsonObject,parseJsonObject } from "../../../core/memory/model.js";
 import { d1EventScopeSchema,eventCoverage,lastSavedSql,type D1EventScope } from "./event-model.js";
@@ -16,37 +17,40 @@ export class D1EventReader {
   async observations(offset=0):Promise<JsonObject> {
     if(!Number.isSafeInteger(offset)||offset<0||offset>100000)throw new MemoryError("invalid_input","Invalid event page.");
     if(!await hasEventSchema(this.db))return {schema_supported:false,status:"unsupported",...eventCoverage};
-    const s=this.scope,data=await rows(this.db,`SELECT ${fields} FROM lifecycle_events e
+    const native=await nativeOnly(this.db,"e","event");
+    const s=this.scope,data=await rows(this.db,`SELECT ${fields},NOT (${native}) AS imported_history FROM lifecycle_events e
       WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 21 OFFSET ?`,
       [s.project_id,s.repository,s.environment,s.root_hash,s.session_hash,offset],21);
     const next=offset+20;
-    return bounded(json({schema_supported:true,status:data.length?"observations_available":"not_observed",items:data.slice(0,20),
+    return bounded(json({schema_supported:true,status:data.length?"observations_available":"not_observed",items:data.slice(0,20).map(r=>({...r,imported_history:Boolean(r["imported_history"])})),
       next_offset:data.length>20&&next<=100000?next:null,pagination_truncated:data.length>20&&next>100000,
       pagination:"live_offset",work_record_saved:false,...eventCoverage}),64*1024);
   }
   async status(runId:string):Promise<JsonObject> {
     if(!z.uuid().safeParse(runId).success)throw new MemoryError("invalid_input","Invalid task ID.");
-    const s=this.scope,supported=await hasEventSchema(this.db);
+    const s=this.scope,supported=await hasEventSchema(this.db),native=await nativeOnly(this.db,"l","link"),imported=await hasTransferSchema(this.db);
     // All work/association/snapshot fields come from one business read, even across reconnects.
     const relation=`FROM lifecycle_events e JOIN event_task_snapshots x ON x.project_id=e.project_id AND x.event_id=e.id
       JOIN task_event_links l ON l.project_id=x.project_id AND l.id=x.link_id
       WHERE l.project_id=r.project_id AND l.run_id=r.id AND l.repository=r.repository AND l.environment=r.environment AND l.root_hash=?`;
     const projection=`json_object('observation_id',e.id,'seq',e.seq,'event',e.event,'session_hash',e.session_hash,'observed_at',e.observed_at,
-      'received_at',e.received_at,'association_status',e.association_status,'saved_json',x.saved_json)`;
+      'received_at',e.received_at,'association_status',e.association_status,'saved_json',x.saved_json,'imported_history',json(CASE WHEN ${native} THEN 'false' ELSE 'true' END))`;
     const details=supported?`,(SELECT json_group_array(json(v)) FROM (SELECT ${projection} AS v ${relation} ORDER BY e.seq DESC LIMIT 21)) AS events_json,
       (SELECT ${projection} ${relation} AND e.event='Interrupt' ORDER BY e.seq DESC LIMIT 1) AS interruption_json,
       EXISTS(SELECT 1 FROM task_event_links l WHERE l.project_id=r.project_id AND l.run_id=r.id AND l.repository=r.repository
         AND l.environment=r.environment AND l.root_hash=?) AS has_history,
+      EXISTS(SELECT 1 FROM task_event_links l WHERE l.project_id=r.project_id AND l.run_id=r.id AND l.repository=r.repository AND l.environment=r.environment AND l.root_hash=? AND ${native}) AS has_native_history,
       ((SELECT run_id FROM task_event_links l WHERE l.project_id=r.project_id AND l.repository=r.repository AND l.environment=r.environment
-        AND l.root_hash=? AND l.session_hash=? ORDER BY seq DESC LIMIT 1)=r.id) AS current_binding`:"";
+        AND l.root_hash=? AND l.session_hash=? AND ${native} ORDER BY seq DESC LIMIT 1)=r.id) AS current_binding`:"";
     const data=await rows(this.db,`WITH context AS (SELECT ? AS read_at) SELECT r.id,r.state,
       ${lastSavedSql("r.project_id","r.id","(SELECT read_at FROM context)")} AS last_saved_json ${details}
       FROM runs r WHERE r.project_id=? AND r.id=? AND r.repository=? AND r.environment=?`,
-      [new Date().toISOString(),...(supported?[s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.session_hash]:[]),s.project_id,runId,s.repository,s.environment],1);
+      [new Date().toISOString(),...(supported?[s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.root_hash,s.session_hash]:[]),s.project_id,runId,s.repository,s.environment],1);
     const row=data[0];if(!row)throw new MemoryError("not_found","Task not found in this exact scope.");
     const entries=supported?array(row["events_json"]):[];
     return bounded(json({run_id:runId,task_state:row["state"],last_saved:parseJsonObject(String(row["last_saved_json"])),
-      schema_supported:supported,linkage:!supported?"unsupported":row["has_history"]?"explicit_agent_binding":"not_linked",
+      schema_supported:supported,linkage:!supported?"unsupported":row["has_history"]&&!row["has_native_history"]?"imported_history":row["has_history"]?"explicit_agent_binding":"not_linked",
+      imported_history_supported:imported,
       current_session_binding:Boolean(row["current_binding"]),events:entries.slice(0,20).map(event),
       latest_event:entries[0]?event(entries[0]):null,
       interruption:typeof row["interruption_json"]==="string"?event(parseJsonObject(row["interruption_json"])):null,

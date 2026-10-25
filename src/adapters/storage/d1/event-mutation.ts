@@ -1,3 +1,4 @@
+import { nativeOnly } from "./authority.js";
 import { MemoryError } from "../../../core/memory/model.js";
 import { eventCommandSchema,lastSavedSql } from "./event-model.js";
 import { rows,canonical,hashText,type Sql } from "./query.js";
@@ -16,13 +17,14 @@ export async function prepareD1Event(db:D1Binding,change:D1Mutation):Promise<((s
   const c=parsed.data,i=c.input;
   if(i.project_id!==change.project.id||i.idempotency_key!==change.receipt.key)throw new MemoryError("scope_mismatch","Lifecycle and receipt scope differ.");
   if(!await hasEventSchema(db))throw new MemoryError("unsupported_capability","Apply the explicit D1 event schema first.");
+  const nativeLinks=await nativeOnly(db,"task_event_links","link"),nativeEvents=await nativeOnly(db,"lifecycle_events","event");
   const values=[i.project_id,i.repository,i.environment,i.root_hash,i.session_hash];
   if(c.operation==="receive") {
     const input=c.input,{idempotency_key:_key,...identity}=input,payloadHash=await hashText(canonical(identity));
     const [saved]=await rows(db,`SELECT p.revision,
       (SELECT payload_hash FROM lifecycle_events WHERE project_id=p.id AND id=?) AS prior_hash,
       (SELECT count(*) FROM lifecycle_events WHERE project_id=p.id) AS total,
-      (SELECT id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 1) AS link_id
+      (SELECT id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? AND ${nativeLinks} ORDER BY seq DESC LIMIT 1) AS link_id
       FROM projects p WHERE id=?`,[input.observation_id,...values,i.project_id],1);
     if(!saved)throw new MemoryError("not_found","Project not found.");
     if(saved["revision"]!==change.expected_revision)return "conflict";
@@ -54,11 +56,11 @@ export async function prepareD1Event(db:D1Binding,change:D1Mutation):Promise<((s
   }
   const input=c.input;
   const [saved]=await rows(db,`SELECT p.revision,r.state,
-    (SELECT seq FROM lifecycle_events WHERE project_id=p.id AND id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=?) AS anchor_seq,
+    (SELECT seq FROM lifecycle_events WHERE project_id=p.id AND id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? AND ${nativeEvents}) AS anchor_seq,
     (SELECT event FROM lifecycle_events WHERE project_id=p.id AND id=?) AS anchor_event,
     (SELECT count(*) FROM task_event_links WHERE project_id=p.id) AS total,
-    (SELECT id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 1) AS prior_id,
-    (SELECT run_id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ORDER BY seq DESC LIMIT 1) AS prior_run
+    (SELECT id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? AND ${nativeLinks} ORDER BY seq DESC LIMIT 1) AS prior_id,
+    (SELECT run_id FROM task_event_links WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? AND ${nativeLinks} ORDER BY seq DESC LIMIT 1) AS prior_run
     FROM projects p JOIN runs r ON r.project_id=p.id WHERE p.id=? AND r.id=? AND r.repository=? AND r.environment=?`,
     [input.observation_id,i.repository,i.environment,i.root_hash,i.session_hash,input.observation_id,...values,...values,i.project_id,input.run_id,i.repository,i.environment],1);
   if(!saved||saved["anchor_seq"]===null)throw new MemoryError("scope_mismatch","The explicit task and anchor must belong to this exact host session/root/scope.");
@@ -73,7 +75,7 @@ export async function prepareD1Event(db:D1Binding,change:D1Mutation):Promise<((s
     if(!old[0]||old[0]["state"]==="active")throw new MemoryError("link_conflict","Do not take over another unfinished task in this session.");
   }
   const boundary=await rows(db,`SELECT seq FROM lifecycle_events WHERE project_id=? AND repository=? AND environment=? AND root_hash=? AND session_hash=?
-    AND seq>? AND event NOT IN ('PostToolUse','PreCompact') LIMIT 1`,[...values,Number(saved["anchor_seq"])],1);
+    AND ${nativeEvents} AND seq>? AND event NOT IN ('PostToolUse','PreCompact') LIMIT 1`,[...values,Number(saved["anchor_seq"])],1);
   if(boundary.length||!["SessionStart","PostToolUse","PreCompact"].includes(String(saved["anchor_event"])))
     throw new MemoryError("stale_anchor","A stop, interruption or session restart invalidated this anchor.");
   if(Number(saved["total"])>=10000)throw new MemoryError("link_store_full","Link capacity reached; nothing was removed or queued.");
