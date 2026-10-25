@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 // Miniflare is not a package bundler. Supply the installed ESM graph explicitly, resolving
-// only the existing Zod package. Implementation is unchanged; no download or generated files.
+// only the installed Zod/Jose packages. Implementation is unchanged; no download or generated files.
 export function d1WorkerModules(entry) {
   const root = fileURLToPath(new URL('../../', import.meta.url)), modules = [], visited = new Set();
   function visit(path) {
@@ -18,7 +18,7 @@ export function d1WorkerModules(entry) {
         || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
       const specifier = statement.moduleSpecifier.text;
       const dependency = specifier.startsWith('.') ? resolve(dirname(path), specifier)
-        : specifier === 'zod' ? fileURLToPath(import.meta.resolve('zod')) : null;
+        : ['zod','jose'].includes(specifier) ? fileURLToPath(import.meta.resolve(specifier)) : null;
       if (!dependency || relative(root, dependency).startsWith('..')) throw Error(`Unsupported local test module: ${specifier}`);
       dependencies.push(dependency);
       if (!specifier.startsWith('.')) {
