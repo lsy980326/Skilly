@@ -1,25 +1,10 @@
-import { z } from 'zod';
 import type { Principal } from '../../../core/access/model.js';
 import { MemoryError } from '../../../core/memory/model.js';
 import type { D1Binding, D1Result, D1Statement } from './binding.js';
 import { canonical, hashText, rows } from './query.js';
-
-const count = z.int().min(1).max(1_000_000_000);
-const resources = z.strictObject({ requests: count, batches: count, rows_read: count, rows_written: count });
-export const usagePolicySchema = z.strictObject({
- daily: resources, user_daily: resources,
- request: resources.omit({ requests: true }).extend({ statements: z.int().min(1).max(256) }),
- accepted_write_bytes: count,
-}).refine(p => (['batches', 'rows_read', 'rows_written'] as const).every(k => p.request[k] <= p.daily[k] && p.request[k] <= p.user_daily[k]),
- 'A request reservation must fit both daily budgets.');
-export type UsagePolicy = z.infer<typeof usagePolicySchema>;
-type Usage = z.infer<typeof resources>;
-const keys = ['requests', 'batches', 'rows_read', 'rows_written'] as const;
-const zero = (): Usage => ({ requests: 0, batches: 0, rows_read: 0, rows_written: 0 });
-const dayAt = (now: number) => Math.floor(now / 86_400_000);
-export class UsageLimit extends MemoryError {
- constructor(readonly retryAfterSeconds: number, code = 'usage_limit') { super(code, 'Usage budget unavailable; keep the original request.'); }
-}
+import { usagePolicySchema, usageKeys as keys, zeroUsage as zero, usageDay as dayAt, UsageLimit, type UsagePolicy, type Usage } from './usage-model.js';
+import { policyState, policyGuard, contextGuard, nativeBoundary, freezeCompletion, finalizeSavedUsage } from './usage-ledger.js';
+export { usagePolicySchema, UsageLimit, type UsagePolicy } from './usage-model.js';
 
 /** One database-wide host policy. Never selected or provisioned from an HTTP request. */
 export class D1UsageBudget {
@@ -31,17 +16,24 @@ export class D1UsageBudget {
  }
  async policy(): Promise<UsagePolicy> {
   try {
-   const [row] = await rows(this.db, 'SELECT body FROM cloud_usage_policy WHERE id=1', [], 1);
-   return usagePolicySchema.parse(JSON.parse(String(row?.['body'])));
+   return (await policyState(this.db)).policy;
   } catch { throw new UsageLimit(60, 'usage_unavailable'); }
  }
  async reserve(): Promise<UsageReservation> {
-  const policy = await this.policy(), day = dayAt(this.now()), id = crypto.randomUUID();
+  let entry:Awaited<ReturnType<typeof policyState>>;
+  try{entry=await policyState(this.db);}catch{throw new UsageLimit(60,'usage_unavailable');}
+  const {policy,version,operations}=entry, day = dayAt(this.now()), id = crypto.randomUUID();
   const session = this.db.withSession('first-primary'), statements: D1Statement[] = [];
+  if(operations)policyGuard(session,statements,version);
   this.appendReserve(session, statements, 'account', day, policy.daily, policy);
+  if(operations)statements.push(session.prepare('INSERT INTO cloud_usage_admission VALUES(1,?,?)').bind(id,version));
   statements.push(session.prepare("INSERT INTO cloud_usage_reservations(id,day,state,created_at) VALUES(?,?,'held',?)").bind(id, day, new Date(this.now()).toISOString()));
+  if(operations){
+   statements.push(session.prepare('INSERT INTO cloud_usage_context(reservation_id,policy_version,policy_json) VALUES(?,?,?)').bind(id,version,canonical(policy)));
+   statements.push(session.prepare('DELETE FROM cloud_usage_admission WHERE id=1'));
+  }
   await this.commit(session, statements, day);
-  return new UsageReservation(this, policy, id, day);
+  return new UsageReservation(this, policy, id, day, operations?version:undefined);
  }
  appendReserve(session: ReturnType<D1Binding['withSession']>, statements: D1Statement[], bucket: string, day: number, limits: Usage, policy: UsagePolicy) {
   const reservation = { requests: 1, ...policy.request };
@@ -65,6 +57,7 @@ export class D1UsageBudget {
    if (result.length !== statements.length || result.some(r => !r.success)) throw new Error('Invalid quota result');
   } catch (e) {
    if (e instanceof Error && e.message.includes('skilly_usage_allowed')) throw new UsageLimit(this.retryAfter(day));
+   if (e instanceof Error && (e.message.includes('skilly_usage_operation_allowed')||e.message.includes('skilly_usage_admission_required'))) throw new UsageLimit(1,'usage_state_changed');
    throw new UsageLimit(60, 'usage_unavailable');
   }
  }
@@ -89,11 +82,14 @@ export class UsageReservation {
  private settlement: Promise<void> | undefined;
  private writeBytes = 0;
  private failureValue: UsageLimit | undefined;
+ private executionRegistration:Promise<void>|undefined;
+ private executionRegistered=false;
  get failure() { return this.failureValue; }
- constructor(private readonly budget: D1UsageBudget, private readonly policy: UsagePolicy, readonly id: string, private readonly day: number) {}
+ constructor(private readonly budget: D1UsageBudget, private readonly policy: UsagePolicy, readonly id: string, private readonly day: number,private readonly policyVersion?:number) {}
  async attach(principal: Principal) {
   if (this.user) throw new MemoryError('invalid_input', 'Principal already bound.');
   const bucket = 'user:' + await hashText(canonical(principal)), session = this.budget.db.withSession('first-primary'), statements: D1Statement[] = [];
+  if(this.policyVersion!==undefined){policyGuard(session,statements,this.policyVersion);contextGuard(session,statements,this.id);}
   this.budget.appendReserve(session, statements, bucket, this.day, this.policy.user_daily, this.policy);
   statements.push(session.prepare("UPDATE cloud_usage_reservations SET user_bucket=? WHERE id=? AND state='held' AND user_bucket IS NULL").bind(bucket, this.id));
   this.budget.assertChange(session, statements);
@@ -102,14 +98,16 @@ export class UsageReservation {
  async acceptWrite(bytes: number) {
   if (!this.user || this.writeBytes || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 65536) throw new MemoryError('invalid_input', 'Invalid write budget.');
   const session = this.budget.db.withSession('first-primary'), statements: D1Statement[] = [
-   session.prepare('UPDATE cloud_usage_storage SET accepted_write_bytes=accepted_write_bytes+? WHERE id=1 AND accepted_write_bytes+?<=?').bind(bytes, bytes, this.policy.accepted_write_bytes),
   ];
+  let ceiling=this.policy.accepted_write_bytes;
+  if(this.policyVersion!==undefined){const current=await policyState(this.budget.db);policyGuard(session,statements,current.version);contextGuard(session,statements,this.id);ceiling=current.policy.accepted_write_bytes;}
+  statements.push(session.prepare('UPDATE cloud_usage_storage SET accepted_write_bytes=accepted_write_bytes+? WHERE id=1 AND accepted_write_bytes+?<=?').bind(bytes,bytes,ceiling));
   this.budget.assertChange(session, statements);
   statements.push(session.prepare("UPDATE cloud_usage_reservations SET write_bytes=? WHERE id=? AND state='held' AND write_bytes=0").bind(bytes, this.id));
   this.budget.assertChange(session, statements);
   await this.budget.commit(session, statements, this.day); this.writeBytes = bytes;
  }
- bind(raw: D1Binding): D1Binding {
+ bind(raw: D1Binding,dispatch?:{check:()=>void;write:()=>void}): D1Binding {
   const execute = async <T>(call: () => Promise<D1Result<T>[]>, batches: number, statements: number): Promise<D1Result<T>[]> => {
    if (this.finishing || dayAt(this.budget.now()) !== this.day || this.uncertain || this.observed.batches + batches > this.policy.request.batches
     || this.statements + statements > this.policy.request.statements
@@ -118,6 +116,13 @@ export class UsageReservation {
    }
    this.statements += statements; this.observed.batches += batches; this.pending++;
    try {
+    if(this.policyVersion!==undefined){
+     this.executionRegistration??=nativeBoundary(this.budget.db,this.id,true).then(()=>{this.executionRegistered=true;});
+     await this.executionRegistration;
+    }
+    // A bookkeeping response can arrive after HTTP termination or an owner fence.
+    if(this.finishing||dayAt(this.budget.now())!==this.day||this.uncertain)throw new UsageLimit(1,'usage_state_changed');
+    dispatch?.check();if(batches>0)dispatch?.write();
     const result = await call();
     if (result.length !== statements) this.uncertain = true;
     for (const entry of result) {
@@ -129,7 +134,7 @@ export class UsageReservation {
      this.uncertain = true; this.failureValue = new UsageLimit(this.budget.retryAfter(this.day), 'usage_measurement_unknown'); throw this.failureValue;
     }
     return result;
-   } catch (e) { this.uncertain = true; throw e; }
+   } catch (e) { this.uncertain = true; if(e instanceof UsageLimit)this.failureValue=e; throw e; }
    finally {
     this.pending--;
     if (this.finishing && this.pending === 0) void this.settle().catch(() => {});
@@ -154,6 +159,11 @@ export class UsageReservation {
  }
  private settle() { return this.settlement ??= this.settleOnce(); }
  private async settleOnce() {
+  if(this.policyVersion!==undefined){
+   if(this.executionRegistered){await nativeBoundary(this.budget.db,this.id,false);this.executionRegistered=false;}
+   await freezeCompletion(this.budget.db,this.id,{...this.observed,requests:1,measurement:this.uncertain?'unknown':'observed'});
+   await finalizeSavedUsage(this.budget.db,this.id);return;
+  }
   const session = this.budget.db.withSession('first-primary'), statements: D1Statement[] = [];
   const state = this.uncertain ? 'uncertain' : 'settled';
   statements.push(session.prepare("UPDATE cloud_usage_reservations SET state=?,observed_json=? WHERE id=? AND state='held'")

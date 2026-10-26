@@ -44,7 +44,7 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:S
     const pending=new D1UsageBudget(db).reserve();
     // If admission outlives HTTP, retain the reservation; never run business work.
     void pending.then(r=>{if(life.failure)void r.finish().catch(()=>{});}).catch(()=>{});
-    usage=await life.wait(pending);scoped=storage.bind(life,usage.bind(db));
+    usage=await life.wait(pending);scoped=storage.bind(life,usage.bind(db,{check:()=>life.check(),write:()=>{life.writeDispatched=true;}}),true);
    }
    const authenticator=new D1AccessAuthenticator(scoped,config.policy_id);
    const auth=await authenticator.authenticate(request),permit=await new D1ProjectAccess(scoped).bind(auth.principal,config.scope,'read',()=>auth.assertFresh(),auth.credential);

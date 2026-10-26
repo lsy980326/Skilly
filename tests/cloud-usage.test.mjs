@@ -21,7 +21,7 @@ test('metered MCP and durable recovery on local Worker D1 across new connections
   d1Databases:{DB:randomUUID()},d1Persist:join(root,'d1'),host:'127.0.0.1',port:0,outboundService:()=>new Response('outbound disabled',{status:403})});
  t.after(()=>mf.dispose());const db=await mf.getD1Database('DB');
  for(const name of ['001-atomic-memory.sql','002-work.sql','003-decisions-plans.sql','004-execution-evidence.sql','005-task-events.sql','006-skills.sql','007-feature-discovery.sql',
-  '008-project-transfer.sql','009-storage-origins.sql','010-project-access.sql','011-owner-key-lifecycle.sql','012-usage-budget.sql']){
+  '008-project-transfer.sql','009-storage-origins.sql','010-project-access.sql','011-owner-key-lifecycle.sql','012-usage-budget.sql','013-usage-operations.sql']){
   const sql=readFileSync(new URL('../migrations/d1/'+name,import.meta.url),'utf8').replace(/^--[^\n]*$/gm,'').trim().split(/;\s*(?=CREATE\s|INSERT\s|$)/i).filter(Boolean);
   await db.batch(sql.map(q=>db.prepare(q)));
  }
@@ -36,7 +36,9 @@ test('metered MCP and durable recovery on local Worker D1 across new connections
  const token=await sign('alice'),foreign=await sign('foreign'),config={endpoint,scope,policy_id:'usage-test',storage_identity:'usage-test-d1',usage_protection:true};
  let handler=createCloudMcpHandler(db,config),requests=0;
  const fetcher=async(url,init)=>{assert.equal(String(url),endpoint);requests++;const headers=new Headers(init.headers);headers.set('Host',new URL(endpoint).host);return handler(new Request(url,{...init,headers}));};
- const connection=(credential=token)=>new CloudMcpConnection({endpoint,scope},async()=>credential,fetcher,5000);
+ // Parallel workerd fixtures share CPU; this is a correctness flow, not a latency limit test.
+ // The delayed-commit case below still enforces its explicit storage deadline.
+ const connection=(credential=token)=>new CloudMcpConnection({endpoint,scope},async()=>credential,fetcher,15000);
  await assert.rejects(connection().initialize(),{code:'remote_unavailable'});
  const budget=new D1UsageBudget(db),policy={daily:{requests:200,batches:1000,rows_read:300000,rows_written:3000},
   user_daily:{requests:100,batches:1000,rows_read:300000,rows_written:3000},request:{batches:8,statements:256,rows_read:100000,rows_written:1000},accepted_write_bytes:2000000};
@@ -58,7 +60,7 @@ test('metered MCP and durable recovery on local Worker D1 across new connections
   const wrap=(st,q)=>{const item={bind:(...v)=>wrap(st.bind(...v),q),all:()=>st.all()};native.set(item,st);sql.set(item,q);return item;};
   return {prepare:q=>wrap(s.prepare(q),q),async batch(statements){const business=statements.some(st=>sql.get(st)?.startsWith('UPDATE projects SET revision'));
    const result=await s.batch(statements.map(st=>native.get(st)));if(business){reach();await gate;}return result;}};}};
- handler=createCloudMcpHandler(delayed,{...config,timeout_ms:2000,storage_timeout_ms:100});
+ handler=createCloudMcpHandler(delayed,{...config,timeout_ms:10000,storage_timeout_ms:250});
  const late=fetcher(endpoint,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','Cf-Access-Jwt-Assertion':token},
   body:JSON.stringify({jsonrpc:'2.0',id:900,method:'tools/call',params:{name:'memory_begin_task',arguments:{goal:'지연 응답 보존',mode:'change',idempotency_key:'late-original'}}})});
  await Promise.race([reached,late.then(async response=>{throw new Error(`Request ended before delayed business commit: ${response.status} ${await response.clone().text()}`);})]);

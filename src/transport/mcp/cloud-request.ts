@@ -77,12 +77,12 @@ export class CloudRequest {
 export class CloudRequestStorage {
  private pending=0;
  constructor(private readonly raw:D1Binding,private readonly limit=16){}
- bind(life:CloudRequest,raw:D1Binding=this.raw):D1Binding{
+ bind(life:CloudRequest,raw:D1Binding=this.raw,deferWriteDispatch=false):D1Binding{
   const execute=<T>(call:()=>Promise<T>,write=false):Promise<T>=>{
    life.check();
    if(this.pending>=this.limit){life.stop('storage_busy');life.check();}
    this.pending++;
-   if(write)life.writeDispatched=true;
+   if(write&&!deferWriteDispatch)life.writeDispatched=true;
    let native:Promise<T>;
    try{native=call();}catch(error){this.pending--;throw error;}
    const settled=native.then(value=>{this.pending--;return value;},error=>{this.pending--;throw error;});
