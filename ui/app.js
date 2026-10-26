@@ -14,6 +14,7 @@ import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
 import { renderTaskRecording } from "./task-recording.js";
 import { createDecisionLibrary } from "./decisions.js";
+import { createRemoteRecovery } from "./remote-recovery.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
@@ -835,4 +836,13 @@ $("#import-document").addEventListener("click", () => {
   void documentImport.open(state.projects.find(project => project.id === state.project));
 });
 await refresh();
+// Optional host binding only. This probe is a local read, never a remote retry.
+try {
+  const remote = await api('/api/remote-recovery');
+  if (remote.configured) {
+    const button = element('button','button','원격 저장');
+    $('.top-actions').prepend(button);
+    createRemoteRecovery({api,button});
+  }
+} catch { /* Older local viewers remain usable without a remote host binding. */ }
 schedule();

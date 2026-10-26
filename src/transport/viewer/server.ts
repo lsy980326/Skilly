@@ -10,8 +10,12 @@ import { documentBody, ViewerDocuments } from "./documents.js";
 import { installationComponents } from "../../adapters/project/installation-components.js";
 import { componentSelection } from "../../core/viewer/components.js";
 import { sourceProvider } from "../../adapters/project/source-version.js";
+import type { RemoteHostSession } from "../../adapters/remote/host-session.js";
+import { remoteRecoveryRoute } from "./remote-recovery.js";
 
 const assets = new Map([
+  ["/remote-recovery.js",{file:"remote-recovery.js",type:"text/javascript; charset=utf-8"}],
+  ["/remote-recovery.css",{file:"remote-recovery.css",type:"text/css; charset=utf-8"}],
   ["/current-knowledge.js", {file:"current-knowledge.js",type:"text/javascript; charset=utf-8"}],
   ["/current-knowledge.css", {file:"current-knowledge.css",type:"text/css; charset=utf-8"}],
   ["/factory-geometry.js", { file: "factory-geometry.js", type: "text/javascript; charset=utf-8" }],
@@ -51,7 +55,7 @@ function offset(url: URL): number {
   return Number(raw);
 }
 
-export async function startViewer(options: { db: string; port?: number; sessionToken?: string; sourceProjects?: string[] }) {
+export async function startViewer(options: { db: string; port?: number; sessionToken?: string; sourceProjects?: string[]; remoteRecovery?: RemoteHostSession }) {
   const port = options.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ViewerError("invalid_input", "포트는 0–65535여야 합니다.");
   if (options.sessionToken !== undefined && !/^[a-f0-9]{64}$/.test(options.sessionToken))
@@ -80,7 +84,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
     }
     const documentPost = request.method === "POST" && /^\/api\/documents\/(preview|import)$/.test(request.url ?? "");
     const reviewPost = request.method === "POST" && request.url === "/api/runs/acknowledge";
-    if (request.method !== "GET" && !documentPost && !reviewPost) {
+    const remotePost=request.method==='POST'&&request.url==='/api/remote-recovery/recover';
+    if (request.method !== "GET" && !documentPost && !reviewPost && !remotePost) {
       response.setHeader("Allow", "GET");
       json(response, 405, { error: "조회만 지원합니다." }); return;
     }
@@ -96,6 +101,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
         json(response, 401, { error: "터미널에 표시된 연결 주소로 다시 열어 주세요." }); return;
       }
+      if(remotePost&&request.headers.origin!==origin){json(response,403,{error:'Skilly 화면에서 복구를 요청해 주세요.'});return;}
+      if(await remoteRecoveryRoute(options.remoteRecovery,request,response,url))return;
       if (reviewPost) {
         if (request.headers.origin !== origin) { json(response, 403, { error: "Skilly 화면에서 확인 완료를 눌러 주세요." }); return; }
         json(response, 200, await acknowledgeRun(options.db, request)); return;

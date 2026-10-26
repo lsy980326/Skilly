@@ -37,12 +37,24 @@ export class SqliteRemoteOutbox implements RemoteOutboxStore {
     CREATE INDEX pending ON requests(state,next_attempt_at,created_at,id);
     PRAGMA application_id=${APP};PRAGMA user_version=1;`);
     db.prepare('INSERT INTO destination VALUES(?)').run(canonical(this.destination));db.exec('COMMIT');
-   }else if(app!==APP||version!==1)throw new MemoryError('outbox_unavailable','Unsupported outbox; existing data was preserved.');
+   }else if(app!==APP||(version!==1&&version!==2))throw new MemoryError('outbox_unavailable','Unsupported outbox; existing data was preserved.');
    if(db.prepare('SELECT value FROM destination').get()?.['value']!==canonical(this.destination))throw new MemoryError('scope_mismatch','Outbox belongs to another destination.');
+   if(version!==2)db.exec('BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS write_contexts(operation TEXT PRIMARY KEY,ticket_json TEXT NOT NULL) STRICT; PRAGMA user_version=2; COMMIT;');
    db.exec('PRAGMA busy_timeout=250;PRAGMA synchronous=FULL;PRAGMA cache_size=-1024;');this.db=db;
   }catch(e){db.close();throw e;}
  }
  close(){this.db.close();}
+ ticket(operation:WriteTicket['operation']):WriteTicket|undefined {
+  const row=this.db.prepare('SELECT ticket_json FROM write_contexts WHERE operation=?').get(operation);
+  return row?writeTicketSchema.parse(JSON.parse(String(row['ticket_json']))):undefined;
+ }
+ remember(ticket:WriteTicket){const checked=writeTicketSchema.parse(ticket);this.db.prepare('INSERT INTO write_contexts VALUES(?,?) ON CONFLICT(operation) DO UPDATE SET ticket_json=excluded.ticket_json').run(checked.operation,canonical(checked));}
+ receipt(id:string):JsonObject|null {const r=this.db.prepare("SELECT result_json FROM requests WHERE id=? AND state='saved'").get(id);return r?.['result_json']?parseJsonObject(String(r['result_json'])):null;}
+ find(raw:z.input<typeof cloudWriteSchema>):string|undefined {
+  const command=cloudWriteSchema.parse(raw),row=this.db.prepare('SELECT id,hash FROM requests WHERE operation=? AND request_key=?').get(command.operation,command.input.idempotency_key);
+  if(row&&row['hash']!==hash(canonical(command)))throw new MemoryError('idempotency_conflict','Preserve the original input and key.');
+  return row?String(row['id']):undefined;
+ }
  retain(raw:z.input<typeof cloudWriteSchema>,rawTicket:WriteTicket):JsonObject {
   const command=cloudWriteSchema.parse(structuredClone(raw)),ticket=writeTicketSchema.parse(structuredClone(rawTicket));
   if(ticket.operation!==command.operation||command.operation==='skill-register'&&command.input.project_id!==this.destination.scope.project_id)throw new MemoryError('scope_mismatch','Request and pinned destination differ.');
@@ -72,6 +84,7 @@ export class SqliteRemoteOutbox implements RemoteOutboxStore {
   if(!Number.isSafeInteger(offset)||offset<0||offset>1000)throw new MemoryError('invalid_input','Invalid outbox page.');
   const rows=this.db.prepare('SELECT * FROM requests ORDER BY created_at,id LIMIT 21 OFFSET ?').all(offset);
   return {items:rows.slice(0,20).map(r=>this.status(r)),next_offset:rows.length>20?offset+20:null,claims_verified:false,
+   counts:Object.fromEntries(this.db.prepare('SELECT state,count(*) n FROM requests GROUP BY state').all().map(r=>[String(r['state']),Number(r['n'])])),
    missing_record_count:null,completeness:'retained_requests_only',automatic_replay:false};
  }
  pending(now:number){return this.db.prepare("SELECT id FROM requests WHERE state NOT IN ('saved','blocked') AND next_attempt_at<=? ORDER BY created_at,id LIMIT 3").all(now).map(r=>String(r['id']));}
@@ -90,6 +103,7 @@ export class SqliteRemoteOutbox implements RemoteOutboxStore {
  private listOne(id:string){return this.status(this.db.prepare('SELECT * FROM requests WHERE id=?').get(id)!);}
  private status(r:Record<string,SQLOutputValue>):JsonObject {return {request_id:String(r['id']),operation:String(r['operation']),state:String(r['state']),
   original_input_retained:r['input_json']!==null,local_retained:true,remote_saved:r['state']==='saved',remote_persistence:r['state']==='saved'?'persisted':r['write_dispatched']===1?'unknown':'not_confirmed',receipt_seen:r['receipt_seen']===1,
+  created_at:String(r['created_at']),
   attempts:Number(r['attempts']),next_attempt_at:Number(r['next_attempt_at']),last_error:r['last_error']===null?null:String(r['last_error']),
   receipt:r['result_json']===null?null:parseJsonObject(String(r['result_json'])),claims_verified:false};}
 }

@@ -50,7 +50,7 @@ export class RemoteWriteRecovery {
     }
     const run=value['run'];if(run&&typeof run==='object'&&!Array.isArray(run)&&typeof run['id']==='string')summary['run_id']=run['id'];
     if(!this.store.settle(id,owner,'saved',null,0,true,summary))results.push({request_id:id,state:'association_unconfirmed',claims_verified:false});
-    else results.push({request_id:id,state:'saved',receipt:summary,claims_verified:false});
+    else results.push({request_id:id,state:'saved',receipt:summary,result:value,claims_verified:false});
    }catch(e){
     if(!this.enabled()){results.push({request_id:id,state:'recording_disabled',remote_persistence:dispatched?'unknown':'not_confirmed',claims_verified:false});break;}
     const code=e instanceof RemoteCallError||e instanceof MemoryError?e.code:'local_ack_unconfirmed';
@@ -67,7 +67,7 @@ export class RemoteWriteRecovery {
 }
 
 /** Validate the business receipt, not merely a well-formed JSON-RPC success envelope. */
-function validateReceipt(value:JsonObject,command:CloudWrite,scope:AccessScope){
+export function validateReceipt(value:JsonObject,command:CloudWrite,scope:AccessScope){
  const s=value['scope'],uuid=(v:unknown)=>z.uuid().safeParse(v).success;
  const fail=()=>{throw new RemoteCallError('invalid_response');};
  if(value['status']!=='persisted'||value['claims_verified']!==false||!s||typeof s!=='object'||Array.isArray(s)

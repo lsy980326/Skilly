@@ -12,6 +12,7 @@ import { loadProjectBinding } from "../../adapters/project/binding.js";
 
 const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly serve [--db /absolute/path/memory.sqlite] [--project /absolute/project]
+  skilly remote-serve --endpoint <exact URL> --project-id <UUID> --repository <scope> --environment <scope> --outbox /absolute/remote.sqlite --credential-env <SKILLY_VARIABLE> [--viewer-port 0]
   skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
   skilly exec --db /absolute/memory.sqlite --project /absolute/project --run-id <UUID> [--record-id <UUID>] [--timeout-ms 60000] [--test-format vitest] -- executable args
   skilly codex-hook --db /absolute/memory.sqlite --project /absolute/project < hook-event.json
@@ -43,6 +44,9 @@ transfer-* explicitly changes project write permissions; it never edits client s
 `;
 
 async function main(): Promise<void> {
+  if(process.argv[2]==='remote-serve'){
+    const {remoteServe}=await import('./remote.js');await remoteServe(process.argv.slice(3));return;
+  }
   if (process.argv[2] === "project-transfer") {
     const { projectTransferCommand } = await import("./project-transfer.js");
     process.stdout.write(`${JSON.stringify(await projectTransferCommand(process.argv.slice(3)))}\n`);

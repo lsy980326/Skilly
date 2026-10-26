@@ -1,4 +1,4 @@
-import { InitializeResultSchema,CallToolResultSchema,LATEST_PROTOCOL_VERSION,JSONRPCResponseSchema } from '@modelcontextprotocol/sdk/types.js';
+import { InitializeResultSchema,CallToolResultSchema,ListToolsResultSchema,LATEST_PROTOCOL_VERSION,JSONRPCResponseSchema } from '@modelcontextprotocol/sdk/types.js';
 import { remoteDestinationSchema,RemoteCallError,type RemoteDestination,type RemoteMcpConnection } from '../../core/access/remote-outbox.js';
 import { parseJsonObject,type JsonObject } from '../../core/memory/model.js';
 
@@ -20,14 +20,22 @@ export class CloudMcpConnection implements RemoteMcpConnection {
   if(!result.success||result.data.protocolVersion!==LATEST_PROTOCOL_VERSION||!result.data.capabilities.tools)throw new RemoteCallError('unsupported_capability');
  }
  async call(name:string,args:JsonObject,guard:()=>void=()=>{},deadline?:number):Promise<JsonObject>{
+  const value=await this.callValue(name,args,guard,deadline);if(value===null)throw new RemoteCallError('invalid_response');return value;
+ }
+ async callValue(name:string,args:JsonObject,guard:()=>void=()=>{},deadline?:number):Promise<JsonObject|null>{
   const result=CallToolResultSchema.safeParse(await this.request('tools/call',{name,arguments:args},guard,deadline));
   if(!result.success)throw new RemoteCallError('invalid_response');
   const content=result.data.content;
   if(content.length!==1||content[0]?.type!=='text')throw new RemoteCallError('invalid_response');
-  let value:JsonObject;try{value=parseJsonObject(content[0].text);}catch{throw new RemoteCallError('invalid_response');}
+  let value:JsonObject;try{if(JSON.parse(content[0].text)===null&&!result.data.isError)return null;value=parseJsonObject(content[0].text);}catch{throw new RemoteCallError('invalid_response');}
   if(result.data.isError){const error=value['error'],code=error&&typeof error==='object'&&!Array.isArray(error)?error['code']:undefined;
    throw new RemoteCallError(typeof code==='string'&&known.has(code)?code:'request_failed');}
   return value;
+ }
+ async listTools(guard:()=>void=()=>{},deadline?:number){
+  const result=ListToolsResultSchema.safeParse(await this.request('tools/list',{},guard,deadline));
+  if(!result.success||result.data.nextCursor)throw new RemoteCallError('unsupported_capability');
+  return result.data.tools;
  }
  private async request(method:string,params:JsonObject,guard:()=>void,cycleDeadline?:number):Promise<unknown>{
   if(this.active>=4)throw new RemoteCallError('connection_busy');

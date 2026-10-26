@@ -61,6 +61,13 @@ export const cloudMcpInstructions='Skilly D1 stores reports without calling a mo
   +'The server has no automatic queue or replay. An explicitly configured host outbox can retain requests and recover them with a pinned write context; never claim retention without its local receipt.';
 export function listCloudTools(){return tools.map(t=>({name:t.name,description:t.description,inputSchema:z.toJSONSchema(t.schema,{target:'draft-7',unrepresentable:'any'}),
  annotations:{readOnlyHint:t.readOnly,destructiveHint:false,idempotentHint:true,openWorldHint:false}}));}
+export function parseCloudTool(name:string,args:unknown,scope:AccessScope):CloudCommand|undefined {
+ const tool=tools.find(t=>t.name===name);if(!tool)throw new MemoryError('invalid_input','Unknown tool.');
+ const input=tool.schema.parse(args),{project_id,repository,environment,expected_write_context,...parameters}=input;
+ if(expected_write_context!==undefined)throw new MemoryError('invalid_input','The local host owns retry context.');
+ if((project_id!==undefined&&project_id!==scope.project_id)||(repository!==undefined&&repository!==scope.repository)||(environment!==undefined&&environment!==scope.environment))throw new AccessError(403);
+ return tool.operation?cloudRequestSchema.parse({repository:scope.repository,environment:scope.environment,command:{operation:tool.operation,input:tool.operation==='skill-register'?{...parameters,project_id:scope.project_id}:parameters}}).command:undefined;
+}
 export async function callCloudTool(db:D1Binding,auth:Authentication,scope:AccessScope,name:string,args:unknown,sources?:SourceProvider,events?:CloudEventContextProvider,skills?:CloudSkillContextProvider,storageIdentity?:string){
  const tool=tools.find(t=>t.name===name);if(!tool)throw new MemoryError('invalid_input','Unknown tool.');
  const input=tool.schema.parse(args),{project_id,repository,environment,expected_write_context,...parameters}=input;
