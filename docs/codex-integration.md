@@ -13,7 +13,9 @@ Skilly는 **Codex가 필요할 때 호출하는 로컬 MCP 서버**다. Codex의
 
 ## 지원 방식 확인
 
-2026-10-20 공식 문서와 로컬 `codex-cli 0.144.4` 명령·생성 프로토콜을 확인했다.
+최초 연결은 2026-10-20 공식 문서와 로컬 `codex-cli 0.144.4` 명령·생성 프로토콜로
+확인했다. 아래는 현재 Skilly가 제공하는 연결 경계이며, 실제 설치·신뢰·실행 여부는
+각 호스트에서 따로 확인한다.
 
 | 방식 | 이번 구현 |
 |---|---|
@@ -21,7 +23,7 @@ Skilly는 **Codex가 필요할 때 호출하는 로컬 MCP 서버**다. Codex의
 | `.agents/skills/use-skilly/SKILL.md` | 공식 스킬 탐색 경로에 설치. `AGENTS.md`에서 일반 프로젝트 작업에 사용하도록 안내 |
 | MCP 초기화 `instructions` / 스킬의 MCP 의존성 | 도구 선택 전 로컬 저장·기록 절차·미검증 원칙을 안내하고 `agents/openai.yaml`에 `skilly` 의존성 선언 |
 | 명시적 `$use-skilly` / 설명에 따른 자동 선택 | 스킬 사용 방식. 자동 선택·매번 실행을 보장하지 않음 |
-| SessionStart / Stop / PostToolUse 훅 | 이번에는 설치하지 않음. 별도 훅 신뢰 승인이 필요하며 SessionStart가 MCP 준비 전에 실행될 수 있음 |
+| 선택적 Codex 실행 훅 | 후보 생성·최소 이벤트 수신·작업 ID 연결 지원. 정의별 사용자 신뢰와 실제 호스트 검증 필요. [훅 안내](codex-lifecycle.md) 참고 |
 | app-server `skills/list`, `mcpServer/tool/call` | 설치된 CLI가 생성한 프로토콜로 확인. 모델 호출 없이 실제 연결을 점검하는 용도 |
 
 근거: [공식 MCP 설정](https://learn.chatgpt.com/docs/extend/mcp),
@@ -53,10 +55,16 @@ sequenceDiagram
     Note over C,D: 새 세션은 project_id를 다시 식별하고 저장된 기록을 재조회
 ```
 
-AI가 “테스트 통과”라고 기록해도 Skilly가 실제 실행을 관측한 것은 아니다.
-기록은 계속 `provenance: agent_report`, `knowledge_status: unknown`,
-`verified: false`다. `completed`는 작업 종료 상태이며 검증 성공을 뜻하지 않는다.
-`current_knowledge`는 자동 관측 근거가 없으므로 비어 있다.
+AI가 “테스트 통과”라고 기록해도 그 보고는 실제 실행 관측이 아니다.
+보고는 `provenance: agent_report`, `verified: false`를 유지한다.
+`completed`는 작업 종료 상태이며 검증 성공을 뜻하지 않는다.
+[명시적 실행기](execution-results.md)는 실제 실행 결과·지원 검사 상세·코드 버전을
+별도로 수집한다. 현재 코드와 비교할 수 있는지는 근거마다 구분한다.
+
+기존 `memory_query_context.current_knowledge`는 호환용 빈 배열이다.
+현재 결정·계획 진행률·남은 항목·검사 근거는 `memory_query_current_knowledge`에서,
+기능별 검사 현재성은 `memory_query_overview(view: "features")`에서 읽는다.
+이 조회 결과도 AI 보고나 기능 전체를 검증 완료로 승격하지 않는다.
 
 새 세션은 다른 세션의 진행 중 작업을 임의로 이어 쓰지 않고 새 `run_id`를 만든다.
 현재 대화가 이미 소유한 작업 ID만 상태를 확인해 이어 쓸 수 있다. 종료 전에
@@ -127,6 +135,11 @@ npm run doctor -- --project /absolute/project --db /absolute/local/memory.sqlite
 사전 확인한다. `appears_writable`이어도 `write_verified: false`이며 Codex 샌드박스
 승인, 실제 쓰기 성공이나 MCP 연결을 증명하지 않는다. 진단은 DB를 만들거나 수정하지 않는다.
 
+로컬 설치 진단은 Skilly v1–v16 DB를 읽는다. v16은 명시적인 프로젝트 이전에서
+생성되는 스키마이며, 일반 DB는 v15로 유지된다. 진단 때문에 DB를 v16으로 올리거나
+이전 연결을 바꾸지 않는다. 다른 앱의 DB와 미지원 버전은 거절한다.
+파일 식별·프로젝트 등록 사전 확인이며 전체 무결성 검사나 실제 연결 성공 검증은 아니다.
+
 이동 후에는 현재 경로와 사용할 DB를 명시해 **별도 새 폴더**에 연결 후보를 만든다.
 
 ```sh
@@ -163,9 +176,10 @@ npm run doctor -- --project /absolute/moved-project \
 | `scripts/verify-codex.mjs` | 실제 Codex 프로토콜 연결 점검. 일반 테스트와 별도 실행 |
 | `scripts/inspect-memory.mjs` | 기존 로컬 DB를 읽기 전용으로 열어 작업·기록 ID와 상태 확인. 자동 기록 대체 경로가 아님 |
 
-`--project` 없는 CLI/MCP는 기존 8개 도구와 복구 도구 2개를 제공한다.
-프로젝트 연결 모드에서는 등록·프로젝트 목록 대신 `memory_resolve_project({})`를
-노출해 총 9개 도구를 제공한다. 조회·기록 도구의 기존 `project_id` 계약은 유지한다.
+프로젝트 연결 모드에서는 등록·프로젝트 목록 대신 `memory_resolve_project({})`를 제공한다.
+작업·복구 외에 계획·결정·스킬·실행 결과·이벤트·현재 지식 조회가 연결되며,
+도구 목록은 서버 버전과 연결 구성에 따라 다르다. 실제 연결의 MCP `tools/list`를
+기준으로 확인한다. 조회·기록 도구의 기존 `project_id` 계약은 유지한다.
 설정 범위와 다른 프로젝트·repository·environment·작업·원문 접근은 거부한다.
 `memory_resolve_project`만 최초 프로젝트를 등록하며 조회 요청은 등록하지 않는다.
 
