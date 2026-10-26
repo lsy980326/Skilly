@@ -13,9 +13,11 @@ import type { SourceProvider } from '../../core/execution/currentness.js';
 import type { CloudEventContextProvider } from '../../core/access/event-context.js';
 
 import type { CloudSkillContextProvider } from '../../adapters/storage/d1/cloud-skills.js';
+import { D1UsageBudget, UsageLimit, type UsageReservation } from '../../adapters/storage/d1/usage-budget.js';
+import { remoteWriteTools } from '../../core/access/remote-outbox.js';
 
 const configSchema=z.strictObject({endpoint:z.url(),policy_id:z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),scope:accessScopeSchema,storage_identity:z.string().trim().min(1).max(200).optional(),
- timeout_ms:z.int().min(25).max(60000).optional(),storage_timeout_ms:z.int().min(25).max(30000).optional()})
+ timeout_ms:z.int().min(25).max(60000).optional(),storage_timeout_ms:z.int().min(25).max(30000).optional(),usage_protection:z.literal(true).optional()})
  .refine(c=>(c.storage_timeout_ms??5000)<=(c.timeout_ms??30000),'Storage timeout must not exceed request timeout.');
 export type CloudMcpConfig=z.infer<typeof configSchema>;
 const envelope=z.strictObject({jsonrpc:z.literal('2.0'),id:z.union([z.string().min(1).max(100),z.int()]).optional(),method:z.string().max(80),params:z.unknown().optional()});
@@ -32,11 +34,21 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:S
   if(url.href!==endpoint.href||host!==endpoint.host||(origin!==null&&origin!==endpoint.origin))return cloudResponse({error:{code:'access_denied'}},403);
   if(active>=16)return cloudResponse({error:{code:'resource_limit'}},429);
   active++;let transport:WebStandardStreamableHTTPServerTransport|undefined;
-  const life=new CloudRequest(request,config.timeout_ms??30000,config.storage_timeout_ms??5000),scoped=storage.bind(life);
+  const life=new CloudRequest(request,config.timeout_ms??30000,config.storage_timeout_ms??5000);
+  let usage:UsageReservation|undefined;
+  // Admission SQL is host accounting, not a dispatched business write.
+  let scoped=storage.bind(life);
   const operation=async()=>{
    life.check();
+   if(config.usage_protection){
+    const pending=new D1UsageBudget(db).reserve();
+    // If admission outlives HTTP, retain the reservation; never run business work.
+    void pending.then(r=>{if(life.failure)void r.finish().catch(()=>{});}).catch(()=>{});
+    usage=await life.wait(pending);scoped=storage.bind(life,usage.bind(db));
+   }
    const authenticator=new D1AccessAuthenticator(scoped,config.policy_id);
    const auth=await authenticator.authenticate(request),permit=await new D1ProjectAccess(scoped).bind(auth.principal,config.scope,'read',()=>auth.assertFresh(),auth.credential);
+   if(usage)await life.wait(usage.attach(auth.principal));
    if(request.method!=='POST'){await permit.check();const response=cloudResponse({error:{code:'method_not_allowed'}},405);response.headers.set('Allow','POST');return response;}
    if(request.headers.has('Mcp-Session-Id')||request.headers.has('Last-Event-ID'))throw new MemoryError('invalid_input','Sessions and replay are not supported.');
    const body=envelope.parse(await cloudInput(request,life.signal));life.check();
@@ -59,6 +71,10 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:S
       case 'tools/list':{const r=ListToolsRequestSchema.parse(message);if(r.params?.cursor)throw new MemoryError('invalid_input','No tool pagination.');result={tools:listCloudTools()};break;}
       case 'tools/call':{
        const r=CallToolRequestSchema.parse(message);if(r.params.task||r.params._meta)throw new MemoryError('invalid_input','Task extensions are not supported.');
+       if(usage&&Object.values(remoteWriteTools).some(name=>name===r.params.name)){
+        await new D1ProjectAccess(scoped).bind(auth.principal,config.scope,'write',()=>auth.assertFresh(),auth.credential);
+        await life.wait(usage.acceptWrite(new TextEncoder().encode(JSON.stringify(body)).length));
+       }
        const value=await callCloudTool(scoped,auth,config.scope,r.params.name,r.params.arguments??{},sources,events,skills,config.storage_identity);
        result={content:[{type:'text',text:JSON.stringify(value)}]};break;
       }
@@ -67,6 +83,8 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:S
      await permit.check();life.check();await current.send({jsonrpc:'2.0',id:message.id,result});
     }catch(e){
      life.check();
+     if(e instanceof UsageLimit)throw e;
+     if(usage?.failure)throw usage.failure;
      const code=errorCode(e);
      await current.send(message.method==='tools/call'?{jsonrpc:'2.0',id:message.id,result:{isError:true,content:[{type:'text',text:JSON.stringify({error:{code},claims_verified:false})}]}}
       :{jsonrpc:'2.0',id:message.id,error:{code:-32602,message:'Invalid request'}});
@@ -82,7 +100,14 @@ export function createCloudMcpHandler(db:D1Binding,raw:CloudMcpConfig,sources?:S
    const text=await response.text();if(new TextEncoder().encode(text).length>65536)throw new MemoryError('resource_limit','Response limit reached; use the original receipt.');
    await permit.check();life.check();return noStore(new Response(text||null,{status:response.status,headers:response.headers}));
   };
-  try{return await life.wait(operation());}catch(e){return await life.error(e);}
+  try{const response=await life.wait(operation());if(usage)await life.wait(usage.finish(),true);return response;}catch(e){
+   try{if(usage)await life.wait(usage.finish(),true);}catch{/* A failed settlement keeps the full durable reservation. */}
+   const quota=e instanceof UsageLimit?e:usage?.failure;
+   if(quota){const response=cloudResponse({error:{code:quota.code},delivery:{write_dispatch:life.writeDispatched?'dispatched':'not_dispatched',
+    persistence:life.writeDispatched?'unknown':'not_checked',automatic_replay:false},claims_verified:false},quota.code==='usage_limit'?429:503);
+    response.headers.set('Retry-After',String(quota.retryAfterSeconds));return response;}
+   return await life.error(e);
+  }
   finally{
    life.close();
    try{if(transport)await transport.close();}catch(e){if(!life.failure)return await life.error(e);}

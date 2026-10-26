@@ -55,7 +55,7 @@ export class CloudMcpConnection implements RemoteMcpConnection {
      headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','Mcp-Protocol-Version':LATEST_PROTOCOL_VERSION,'Cf-Access-Jwt-Assertion':token},body});check();
     if(response.status===401||response.status===403){throw new RemoteCallError(response.status===401?'authentication_required':'access_denied',response.status);}
     if(!response.ok){const retry=Number(response.headers.get('Retry-After'));
-     throw new RemoteCallError(response.status===429?'rate_limited':response.status===413?'resource_limit':'remote_unavailable',response.status,Number.isFinite(retry)?Math.min(60000,Math.max(0,retry*1000)):0);}
+     throw new RemoteCallError(response.status===429?'rate_limited':response.status===413?'resource_limit':'remote_unavailable',response.status,Number.isFinite(retry)?Math.min(86400000,Math.max(0,retry*1000)):0);}
     if(!response.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')||!response.body)throw new RemoteCallError('invalid_response');
     reader=response.body.getReader();const chunks:Uint8Array[]=[];let bytes=0;
     while(true){const r=await reader.read();check();if(r.done)break;bytes+=r.value.byteLength;if(bytes>65536)throw new RemoteCallError('resource_limit');chunks.push(r.value);}

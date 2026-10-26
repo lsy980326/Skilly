@@ -56,7 +56,7 @@ export class RemoteWriteRecovery {
     const code=e instanceof RemoteCallError||e instanceof MemoryError?e.code:'local_ack_unconfirmed';
     const auth=e instanceof RemoteCallError&&(e.status===401||e.code==='authentication_required'),denied=e instanceof RemoteCallError&&(e.status===403||e.code==='access_denied');
     const state:OutboxState=auth?'auth_required':denied?'access_denied':permanent.has(code)?'blocked':dispatched?'persistence_unknown':'recovery_pending';
-    const next=auth||denied||state==='blocked'?0:this.now()+Math.max(1000,Math.min(60000,e instanceof RemoteCallError?e.retryAfterMs:1000));
+    const next=auth||denied||state==='blocked'?0:this.now()+Math.max(1000,Math.min(86400000,e instanceof RemoteCallError?e.retryAfterMs:1000));
     let retained=false;try{retained=this.store.settle(id,owner,state,code,next,seen);}catch{/* Keep the pre-dispatch durable state; never claim the local acknowledgement succeeded. */}
     results.push({request_id:id,state:retained?state:'association_unconfirmed',last_error:code,saved_confirmed:false,remote_persistence:dispatched?'unknown':'not_confirmed',receipt_seen:seen,claims_verified:false});
     break;

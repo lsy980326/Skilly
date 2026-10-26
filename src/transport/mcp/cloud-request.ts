@@ -77,7 +77,7 @@ export class CloudRequest {
 export class CloudRequestStorage {
  private pending=0;
  constructor(private readonly raw:D1Binding,private readonly limit=16){}
- bind(life:CloudRequest):D1Binding{
+ bind(life:CloudRequest,raw:D1Binding=this.raw):D1Binding{
   const execute=<T>(call:()=>Promise<T>,write=false):Promise<T>=>{
    life.check();
    if(this.pending>=this.limit){life.stop('storage_busy');life.check();}
@@ -90,8 +90,8 @@ export class CloudRequestStorage {
    void settled.catch(()=>{});
    return life.wait(settled,true);
   };
-  return {...(this.raw.writeGeneration===undefined?{}:{writeGeneration:this.raw.writeGeneration}),withSession:constraint=>{
-   life.check();const session=this.raw.withSession(constraint),native=new WeakMap<D1Statement,D1Statement>();
+  return {...(raw.writeGeneration===undefined?{}:{writeGeneration:raw.writeGeneration}),withSession:constraint=>{
+   life.check();const session=raw.withSession(constraint),native=new WeakMap<D1Statement,D1Statement>();
    const wrap=(statement:D1Statement):D1Statement=>{
     const result:D1Statement={bind:(...values)=>{life.check();return wrap(statement.bind(...values));},all:<T>()=>execute(()=>statement.all<T>())};
     native.set(result,statement);return result;

@@ -2,7 +2,7 @@
 export interface D1Result<T = Record<string, unknown>> {
   success: boolean;
   results: T[];
-  meta: { changes: number };
+  meta: { changes: number; rows_read?: number; rows_written?: number };
 }
 export interface D1Statement {
   bind(...values: (string | number | null)[]): D1Statement;
