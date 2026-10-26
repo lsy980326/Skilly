@@ -116,6 +116,7 @@ export function renderExecutions(data, { element, date, more }) {
       source_fingerprint_changed: "검사 이후 공개 소스 내용이 달라졌습니다. 이전 검사 결과를 현재 코드의 결과로 쓰지 마세요.",
       source_changed_during_execution: "검사를 실행하는 동안 공개 소스가 바뀌었습니다. 어느 상태의 검사 결과인지 확정할 수 없습니다.",
       fingerprint_limit_exceeded: "코드 수집의 파일 수·크기·시간 한도를 넘어 비교하지 못했습니다.",
+      fingerprint_inventory_limit_exceeded: "Git 파일 목록이 2,048개 한도를 넘었습니다. 제외 파일도 포함한 목록 한도이며, 일부만 읽어 코드가 같다고 판단하지 않습니다.",
       fingerprint_excluded_changes: "수집 대상에서 제외하는 파일에 변경이 있습니다. 환경·인증 파일과 지원하지 않는 파일은 읽지 않습니다.",
       fingerprint_unsafe_entry: "심볼릭 링크나 일반 파일이 아닌 항목이 있어 안전하게 비교하지 못했습니다.",
       fingerprint_unstable: "내용 지문을 수집하는 중 파일이 바뀌어 비교를 보류했습니다.",
@@ -123,9 +124,17 @@ export function renderExecutions(data, { element, date, more }) {
       comparison_root_not_configured: "현재 코드와 비교할 프로젝트 폴더가 지정되지 않았습니다.", comparison_scope_mismatch: "비교 대상 프로젝트 범위가 다릅니다.",
       different_commit: "검사 당시와 현재 커밋이 다릅니다.", matching_clean_observations: "실행 전·후와 조회 시점에 변경 없는 같은 커밋을 관측했습니다." };
     versionPanel.append(element("summary", "", comparison?.reason === "source_changed_during_execution" ? "검사 중 코드가 바뀌었어요"
+      : comparison?.public_source?.status === "same_version" && comparison.status === "unknown" ? "비교한 코드는 같고, 제외 파일 변경이 있어요"
       : comparison?.scope === "bounded_public_source_v1" && comparison.status === "same_version" ? "수집한 코드가 검사 때와 같아요"
       : versionLabels[comparison?.status] ?? versionLabels.unknown),
       element("p", "", versionReasons[comparison?.reason] ?? "버전 비교 정보가 없습니다."));
+    const currentFailure = version?.current?.worktree?.status === "unavailable" ? `fingerprint_${version.current.worktree.reason}` : null;
+    if (currentFailure && currentFailure !== comparison?.reason) versionPanel.append(element("p", "", `현재 수집: ${versionReasons[currentFailure] ?? "현재 코드 정보를 수집하지 못했습니다."}`));
+    if (comparison?.excluded_changes) {
+      const counts = comparison.excluded_changes;
+      versionPanel.append(element("p", "", `비교 제외 파일의 변경 · 검사 전 ${counts.before ?? "미확인"}개 / 검사 후 ${counts.after ?? "미확인"}개 / 현재 ${counts.current ?? "미확인"}개`),
+        element("small", "", "제외 파일의 내용은 읽지 않았습니다. 이 숫자는 각 시점의 Git 변경 목록 기준이며, 파일 내용이 같은지 또는 실제 동작에 영향이 있는지는 알 수 없습니다."));
+    }
     if (version?.before?.commit) versionPanel.append(element("code", "", `검사 전 ${version.before.commit.slice(0, 12)} · 검사 후 ${version.after?.commit?.slice(0, 12) ?? "미확인"} · 현재 ${version.current?.commit?.slice(0, 12) ?? "미확인"}`));
     if (comparison?.checked_at) versionPanel.append(element("small", "", `비교 시각 ${date(comparison.checked_at)}`));
     if (version?.before?.worktree?.status === "collected") {

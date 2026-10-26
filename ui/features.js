@@ -119,7 +119,7 @@ const knowledgeReasons = {
 const evidenceReasons = { source_not_clean: "코드가 dirty 또는 관측 불가 상태", matching_clean_observations: "현재 커밋과 일치", different_commit: "현재 커밋이 달라짐",
   changed_during_execution: "실행 중 커밋 변경", uncommitted_changes: "미커밋 변경으로 비교 불가",
   matching_source_fingerprints: "수집한 소스 내용 일치", source_fingerprint_changed: "검사 후 소스 변경", source_changed_during_execution: "검사 중 소스 변경",
-  fingerprint_limit_exceeded: "소스 수집 한도 초과", fingerprint_excluded_changes: "제외 파일 변경으로 확인 필요", fingerprint_unsafe_entry: "안전하게 읽을 수 없는 항목",
+  fingerprint_inventory_limit_exceeded: "파일 목록 2,048개 한도 초과", fingerprint_limit_exceeded: "소스 수집 한도 초과", fingerprint_excluded_changes: "제외 파일 변경으로 확인 필요", fingerprint_unsafe_entry: "안전하게 읽을 수 없는 항목",
   fingerprint_unstable: "수집 중 소스 변경", fingerprint_read_failed: "소스 지문 읽기 실패",
   comparison_root_not_configured: "비교할 프로젝트 경로 미설정", legacy_not_collected: "당시 코드 정보 없음",
   execution_unfinished: "실행 종료·코드 정보 불완전", test_verdict_unavailable: "검사 상세·정상 종료 근거 부족",
@@ -142,6 +142,13 @@ export function renderFeatureKnowledge(knowledge, { element, badge, date, onRepo
     const item = element("div", "knowledge-evidence");
     item.append(element("strong", "", `${knowledgeLabels[row.status] || "근거 미확인"} · ${results[row.result] || "결과 미확인"}`),
       element("p", "catalog-note", `${evidenceReasons[row.reason] || "비교 불가"} · ${row.repository} / ${row.environment} · 검사 커밋 ${row.commit?.slice(0, 12) || "없음"} / 현재 ${row.current_commit?.slice(0, 12) || "미확인"}`));
+    if (row.comparison?.public_source) item.append(element("p", "catalog-note", row.comparison.public_source.status === "same_version"
+      ? "비교한 공개 코드는 같아요. 제외 파일과 실행환경은 별도 확인이 필요합니다."
+      : "비교한 공개 코드가 달라졌어요."));
+    if (row.comparison?.excluded_changes) {
+      const excluded = row.comparison.excluded_changes;
+      item.append(element("p", "catalog-note", `제외 파일 변경 · 검사 전 ${excluded.before ?? "미확인"} / 후 ${excluded.after ?? "미확인"} / 현재 ${excluded.current ?? "미확인"}개 · 내용 미수집`));
+    }
     if (row.counts) item.append(element("p", "catalog-note", `검사 ${row.counts.tests} · 통과 ${row.counts.passed} / 실패 ${row.counts.failed} / 취소 ${row.counts.cancelled} / 건너뜀 ${row.counts.skipped}`));
     item.append(element("code", "feature-source", `실행 ${row.execution_id} · 작업 ${row.run_id}`));
     if (row.comparison?.checked_at) item.append(element("small", "catalog-note", `비교 시각 ${date(row.comparison.checked_at)}`));

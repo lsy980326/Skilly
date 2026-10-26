@@ -2,9 +2,10 @@ import { z } from "zod";
 
 export const worktreeFingerprintSchema = z.discriminatedUnion("status", [
   z.strictObject({ policy: z.literal("public_source_v1"), status: z.literal("collected"), sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    files: z.int().min(0).max(2048), bytes: z.int().min(0).max(16 * 1024 * 1024), excluded: z.int().min(0).max(2048) }),
+    files: z.int().min(0).max(2048), bytes: z.int().min(0).max(16 * 1024 * 1024), excluded: z.int().min(0).max(2048),
+    excluded_changes: z.int().min(0).max(2048).default(0) }),
   z.strictObject({ policy: z.literal("public_source_v1"), status: z.literal("unavailable"),
-    reason: z.enum(["limit_exceeded", "excluded_changes", "unsafe_entry", "unstable", "read_failed"]) }),
+    reason: z.enum(["limit_exceeded", "inventory_limit_exceeded", "excluded_changes", "unsafe_entry", "unstable", "read_failed"]) }),
 ]);
 export type WorktreeFingerprint = z.infer<typeof worktreeFingerprintSchema>;
 export const executionWorktreeRowSchema = z.strictObject({ execution_id: z.uuid(), project_id: z.uuid(),
@@ -57,8 +58,17 @@ export function compareExecutionSource(before?: SourceObservation, after?: Sourc
     return result("unknown", "execution_scope_mismatch");
   if (before.commit !== after.commit) return result("changed", "changed_during_execution");
   const fingerprints = [before.worktree, after.worktree, current?.worktree];
+  const excludedChanges = {
+    before: before.worktree?.status === "collected" ? before.worktree.excluded_changes ?? 0 : null,
+    after: after.worktree?.status === "collected" ? after.worktree.excluded_changes ?? 0 : null,
+    current: current?.worktree?.status === "collected" ? current.worktree.excluded_changes ?? 0 : null,
+    contents_observed: false,
+  };
   if (before.worktree?.status === "collected" && after.worktree?.status === "collected"
-    && before.worktree.sha256 !== after.worktree.sha256) return result("changed", "source_changed_during_execution", "bounded_public_source_v1");
+    && before.worktree.sha256 !== after.worktree.sha256) return {
+      ...result("changed", "source_changed_during_execution", "bounded_public_source_v1"),
+      public_source: { status: "changed", reason: "source_changed_during_execution" }, excluded_changes: excludedChanges,
+    };
   if (!current) return result("unknown", "comparison_root_not_configured");
   if (current.root_hash !== before.root_hash || current.project_key !== before.project_key || current.repository !== before.repository || current.environment !== before.environment)
     return result("unknown", "comparison_scope_mismatch");
@@ -68,11 +78,18 @@ export function compareExecutionSource(before?: SourceObservation, after?: Sourc
   if (unavailable?.status === "unavailable") return result("unknown", `fingerprint_${unavailable.reason}`);
   if (fingerprints.every(x => x?.status === "collected")) {
     const [first, , now] = fingerprints;
-    if (first?.status === "collected" && now?.status === "collected") return {
-      ...result(first.sha256 === now.sha256 ? "same_version" : "changed",
-        first.sha256 === now.sha256 ? "matching_source_fingerprints" : "source_fingerprint_changed"),
-      scope: "bounded_public_source_v1", excluded_files_observed: false,
-    };
+    if (first?.status === "collected" && now?.status === "collected") {
+      const same = first.sha256 === now.sha256;
+      const excluded = [excludedChanges.before, excludedChanges.after, excludedChanges.current].some(n => n !== null && n > 0);
+      // A partial match is useful context, never proof that excluded configuration is unchanged.
+      return {
+        ...result(same ? excluded ? "unknown" : "same_version" : "changed",
+          same ? excluded ? "fingerprint_excluded_changes" : "matching_source_fingerprints" : "source_fingerprint_changed"),
+        scope: "bounded_public_source_v1", excluded_files_observed: false,
+        public_source: { status: same ? "same_version" : "changed", reason: same ? "matching_source_fingerprints" : "source_fingerprint_changed" },
+        excluded_changes: excludedChanges,
+      };
+    }
   }
   // Legacy clean metadata keeps its old semantics. Never invent fingerprints for old dirty rows.
   if ([before, after, current].some(x => x.status !== "clean")) {

@@ -74,7 +74,7 @@ test('during-run changes, untracked files, unavailable Git and scoped explicit r
  assert.equal(sourceProvider([])(clean),undefined);assert.throws(()=>sourceProvider(['.']),/absolute/);
  const sub=join(f.root,'sub');mkdirSync(sub);assert.equal(observeSource(sub,f.binding).reason,'not_repository_root');
  assert.equal(observeSource('/nonexistent/skilly-fixture',f.binding).status,'unavailable');
- await execute(f,`require('fs').writeFileSync('source.js','changed while running')`);assert.equal(list(f).items[0].code_version.comparison.reason,'fingerprint_excluded_changes');
+ await execute(f,`require('fs').writeFileSync('source.js','changed while running')`);assert.equal(list(f).items[0].code_version.comparison.reason,'source_changed_during_execution');
 });
 test('hidden index flags cannot become matching code and invalid scope never persists',async t=>{
  const f=await setupGit(t);for(const flag of ['assume-unchanged','skip-worktree']){
@@ -128,8 +128,8 @@ test('large complete Git listings preserve same/changed/unknown through fresh MC
  // A large status listing is still incomplete evidence if excluded files changed.
  renameSync(join(f.root,assets),join(realpathSync(f.directory),'retained-assets'));
  assert.ok(Buffer.byteLength(git(f.root,'status','--porcelain=v1','-z','--untracked-files=all'))>128*1024);
- const excluded=observeSource(f.root,f.binding);assert.equal(excluded.status,'dirty');assert.equal(excluded.worktree.reason,'excluded_changes');
- await both('unknown','fingerprint_excluded_changes');
+ const excluded=observeSource(f.root,f.binding);assert.equal(excluded.status,'dirty');assert.equal(excluded.worktree.status,'collected');assert.equal(excluded.worktree.excluded_changes,650);
+ await both('changed','source_fingerprint_changed');
 });
 
 test('an incomplete NUL Git listing is not accepted as a source observation',async t=>{

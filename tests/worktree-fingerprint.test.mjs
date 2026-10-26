@@ -80,7 +80,9 @@ test('ignored/private files are excluded; symlinks, unsupported edits and limits
  writeFileSync(join(f.root,'.env'),'synthetic fixture only');writeFileSync(join(f.root,'ignored.ts'),'not observed');
  assert.equal(observeSource(f.root,f.binding).worktree.sha256,clean.worktree.sha256);
  writeFileSync(join(f.root,'credentials.json'),'synthetic fixture only');
- assert.equal(observeSource(f.root,f.binding).worktree.reason,'excluded_changes');
+ const partial=observeSource(f.root,f.binding);assert.equal(partial.worktree.status,'collected');
+ assert.equal(partial.worktree.excluded_changes,1);assert.equal(partial.worktree.sha256,clean.worktree.sha256);
+ assert.equal(compareExecutionSource(clean,clean,partial).status,'unknown');
  renameSync(join(f.root,'credentials.json'),join(f.directory,'credentials.fixture'));
  symlinkSync(join(f.directory,'credentials.fixture'),join(f.root,'linked.ts'));
  assert.equal(observeSource(f.root,f.binding).worktree.reason,'unsafe_entry');
@@ -88,7 +90,7 @@ test('ignored/private files are excluded; symlinks, unsupported edits and limits
  writeFileSync(join(f.root,'large.ts'),'x'.repeat(1024*1024+1));
  const large=observeSource(f.root,f.binding);assert.equal(large.worktree.reason,'limit_exceeded');assert.equal(compareExecutionSource(large,large,large).status,'unknown');
  const over=fingerprintWorktree(f.root,'',args=>args.includes('--ignored')?'':Array.from({length:2049},(_,i)=>`x${i}.ts`).join('\0'));
- assert.equal(over.reason,'limit_exceeded');
+ assert.equal(over.reason,'inventory_limit_exceeded');
 });
 test('renames and deleted parent directories produce stable source fingerprints; concurrent file inventory changes stay unknown',async t=>{
  const f=await setup(t);mkdirSync(join(f.root,'old'));writeFileSync(join(f.root,'old','file.ts'),'original');
@@ -103,8 +105,8 @@ test('private names and ignored tracked files never reach content open',async t=
  let opened=0;const original=fs.openSync;
  try {
   fs.openSync=()=>{opened++;throw new Error('must not open private fixture');};syncBuiltinESMExports();
-  const result=fingerprintWorktree(f.root,'',args=>args.includes('--ignored')?'ignored.ts\0':names.join('\0'));
-  assert.equal(result.status,'collected');assert.equal(result.files,0);assert.equal(result.excluded,names.length);assert.equal(opened,0);
+  const result=fingerprintWorktree(f.root,names.map(name=>'?? '+name+'\0').join(''),args=>args.includes('--ignored')?'ignored.ts\0':names.join('\0'));
+  assert.equal(result.status,'collected');assert.equal(result.files,0);assert.equal(result.excluded,names.length);assert.equal(result.excluded_changes,names.length);assert.equal(opened,0);
  } finally {fs.openSync=original;syncBuiltinESMExports();}
 });
 test('v12 stores fingerprints separately, transfers them and preserves v11 rows for already-running readers',async t=>{
@@ -137,4 +139,56 @@ test('v12 stores fingerprints separately, transfers them and preserves v11 rows 
  const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));manifest.files.main={sha256:createHash('sha256').update(altered).digest('hex'),bytes:Buffer.byteLength(altered)};
  writeFileSync(manifestPath,JSON.stringify(manifest));
  await assert.rejects(()=>importProject(join(base,'bad-export'),join(base,'must-not-import-inline')),{code:'invalid_bundle'});
+});
+
+
+test('excluded changes retain a bounded source comparison through fresh MCP and HTTP without promoting currentness',async t=>{
+ const f=await setup(t);writeFileSync(join(f.root,'source.mjs'),'export const value = 2;\n');
+ // Unsupported metadata is intentionally not read; its presence must not hide source changes.
+ writeFileSync(join(f.root,'metadata.txt'),'fixture metadata');
+ const receipt=await execute(f),saved=list(f).items[0].code_version.before;
+ assert.equal(saved.worktree.status,'collected');assert.equal(saved.worktree.excluded_changes,1);
+ const client=new Client({name:'excluded-change-fixture',version:'1'}),transport=new StdioClientTransport({command:process.execPath,args:[main,'serve','--db',realpathSync(f.path),'--project',f.root],stderr:'pipe'});
+ transport.stderr.on('data',()=>{});await client.connect(transport);t.after(()=>client.close());
+ const viewer=await startViewer({db:realpathSync(f.path),sourceProjects:[f.root]});t.after(()=>viewer.close());
+ const token=new URLSearchParams(new URL(viewer.url).hash.slice(1)).get('token');
+ const both=async(status,publicStatus)=>{
+  const mcp=JSON.parse((await client.callTool({name:'memory_list_executions',arguments:{project_id:f.pid,run_id:f.rid}})).content[0].text);
+  const http=await fetch(`${viewer.origin}/api/runs/${f.rid}/executions?project=${f.pid}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json());
+  for(const result of [mcp,http]){const row=result.items.find(x=>x.id===receipt.execution_id),comparison=row.code_version.comparison;
+   assert.equal(comparison.status,status);assert.equal(comparison.public_source.status,publicStatus);
+   assert.deepEqual(comparison.excluded_changes,{before:1,after:1,current:1,contents_observed:false});
+   assert.equal(comparison.claims_verified,false);assert.deepEqual(row.code_version.before,saved);
+   assert.equal(JSON.stringify(row).includes('metadata.txt'),false);assert.equal(JSON.stringify(row).includes('fixture metadata'),false);
+  }
+ };
+ await both('unknown','same_version');
+ const app=openLocal(realpathSync(f.path),f.binding,f.root);t.after(()=>app.close());
+ assert.equal((await app.dispatcher.call('memory_query_overview',{project_id:f.pid,view:'features'})).items[0].current_knowledge.status,'unknown');
+ writeFileSync(join(f.root,'metadata.txt'),'different excluded contents');await both('unknown','same_version');
+ writeFileSync(join(f.root,'source.mjs'),'export const value = 3;\n');await both('changed','changed');
+ const old={...saved,worktree:{policy:'public_source_v1',status:'unavailable',reason:'excluded_changes'}};
+ assert.equal(compareExecutionSource(old,old,observeSource(f.root,f.binding)).reason,'fingerprint_excluded_changes');
+ assert.equal(compareExecutionSource(old,old,observeSource(f.root,f.binding)).public_source,undefined);
+});
+
+
+test('excluded changes at any endpoint stay unknown; legacy collected bytes are never rewritten',async t=>{
+ const f=await setup(t);writeFileSync(join(f.root,'source.mjs'),'export const value = 2;\n');await execute(f);
+ const original=list(f).items[0].code_version.before;
+ for(const endpoint of [0,1,2]){
+  const points=[original,original,original].map((p,i)=>({...p,worktree:{...p.worktree,excluded_changes:i===endpoint?1:0}}));
+  const comparison=compareExecutionSource(...points);assert.equal(comparison.status,'unknown');assert.equal(comparison.public_source.status,'same_version');
+ }
+ const changed={...original,worktree:{...original.worktree,sha256:'f'.repeat(64),excluded_changes:1}};
+ assert.equal(compareExecutionSource(original,changed,changed).reason,'source_changed_during_execution');
+ const raw=new DatabaseSync(f.path);t.after(()=>raw.close());
+ for(const field of ['before_json','after_json']){
+  const row=raw.prepare('SELECT * FROM execution_worktrees').get(),value=JSON.parse(row[field]);delete value.excluded_changes;
+  raw.prepare(`UPDATE execution_worktrees SET ${field}=?`).run(JSON.stringify(value));
+ }
+ const retained=raw.prepare('SELECT * FROM execution_worktrees').all();
+ const legacy=list(f).items[0].code_version;
+ assert.equal(legacy.comparison.status,'same_version');assert.equal(legacy.before.worktree.excluded_changes,0);
+ assert.deepEqual(raw.prepare('SELECT * FROM execution_worktrees').all(),retained);
 });

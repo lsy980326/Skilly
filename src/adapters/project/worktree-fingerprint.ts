@@ -18,7 +18,7 @@ function publicSource(path: string) {
 }
 
 class Incomplete extends Error {
-  constructor(readonly reason: "limit_exceeded" | "excluded_changes" | "unsafe_entry" | "unstable" | "read_failed") { super(reason); }
+  constructor(readonly reason: "limit_exceeded" | "inventory_limit_exceeded" | "excluded_changes" | "unsafe_entry" | "unstable" | "read_failed") { super(reason); }
 }
 function changedPaths(status: string) {
   const entries = status.split("\0"), paths: string[] = [];
@@ -38,11 +38,14 @@ export function fingerprintWorktree(root: string, status: string, git: (args: st
   const check = () => { if (performance.now() - started > 1000) throw new Incomplete("limit_exceeded"); };
   try {
     const ignored = new Set(git(["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"]).split("\0").filter(Boolean));
-    if (changedPaths(status).some(path => !publicSource(path) || ignored.has(path))) throw new Incomplete("excluded_changes");
+    const changes = [...new Set(changedPaths(status))];
+    if (changes.length > MAX_FILES) throw new Incomplete("inventory_limit_exceeded");
+    // Count metadata only. Excluded contents must never enter the digest or storage.
+    const excludedChanges = changes.filter(path => !publicSource(path) || ignored.has(path)).length;
     const manifest = () => {
       check();
       const paths = [...new Set(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean))].sort();
-      if (paths.length > MAX_FILES) throw new Incomplete("limit_exceeded");
+      if (paths.length > MAX_FILES) throw new Incomplete("inventory_limit_exceeded");
       return paths;
     };
     const all = manifest(), selected = all.filter(path => publicSource(path) && !ignored.has(path)); excluded = all.length - selected.length;
@@ -85,7 +88,7 @@ export function fingerprintWorktree(root: string, status: string, git: (args: st
     const first = digest();
     if (JSON.stringify(manifest()) !== JSON.stringify(all) || digest() !== first) throw new Incomplete("unstable");
     check();
-    return { policy, status: "collected", sha256: first, files, bytes, excluded };
+    return { policy, status: "collected", sha256: first, files, bytes, excluded, excluded_changes: excludedChanges };
   } catch (error) {
     return { policy, status: "unavailable", reason: error instanceof Incomplete ? error.reason : "read_failed" };
   }

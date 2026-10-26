@@ -724,10 +724,21 @@ test('code-version comparison is distinct from execution success and updates on 
  row.code_version.comparison={status:'same_version',reason:'matching_source_fingerprints',scope:'bounded_public_source_v1'};
  await app.tick();assert.match(app.node('#detail').textContent,/수집한 코드가 검사 때와 같아요.*공개 소스의 내용이 같습니다/);
  assert.match(app.node('#detail').textContent,/공개 소스 3개.*제외 2개/);
+ row.code_version.comparison={status:'unknown',reason:'fingerprint_excluded_changes',public_source:{status:'same_version'},excluded_changes:{before:1,after:1,current:2,contents_observed:false}};
+ await app.tick();assert.match(app.node('#detail').textContent,/비교한 코드는 같고, 제외 파일 변경이 있어요/);
+ assert.match(app.node('#detail').textContent,/검사 전 1개.*검사 후 1개.*현재 2개/);
+ assert.match(app.node('#detail').textContent,/제외 파일의 내용은 읽지 않았습니다/);
+ row.code_version.comparison={status:'changed',reason:'source_fingerprint_changed',public_source:{status:'changed'},excluded_changes:{before:1,after:1,current:2,contents_observed:false}};
+ await app.tick();assert.match(app.node('#detail').textContent,/검사 뒤 코드가 바뀌었어요.*제외 파일의 변경/);
  row.code_version.comparison={status:'changed',reason:'source_changed_during_execution'};await app.tick();
  assert.match(app.node('#detail').textContent,/검사 중 코드가 바뀌었어요.*어느 상태의 검사 결과인지 확정할 수 없습니다/);
  row.code_version.comparison={status:'unknown',reason:'fingerprint_limit_exceeded'};await app.tick();
  assert.match(app.node('#detail').textContent,/수집의 파일 수·크기·시간 한도/);
+ row.code_version.current.worktree={status:'unavailable',reason:'inventory_limit_exceeded'};
+ row.code_version.comparison={status:'unknown',reason:'fingerprint_excluded_changes'};await app.tick();
+ assert.match(app.node('#detail').textContent,/현재 수집: Git 파일 목록이 2,048개 한도/);
+ row.code_version.comparison={status:'unknown',reason:'fingerprint_inventory_limit_exceeded'};await app.tick();
+ assert.match(app.node('#detail').textContent,/제외 파일도 포함한 목록 한도/);
 });
 
 test('task summary comes first and technical panels remain folded or retain the readers choice', async()=>{
