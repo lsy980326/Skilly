@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import type { WorktreeFingerprint } from "../../core/execution/currentness.js";
+import { SOURCE_LIMITS } from "../../core/execution/source-limits.js";
 
-const MAX_FILES = 2048, MAX_FILE_BYTES = 1024 * 1024, MAX_BYTES = 16 * MAX_FILE_BYTES;
+const MAX_FILE_BYTES = SOURCE_LIMITS.file_bytes, MAX_BYTES = SOURCE_LIMITS.total_bytes;
 const SOURCE_EXTENSIONS = new Set(".ts .tsx .mts .cts .js .jsx .mjs .cjs .py .go .rs .java .kt .kts .swift .c .h .cpp .hpp .cs .rb .php .vue .svelte .html .css .scss .sass .less .sql .graphql .gql .md .mdx .sh".split(" "));
 const MANIFESTS = /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|(?:ts|js)config(?:\.[\w-]+)?\.json|Cargo\.(?:toml|lock)|go\.(?:mod|sum)|pom\.xml|requirements(?:-[\w-]+)?\.txt|pyproject\.toml|(?:yarn|pnpm-lock)\.(?:lock|yaml))$/;
 
 /** Fixed public-source policy. No dotenv, credentials, private settings or arbitrary DB-supplied paths. */
-function publicSource(path: string) {
+export function publicSource(path: string) {
   const parts = path.split("/");
   if (parts.some(p => !p || p === "." || p === ".." || p.startsWith(".")
     || /^(?:node_modules|dist|build|coverage|vendor|secrets?|credentials?|passwords?|passwd|tokens?|private|auth|certs?|keys?)$/i.test(p))) return false;
@@ -18,7 +19,13 @@ function publicSource(path: string) {
 }
 
 class Incomplete extends Error {
-  constructor(readonly reason: "limit_exceeded" | "inventory_limit_exceeded" | "excluded_changes" | "unsafe_entry" | "unstable" | "read_failed") { super(reason); }
+  constructor(readonly reason: "limit_exceeded" | "inventory_limit_exceeded" | "source_file_limit_exceeded" | "excluded_changes" | "unsafe_entry" | "unstable" | "read_failed") { super(reason); }
+}
+function inventory(output: string) {
+  if (Buffer.byteLength(output) > SOURCE_LIMITS.git_listing_bytes) throw new Incomplete("inventory_limit_exceeded");
+  const paths = output.split("\0").filter(Boolean);
+  if (paths.length > SOURCE_LIMITS.inventory_entries) throw new Incomplete("inventory_limit_exceeded");
+  return paths;
 }
 function changedPaths(status: string) {
   const entries = status.split("\0"), paths: string[] = [];
@@ -35,20 +42,21 @@ function changedPaths(status: string) {
 export function fingerprintWorktree(root: string, status: string, git: (args: string[]) => string): WorktreeFingerprint {
   const policy = "public_source_v1" as const, started = performance.now();
   let files = 0, bytes = 0, excluded = 0;
-  const check = () => { if (performance.now() - started > 1000) throw new Incomplete("limit_exceeded"); };
+  const check = () => { if (performance.now() - started > SOURCE_LIMITS.duration_ms) throw new Incomplete("limit_exceeded"); };
   try {
-    const ignored = new Set(git(["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"]).split("\0").filter(Boolean));
+    const ignoredPaths = () => [...new Set(inventory(git(["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"])))].sort();
+    const initialIgnored = ignoredPaths(), ignored = new Set(initialIgnored);
+    if (Buffer.byteLength(status) > SOURCE_LIMITS.git_listing_bytes) throw new Incomplete("inventory_limit_exceeded");
     const changes = [...new Set(changedPaths(status))];
-    if (changes.length > MAX_FILES) throw new Incomplete("inventory_limit_exceeded");
+    if (changes.length > SOURCE_LIMITS.inventory_entries) throw new Incomplete("inventory_limit_exceeded");
     // Count metadata only. Excluded contents must never enter the digest or storage.
     const excludedChanges = changes.filter(path => !publicSource(path) || ignored.has(path)).length;
     const manifest = () => {
       check();
-      const paths = [...new Set(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean))].sort();
-      if (paths.length > MAX_FILES) throw new Incomplete("inventory_limit_exceeded");
-      return paths;
+      return [...new Set(inventory(git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"])))].sort();
     };
     const all = manifest(), selected = all.filter(path => publicSource(path) && !ignored.has(path)); excluded = all.length - selected.length;
+    if (selected.length > SOURCE_LIMITS.source_files) throw new Incomplete("source_file_limit_exceeded");
     const digest = () => {
       const hash = createHash("sha256").update(policy + "\0"); files = 0; bytes = 0;
       for (const path of selected) {
@@ -86,7 +94,8 @@ export function fingerprintWorktree(root: string, status: string, git: (args: st
       return hash.digest("hex");
     };
     const first = digest();
-    if (JSON.stringify(manifest()) !== JSON.stringify(all) || digest() !== first) throw new Incomplete("unstable");
+    if (JSON.stringify(manifest()) !== JSON.stringify(all) || digest() !== first
+      || JSON.stringify(ignoredPaths()) !== JSON.stringify(initialIgnored)) throw new Incomplete("unstable");
     check();
     return { policy, status: "collected", sha256: first, files, bytes, excluded, excluded_changes: excludedChanges };
   } catch (error) {

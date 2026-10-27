@@ -1,11 +1,12 @@
 import { z } from "zod";
+import { SOURCE_LIMITS } from "./source-limits.js";
 
 export const worktreeFingerprintSchema = z.discriminatedUnion("status", [
   z.strictObject({ policy: z.literal("public_source_v1"), status: z.literal("collected"), sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    files: z.int().min(0).max(2048), bytes: z.int().min(0).max(16 * 1024 * 1024), excluded: z.int().min(0).max(2048),
-    excluded_changes: z.int().min(0).max(2048).default(0) }),
+    files: z.int().min(0).max(SOURCE_LIMITS.source_files), bytes: z.int().min(0).max(SOURCE_LIMITS.total_bytes), excluded: z.int().min(0).max(SOURCE_LIMITS.inventory_entries),
+    excluded_changes: z.int().min(0).max(SOURCE_LIMITS.inventory_entries).default(0) }),
   z.strictObject({ policy: z.literal("public_source_v1"), status: z.literal("unavailable"),
-    reason: z.enum(["limit_exceeded", "inventory_limit_exceeded", "excluded_changes", "unsafe_entry", "unstable", "read_failed"]) }),
+    reason: z.enum(["limit_exceeded", "inventory_limit_exceeded", "source_file_limit_exceeded", "excluded_changes", "unsafe_entry", "unstable", "read_failed"]) }),
 ]);
 export type WorktreeFingerprint = z.infer<typeof worktreeFingerprintSchema>;
 export const executionWorktreeRowSchema = z.strictObject({ execution_id: z.uuid(), project_id: z.uuid(),

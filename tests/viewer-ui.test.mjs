@@ -736,9 +736,11 @@ test('code-version comparison is distinct from execution success and updates on 
  assert.match(app.node('#detail').textContent,/수집의 파일 수·크기·시간 한도/);
  row.code_version.current.worktree={status:'unavailable',reason:'inventory_limit_exceeded'};
  row.code_version.comparison={status:'unknown',reason:'fingerprint_excluded_changes'};await app.tick();
- assert.match(app.node('#detail').textContent,/현재 수집: Git 파일 목록이 2,048개 한도/);
+ assert.match(app.node('#detail').textContent,/현재 수집: Git 파일 목록의 개수·크기 수집 한도/);
  row.code_version.comparison={status:'unknown',reason:'fingerprint_inventory_limit_exceeded'};await app.tick();
  assert.match(app.node('#detail').textContent,/제외 파일도 포함한 목록 한도/);
+ row.code_version.comparison={status:'unknown',reason:'fingerprint_source_file_limit_exceeded'};await app.tick();
+ assert.match(app.node('#detail').textContent,/비교할 공개 코드가 2,048개/);
 });
 
 test('task summary comes first and technical panels remain folded or retain the readers choice', async()=>{

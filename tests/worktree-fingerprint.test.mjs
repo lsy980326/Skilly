@@ -90,7 +90,7 @@ test('ignored/private files are excluded; symlinks, unsupported edits and limits
  writeFileSync(join(f.root,'large.ts'),'x'.repeat(1024*1024+1));
  const large=observeSource(f.root,f.binding);assert.equal(large.worktree.reason,'limit_exceeded');assert.equal(compareExecutionSource(large,large,large).status,'unknown');
  const over=fingerprintWorktree(f.root,'',args=>args.includes('--ignored')?'':Array.from({length:2049},(_,i)=>`x${i}.ts`).join('\0'));
- assert.equal(over.reason,'inventory_limit_exceeded');
+ assert.equal(over.reason,'source_file_limit_exceeded');
 });
 test('renames and deleted parent directories produce stable source fingerprints; concurrent file inventory changes stay unknown',async t=>{
  const f=await setup(t);mkdirSync(join(f.root,'old'));writeFileSync(join(f.root,'old','file.ts'),'original');
