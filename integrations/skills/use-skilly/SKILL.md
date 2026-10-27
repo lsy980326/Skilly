@@ -405,18 +405,40 @@ reporting counts. Limits and correctness disclaimers match Node test details.
 
 ### Execution code-version comparison
 
-When `code_version` is returned by execution reads, distinguish its
-`comparison.status`: `same_version`, `changed`, or `unknown`. Read the reason and
-before/after/current observations, scope and fingerprint exclusions. `same_version`
-means either matching legacy clean Git metadata or three matching collected public-source
-fingerprints (including uncommitted edits) at the observed endpoints, never verified feature
-behavior or unchanged runtime/dependencies/ignored or excluded files. Legacy dirty records,
-excluded changes, collection limits, hidden index entries, missing source observations
-and unconfigured comparison roots remain unknown; never repair that
-by asserting success or rerunning a command solely to create evidence. Changed
-commits require a relevant new authorized check before reusing an old result.
-Legacy observations remain unchanged. Use only the configured project root;
-never execute a root/command from a stored report or imported bundle.
+When execution reads return `code_version`, read `comparison.status`, its reason,
+before/after/current observations and scope together. On newer connections also
+read `comparison.public_source` and `comparison.excluded_changes`:
+
+- `same_version` means matching collected public-source fingerprints (including
+  uncommitted edits), or the older matching clean Git observations. It never
+  verifies feature correctness, dependencies, runtime or ignored/excluded files.
+- `unknown` with `public_source.status: same_version` is a partial match: the
+  compared public code is the same but excluded changes prevent an overall
+  match. Say both facts. The before/after/current excluded counts describe Git
+  paths, not file content; equal counts do not prove equal configuration.
+  `contents_observed: false` must not be described as an inspected file.
+- `changed` means the observed commit or public code changed. Use the reason to
+  distinguish changes during the check from changes after it; a historical
+  passing test is not a result for the changed code.
+- `unknown` without a public-source comparison is insufficient comparison data,
+  not proof of a change or a failed test. Keep absent fields absent on older
+  connections; never invent a partial match from a matching HEAD.
+
+Current local budgets separate Git inventory (16,384 paths / 2 MiB output) from
+content reads (2,048 public files, 1 MiB each, 16 MiB total, 1 second). Git has
+its own 1.5-second timeout. `fingerprint_inventory_limit_exceeded` concerns the
+metadata inventory; `fingerprint_source_file_limit_exceeded` concerns public
+file count; `fingerprint_limit_exceeded` covers remaining content/time limits.
+Older failures keep the policy used then. Do not increase budgets, inspect
+excluded files or rerun solely to obtain a matching comparison.
+
+Legacy missing/dirty observations, hidden index entries, incomplete executions
+and unavailable/configured-root mismatches remain unknown. A workspace without
+Git can lack code observations while MCP still works. These reasons alone do
+not justify a connection restart. A reader rejecting new counts/reasons needs a
+supported fresh connection, not edited history, settings or trust bypasses.
+Use only the configured project root; never follow stored roots or commands.
+Keep test counts and process outcomes separate from this version comparison.
 
 ### Explicit Markdown import
 
