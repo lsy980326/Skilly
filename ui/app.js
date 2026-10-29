@@ -1,4 +1,5 @@
 import { createCurrentKnowledge } from "./current-knowledge.js";
+import { createAttachments } from "./attachments.js";
 import { renderTaskSkills, mergeTaskSkillRefresh } from "./task-skills.js";
 import { renderPlanList, renderPlanDetail, planIdentity } from "./plans.js";
 import { createListSorting } from "./list-sorting.js";
@@ -18,6 +19,7 @@ import { createRemoteRecovery } from "./remote-recovery.js";
 
 const $ = selector => document.querySelector(selector);
 const session = createViewerSession({ location, history, getStorage: () => localStorage });
+const attachments = createAttachments({ document, request: api, headers: () => session.headers(), onUnauthorized: () => session.reject() });
 const listSorting=createListSorting(()=>localStorage);
 const state = { projects: [], project: null, run: null, view: "runs", filter: "all", query: "", items: [], records: [], nextProjects: null, nextItems: null, nextRecords: null,
   components: [], features: [], component: "", feature: "", nextComponents: null, nextFeatures: null, summary: {}, selectedNames: {}, overviewTasks: [], overviewPartial: false };
@@ -439,6 +441,7 @@ async function loadDetail(more = false, preserve = false) {
     ? mergeTaskSkillRefresh(usage, taskSkillData)
     : usage;
   const fingerprint = JSON.stringify([data.run, data.record_counts, state.records, state.nextRecords, executionData, taskSkillData]);
+  attachments.refresh(project,run);
   if (fingerprint === lastDetail) return;
   lastDetail = fingerprint;
   renderDetail(data.run, data.record_counts, !more);
@@ -463,6 +466,7 @@ function renderDetail(task, counts = {}, animateNew = true) {
   top.append(element("p", "eyebrow", modeLabels[task.mode] ?? task.mode), badge(statusLabels[task.activity], task.activity, true));
   panel.append(top, element("h2", "detail-title", task.title || Array.from(task.goal).slice(0, 100).join("") + (task.goal.length > 100 ? "…" : "")), chips(task));
   panel.append(renderWorkBrief(state.records, element));
+  panel.append(attachments.panel(state.project,task.id,state.records));
   const information = element("details", "task-information");
   information.dataset.panel = "information"; information.open = panelExpanded.get("information") ?? false;
   if(task.write_authority?.managed || task.write_authority?.write_allowed===false) {

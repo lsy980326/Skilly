@@ -10,6 +10,7 @@ import { MemoryError } from "../../../core/memory/model.js";
 import { unreviewedRunSql } from "./run-reviews.js";
 import { SqliteSkills } from "./skills.js";
 import { SqliteDocuments } from "./documents.js";
+import { listAttachments, attachmentOriginal } from "./attachments.js";
 import { markdownReceiptIdentity, type MarkdownSource } from "../../../core/documents/importer.js";
 import { createMemoryContext } from "./context.js";
 import { SqliteExecutions } from "./executions.js";
@@ -73,6 +74,8 @@ export class SqliteViewer {
     this.work = new SqliteWorkReader(this.db, now, sources);
   }
   close(): void { this.db.close(); }
+  attachments(project:string,run:string,offset=0) { return listAttachments(this.db,this.path,project,run,offset); }
+  attachmentOriginal(project:string,run:string,id:string) { return attachmentOriginal(this.db,project,run,id); }
 
   currentKnowledge(projectId: string, options: Record<string, unknown> = {}) {
     this.requireProject(projectId);
@@ -156,8 +159,8 @@ export class SqliteViewer {
   private version(): number {
     const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
     if (this.db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446988
-      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(version)) {
-      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v16)가 아닙니다. 파일을 변경하지 않았습니다.");
+      || typeof version !== "number" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(version)) {
+      throw new ViewerError("unavailable", "지원하는 Skilly DB(v1–v17)가 아닙니다. 파일을 변경하지 않았습니다.");
     }
     return version;
   }

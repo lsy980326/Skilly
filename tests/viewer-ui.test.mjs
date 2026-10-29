@@ -61,6 +61,7 @@ class Element {
     add: () => {}, remove: () => {}, toggle: () => {},
   };
   constructor(tagName) { this.tagName = tagName.toUpperCase(); }
+  get options() { return this.children.filter(child => child instanceof Element && child.tagName === "OPTION"); }
   set textContent(value) { this.children = [String(value)]; }
   get textContent() { return this.children.map(child => typeof child === "string" ? child : child.textContent).join(""); }
   append(...children) { this.children.push(...children); }
@@ -167,12 +168,13 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
   const componentUI=readFileSync(new URL("../ui/component-scope.js",import.meta.url),"utf8").replaceAll("export ","");
   const sorting=readFileSync(new URL("../ui/list-sorting.js",import.meta.url),"utf8").replaceAll("export ","");
   const taskSkillsUI = readFileSync(new URL("../ui/task-skills.js", import.meta.url), "utf8").replaceAll("export function", "function");
+  const attachmentUI = readFileSync(new URL("../ui/attachments.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const app = readFileSync(new URL("../ui/app.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "");
   const reports = readFileSync(new URL("../ui/reports.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const recordingUI = readFileSync(new URL("../ui/task-recording.js", import.meta.url), "utf8").replaceAll("export function", "function");
   const featureUI = readFileSync(new URL("../ui/features.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
   const documents = readFileSync(new URL("../ui/document-batch.js", import.meta.url), "utf8").replaceAll("export function", "function") + '\n' + readFileSync(new URL("../ui/documents.js", import.meta.url), "utf8").replace(/^import .*;\n/gm, "").replaceAll("export function", "function");
-  await runInNewContext(`(async () => {${componentUI}\n${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${taskSkillsUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${app}\n})()`, {
+  await runInNewContext(`(async () => {${componentUI}\n${sorting}\n${geometry}\n${motion}\nconst P=projectFactoryPoint;\n${scene}\n${simple}\n${board}\n${session}\n${skills}\n${reports}\n${recordingUI}\n${taskSkillsUI}\n${featureUI}\n${documents}\nconst {renderPlanList,renderPlanDetail,planIdentity}=(()=>{${plans};return {renderPlanList,renderPlanDetail,planIdentity};})();\n${attachmentUI}\n${app}\n})()`, {
     document, URLSearchParams, AbortController, location: { hash, pathname: "/" }, history: { replaceState() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     Date: class extends Date { static now() { return now; } },
@@ -192,7 +194,7 @@ async function viewer({ structured = false, manyFeatures = false, lateFeatureKey
         holdMoreFeatures = false; await new Promise(resolve => { releaseMore = resolve; });
       }
       if (failSecondProject && path.includes("project=other") && path.startsWith("/api/overview")) throw new Error("조회 실패");
-      const data = path.startsWith("/api/projects")
+      const data = path.startsWith("/api/attachments?") ? { items: [], total: 0, next_offset: null } : path.startsWith("/api/projects")
         ? { items: [{ id: "project", key: "test", name: "Test", total: 1, unfinished: 0 }, ...(failSecondProject ? [{ id: "other", key: "other", name: "Other", total: 0, unfinished: 0 }] : [])], next_offset: null }
         : path.startsWith("/api/plans?") ? (new URLSearchParams(path.split('?')[1]).has('plan') ? planData : {items:planRows??(planData?[{...planData.plan,progress:planData.progress}]:[]),next_offset:null,schema_supported:plansSupported})
         : path.startsWith("/api/recovery?") ? recovery

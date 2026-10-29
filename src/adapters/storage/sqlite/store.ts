@@ -65,7 +65,7 @@ export class SqliteMemoryStore implements MemoryStore {
     if ((version !== 0 && application !== 1397446988) || (version === 0 && application !== 0)) {
       throw new MemoryError("foreign_database", "This file is not a Skilly database.");
     }
-    if (version > 16) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
+    if (version > 17) throw new MemoryError("schema_too_new", "This DB requires a newer Skilly version.");
     // v16 is created only by explicit portability imports; ordinary databases stay v15.
     if (version >= 15) return;
     this.db.exec("BEGIN IMMEDIATE");

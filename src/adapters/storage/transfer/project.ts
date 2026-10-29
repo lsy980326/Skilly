@@ -1,4 +1,5 @@
 import { validatePlanData } from "../sqlite/plans.js";
+import { validateAttachmentData } from "../sqlite/attachments.js";
 import { validateDecisionData } from "../sqlite/decisions.js";
 import { validateSkillData } from "../sqlite/skills.js";
 import { validateExecutionData } from "../sqlite/executions.js";
@@ -68,6 +69,7 @@ export function exportProject(path: string, projectId: string, output: string) {
     const runs = new Set<string>();
     try {
       for (const table of tables) {
+        if (["attachment_objects","attachment_chunks","record_attachments"].includes(table) && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 17) continue;
         if (table === "storage_origins" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 16) continue;
         if (table === "task_skill_usage" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 15) continue;
         if (table === "decision_events" && Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) < 13) continue;
@@ -113,6 +115,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (entry === null || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).sort().join() !== "row,table"
       || !("table" in entry) || typeof entry.table !== "string" || !tables.includes(entry.table as Table) || !("row" in entry)) fail("invalid_bundle", "Unknown table or entry.");
     const table = entry.table as Table, index = tables.indexOf(table);
+    if (manifest.schema_version < 17 && ["attachment_objects","attachment_chunks","record_attachments"].includes(table)) fail("invalid_bundle","Attachments require v17.");
     if (manifest.schema_version < 16 && table === "storage_origins") fail("invalid_bundle","Storage origins require v16.");
     if (manifest.schema_version < 15 && table === "task_skill_usage") fail("invalid_bundle","Task skill usage requires schema v15.");
     if (manifest.schema_version < 13 && table === "decision_events") fail("invalid_bundle","Decision data requires schema v13.");
@@ -163,7 +166,7 @@ export async function importProject(input: string, output: string, base?: string
     let journal: DatabaseSync | undefined;
     let events: DatabaseSync | undefined;
     try {
-      if (!base) initialize(main,false,manifest.schema_version===16?16:15);
+      if (!base) initialize(main,false,manifest.schema_version>=16?manifest.schema_version:15);
       else if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 4) main.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 5) main.exec(readFileSync(new URL("../../../../migrations/006-executions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 6) main.exec(readFileSync(new URL("../../../../migrations/007-test-details.sql", import.meta.url), "utf8"));
@@ -175,8 +178,10 @@ export async function importProject(input: string, output: string, base?: string
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 12) main.exec(readFileSync(new URL("../../../../migrations/013-decisions.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 13) main.exec(readFileSync(new URL("../../../../migrations/014-decision-guards.sql", import.meta.url), "utf8"));
       if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 14) main.exec(readFileSync(new URL("../../../../migrations/015-task-skill-usage.sql", import.meta.url), "utf8"));
-      if (manifest.schema_version === 16 && Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 15) main.exec(readFileSync(new URL("../../../../migrations/016-storage-origins.sql", import.meta.url), "utf8"));
-      if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 16 && hasAuthority(main)) main.exec(authoritySql("main",true,true));
+      if (manifest.schema_version >= 16 && Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 15) main.exec(readFileSync(new URL("../../../../migrations/016-storage-origins.sql", import.meta.url), "utf8"));
+      if (manifest.schema_version >= 17 && Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 16) main.exec(readFileSync(new URL("../../../../migrations/017-attachments.sql", import.meta.url), "utf8"));
+      const targetVersion=Number(main.prepare("PRAGMA user_version").get()?.["user_version"]);
+      if (targetVersion >= 16 && hasAuthority(main)) main.exec(authoritySql("main",true,true,targetVersion>=17));
       // Initialize a companion only in the new, private output directory.
       try { writeNew(journalPath, ""); journal = new DatabaseSync(journalPath); initialize(journal, true); }
       catch (error) {
@@ -207,6 +212,7 @@ export async function importProject(input: string, output: string, base?: string
         validateFeatureDiscoveryData(main);
         validatePlanData(main);
         validateDecisionData(main);
+        if (targetVersion >= 17) validateAttachmentData(main);
         if (events && eventFd !== undefined) {
           importProjectEvents(eventFd, manifest, eventScope, main, events);
           validateEventStore(events); validateEventPair(main, events);

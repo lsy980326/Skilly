@@ -1,4 +1,5 @@
 import { acknowledgeRun } from "./run-reviews.js";
+import { attachmentRoute } from "./attachments.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, lstatSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
@@ -14,6 +15,8 @@ import type { RemoteHostSession } from "../../adapters/remote/host-session.js";
 import { remoteRecoveryRoute } from "./remote-recovery.js";
 
 const assets = new Map([
+  ["/attachments.js", {file:"attachments.js",type:"text/javascript; charset=utf-8"}],
+  ["/attachments.css", {file:"attachments.css",type:"text/css; charset=utf-8"}],
   ["/remote-recovery.js",{file:"remote-recovery.js",type:"text/javascript; charset=utf-8"}],
   ["/remote-recovery.css",{file:"remote-recovery.css",type:"text/css; charset=utf-8"}],
   ["/current-knowledge.js", {file:"current-knowledge.js",type:"text/javascript; charset=utf-8"}],
@@ -75,7 +78,7 @@ export async function startViewer(options: { db: string; port?: number; sessionT
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("X-Content-Type-Options", "nosniff");
-    response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     response.setHeader("X-Frame-Options", "DENY");
     if (`http://${request.headers.host}` !== origin
       || (request.headers.origin !== undefined && request.headers.origin !== origin)
@@ -85,7 +88,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
     const documentPost = request.method === "POST" && /^\/api\/documents\/(preview|import)$/.test(request.url ?? "");
     const reviewPost = request.method === "POST" && request.url === "/api/runs/acknowledge";
     const remotePost=request.method==='POST'&&request.url==='/api/remote-recovery/recover';
-    if (request.method !== "GET" && !documentPost && !reviewPost && !remotePost) {
+    const attachmentPost=request.method==='POST'&&request.url==='/api/attachments';
+    if (request.method !== "GET" && !documentPost && !reviewPost && !remotePost && !attachmentPost) {
       response.setHeader("Allow", "GET");
       json(response, 405, { error: "조회만 지원합니다." }); return;
     }
@@ -102,6 +106,8 @@ export async function startViewer(options: { db: string; port?: number; sessionT
         json(response, 401, { error: "터미널에 표시된 연결 주소로 다시 열어 주세요." }); return;
       }
       if(remotePost&&request.headers.origin!==origin){json(response,403,{error:'Skilly 화면에서 복구를 요청해 주세요.'});return;}
+      if(attachmentPost&&request.headers.origin!==origin){json(response,403,{error:'Skilly 화면에서 파일을 선택해 주세요.'});return;}
+      if(await attachmentRoute(options.db,reader,request,response,url))return;
       if(await remoteRecoveryRoute(options.remoteRecovery,request,response,url))return;
       if (reviewPost) {
         if (request.headers.origin !== origin) { json(response, 403, { error: "Skilly 화면에서 확인 완료를 눌러 주세요." }); return; }
