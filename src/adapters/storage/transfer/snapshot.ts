@@ -24,7 +24,10 @@ export function openSnapshots(path: string, includeEvents = false) {
     main = readDatabase(path);
     if (recovery) validateRecoveryPair(main, recovery);
     if (events) validateEventPair(main, events);
-    return { main, recovery, events, eventsAt, recoveryAt, mainAt: new Date().toISOString(), close() { main?.close(); recovery?.close(); events?.close(); } };
+    const closeRecovery = () => { if (recovery?.isOpen) recovery.close(); };
+    const closeEvents = () => { if (events?.isOpen) events.close(); };
+    return { main, recovery, events, eventsAt, recoveryAt, mainAt: new Date().toISOString(), closeRecovery, closeEvents,
+      close() { if (main?.isOpen) main.close(); closeRecovery(); closeEvents(); } };
   } catch (error) { main?.close(); recovery?.close(); events?.close(); throw error; }
 }
 export async function copySnapshot(db: DatabaseSync, path: string): Promise<void> {
@@ -44,10 +47,16 @@ export async function copyDatabase(path: string, output: string) {
   const snapshots = openSnapshots(path, true);
   try {
     newDirectory(output);
-    await copySnapshot(snapshots.main, join(output, "memory.sqlite"));
-    if (snapshots.recovery) await copySnapshot(snapshots.recovery, join(output, "memory.sqlite.recovery.sqlite"));
+    const version = Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) as Manifest["schema_version"];
+    // All views are already pinned and cross-checked. Release rollback-mode companions
+    // as soon as their copies exist, before copying main or revalidating the bundle.
     if (snapshots.events) await copySnapshot(snapshots.events, join(output, "memory.sqlite.events.sqlite"));
-    const manifest: Manifest = { format: "skilly-local-transfer", version: snapshots.events ? 2 : 1, kind: "backup", schema_version: Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) as Manifest["schema_version"],
+    snapshots.closeEvents();
+    if (snapshots.recovery) await copySnapshot(snapshots.recovery, join(output, "memory.sqlite.recovery.sqlite"));
+    snapshots.closeRecovery();
+    await copySnapshot(snapshots.main, join(output, "memory.sqlite"));
+    snapshots.close();
+    const manifest: Manifest = { format: "skilly-local-transfer", version: snapshots.events ? 2 : 1, kind: "backup", schema_version: version,
       created_at: new Date().toISOString(), recovery_snapshot_at: snapshots.recoveryAt, main_snapshot_at: snapshots.mainAt,
       project_id: null, rows: null, files: { main: digest(join(output, "memory.sqlite")),
         recovery: snapshots.recovery ? digest(join(output, "memory.sqlite.recovery.sqlite")) : null,

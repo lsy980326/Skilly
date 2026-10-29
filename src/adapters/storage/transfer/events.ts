@@ -6,6 +6,7 @@ import { fileDescriptor, fail } from "./files.js";
 import { eventImportSchemaSql, hasEventImports } from "../sqlite/event-imports.js";
 import { eventRowSchemas, eventTables, savedPointSchema } from "../../../core/transfer/events.js";
 import { authoritySql, hasAuthority, validateAuthority } from "../sqlite/project-authority.js";
+import { validateEventReceipts, type EventReceiptReferences } from "./event-receipts.js";
 
 function schema(db: DatabaseSync) {
   return JSON.stringify(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name").all());
@@ -50,6 +51,7 @@ export function validateEventStore(db: DatabaseSync): void {
 
 export function validateEventPair(main: DatabaseSync, events: DatabaseSync): void {
   if (!events.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_links'").get()) return;
+  const required: EventReceiptReferences = new Map();
   for (const row of events.prepare("SELECT * FROM task_links").iterate()) {
     eventRowSchemas.task_links.parse(row);
     const run = main.prepare(`SELECT r.id FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.project_id=? AND r.id=?
@@ -79,11 +81,14 @@ export function validateEventPair(main: DatabaseSync, events: DatabaseSync): voi
         fail("invalid_event_link", "Non-record saved point contains a record reference.");
       }
       if (saved.receipt_confirmed) {
-        const receipt = saved.stage === "record"
-          ? main.prepare("SELECT 1 FROM receipts q WHERE scope=? AND (json_extract(q.result_json,'$.record_id')=?2 OR EXISTS(SELECT 1 FROM json_each(q.result_json,'$.record_ids') j WHERE j.value=?2))").get(link["project_id"]!, saved.record_id)
-          : saved.stage === "start" ? main.prepare("SELECT 1 FROM receipts WHERE scope=? AND json_extract(result_json,'$.run.id')=?").get(link["project_id"]!, link["run_id"]!) : undefined;
-        if (!receipt) fail("invalid_event_link", "Saved-point receipt is missing from the main snapshot.");
+        if (saved.stage === "unknown") fail("invalid_event_link", "Saved-point receipt is missing from the main snapshot.");
+        const project = String(link["project_id"]);
+        let refs = required.get(project);
+        if (!refs) { refs = { records: new Set(), runs: new Set() }; required.set(project, refs); }
+        if (saved.stage === "record") refs.records.add(saved.record_id!);
+        else refs.runs.add(String(link["run_id"]));
       }
     }
   }
+  validateEventReceipts(main, required);
 }
