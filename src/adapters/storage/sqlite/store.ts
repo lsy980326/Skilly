@@ -1,5 +1,6 @@
 import { SqliteCurrentKnowledge } from "./current-knowledge.js";
 import { SqliteTaskSkills } from "./task-skills.js";
+import { SqliteAttachmentLibrary } from "./mcp-attachments.js";
 import { SqlitePlans } from "./plans.js";
 import { SqliteDecisions } from "./decisions.js";
 import { SqliteRunReviews } from "./run-reviews.js";
@@ -33,6 +34,7 @@ export class SqliteMemoryStore implements MemoryStore {
   readonly plans: SqlitePlans;
   readonly decisions: SqliteDecisions;
   readonly taskSkills: SqliteTaskSkills;
+  readonly attachments: SqliteAttachmentLibrary;
 
   constructor(private readonly path: string, sources?: SourceProvider, bindings: InstallationComponent[] = []) {
     this.db = new DatabaseSync(path, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
@@ -48,13 +50,14 @@ export class SqliteMemoryStore implements MemoryStore {
       this.plans = new SqlitePlans(this.db, sources);
       this.decisions = new SqliteDecisions(this.db);
       this.taskSkills = new SqliteTaskSkills(this.db);
+      this.attachments = new SqliteAttachmentLibrary(this.db,this.path);
     } catch (error) {
       this.db.close();
       throw storageError(error);
     }
   }
 
-  close(): void { this.db.close(); }
+  close(): void { this.attachments.close(); this.db.close(); }
   authority(projectId:string) { return readAuthority(this.db,projectId); }
   assertWritable(projectId:string) { assertWritable(this.db,projectId); }
   taskEvents(root?: string) { return new SqliteTaskEvents(this.db, this.path, root); }

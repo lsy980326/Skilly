@@ -46,7 +46,7 @@ export function listAttachments(db: DatabaseSync, path: string, project: string,
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) invalid("첨부 목록 위치를 확인해 주세요.");
   const rows = ready(db) ? db.prepare(`SELECT a.*,o.bytes FROM record_attachments a JOIN attachment_objects o USING(project_id,sha256)
     WHERE a.project_id=? AND a.run_id=? ORDER BY a.created_at DESC,a.id LIMIT 21 OFFSET ?`).all(project,run,offset) : [];
-  const items = rows.slice(0,20).map(row => { const {bytes,...link}=row; return {...attachmentLinkRow.parse(link),bytes,claims_verified:false}; });
+  const items = rows.slice(0,20).map(row => { const {bytes,...link}=row; return {...attachmentLinkRow.parse(link),bytes:z.int().min(0).max(ATTACHMENT_LIMITS.file_bytes).parse(bytes),claims_verified:false}; });
   return {items,total:ready(db)?number(db,"SELECT count(*) n FROM record_attachments WHERE project_id=? AND run_id=?",project,run):0,
     next_offset:rows.length>20?offset+20:null,usage:attachmentUsage(db,path,project)};
 }

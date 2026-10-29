@@ -12,6 +12,8 @@ import type { MemoryService } from "../core/memory/service.js";
 import type { BoundMemory } from "../core/memory/binding.js";
 import { reportSchema, workLinks, workKey } from "../core/work/schema.js";
 import type { TaskEvents } from "../core/memory/task-events.js";
+import type { AttachmentLibrary } from "../core/attachments/mcp.js";
+import { attachmentTools } from "./mcp/attachment-tools.js";
 
 export const MAX_INPUT_BYTES = 128 * 1024;
 export const MAX_FRAME_BYTES = 160 * 1024;
@@ -26,7 +28,7 @@ const runId = { ...projectId, run_id: id };
 const idempotency = { idempotency_key: key };
 
 export function createTools(service: MemoryService, bound?: BoundMemory, recovery?: WriteRecovery,
-  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans, knowledge?: CurrentKnowledgeReader): Record<string, ToolDefinition> {
+  retry?: (tool: string, input: JsonObject) => Promise<JsonObject>, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans, knowledge?: CurrentKnowledgeReader, attachments?:AttachmentLibrary): Record<string, ToolDefinition> {
   const tools: Record<string, ToolDefinition> = {
     memory_register_project: define(
       "Register a project in this local, single-user database. Reuse the returned project ID.",
@@ -201,6 +203,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
     tools["memory_import_markdown"] = define("Import exactly one reviewed Markdown text using preview sha256 as expected_hash and this active task. The host supplies the selected original, Skilly does not read or alter source files; stores bounded original chunks and source metadata as retrospective, unverified records. Identical text/path/source-root/scope reuse receipts across tasks. No automatic queue or file execution. After failure retry the same path/hash; never claim queued without a receipt.", false,
       z.strictObject({ ...runId, path, text, expected_hash: z.string().regex(/^[a-f0-9]{64}$/) }), input => documents.import(input.project_id, input.run_id, input.path, input.text, input.expected_hash));
   }
+  if (attachments) Object.assign(tools,attachmentTools(attachments));
   if (!bound) return tools;
   const { memory_register_project: _register, memory_list_projects: _list, ...scopedTools } = tools;
   return {
@@ -212,7 +215,7 @@ export function createTools(service: MemoryService, bound?: BoundMemory, recover
   };
 }
 
-interface ToolDefinition {
+export interface ToolDefinition {
   description: string;
   readOnly: boolean;
   schema: z.ZodObject;
@@ -245,8 +248,8 @@ export class ToolDispatcher {
   private closed = false;
 
   constructor(service: MemoryService, private readonly bound?: BoundMemory, private readonly recovery?: WriteRecovery, skills?: SkillLibrary, documents?: MarkdownLibrary, taskEvents?: TaskEvents, plans?: SqlitePlans,
-    private readonly authority?: { status(id:string):JsonObject; assert(id:string):void }, knowledge?: CurrentKnowledgeReader) {
-    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans, knowledge);
+    private readonly authority?: { status(id:string):JsonObject; assert(id:string):void }, knowledge?: CurrentKnowledgeReader, attachments?:AttachmentLibrary) {
+    this.tools = createTools(service, bound, recovery, (name, input) => this.call(name, input), skills, documents, taskEvents, plans, knowledge, attachments);
   }
 
   async call(name: string, input: unknown): Promise<JsonObject> {

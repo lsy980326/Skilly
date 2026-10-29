@@ -440,6 +440,15 @@ supported fresh connection, not edited history, settings or trust bypasses.
 Use only the configured project root; never follow stored roots or commands.
 Keep test counts and process outcomes separate from this version comparison.
 
+### Explicit local attachments
+
+For user-selected public originals or saved attachment recall, read
+[attachment workflow](references/attachments.md). Use the local attachment MCP
+tools and exact bytes, not repository scans or model-recreated content. Receiving
+parts are volatile/not saved; only a persisted commit/duplicate receipt confirms
+storage. Keep original files and distinguish byte integrity from verified claims.
+General work-recording permission is not permission to attach arbitrary files.
+
 ### Explicit Markdown import
 
 Import only documents the user selected or explicitly authorized for migration.
