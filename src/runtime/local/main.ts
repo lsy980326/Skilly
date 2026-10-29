@@ -16,6 +16,8 @@ const usage = `Skilly 0.1.0 — local project memory (Node.js 24+)
   skilly call <tool-name> [--db /absolute/path/memory.sqlite] [--project /absolute/project] < input.json
   skilly exec --db /absolute/memory.sqlite --project /absolute/project --run-id <UUID> [--record-id <UUID>] [--timeout-ms 60000] [--test-format vitest] -- executable args
   skilly codex-hook --db /absolute/memory.sqlite --project /absolute/project < hook-event.json
+  skilly events-retention-status --db /absolute/memory.sqlite
+  skilly events-retention-enable --db /absolute/memory.sqlite --expect <preview-hash>
   skilly backup --db /absolute/memory.sqlite --output /absolute/new-backup-directory
   skilly restore --input /absolute/backup-directory --output /absolute/new-restored-directory
   skilly export --db /absolute/memory.sqlite --project-id <UUID> --output /absolute/new-export-directory
@@ -71,6 +73,12 @@ async function main(): Promise<void> {
   });
   if (values.help || positionals.length === 0) { process.stdout.write(usage); return; }
   const [command, tool] = positionals;
+  if (command === "events-retention-status" || command === "events-retention-enable") {
+    if (positionals.length !== 1 || Object.keys(values).some(k => !["db","expect"].includes(k)))
+      throw new MemoryError("invalid_input", "Event retention uses only --db and the enable command's --expect.");
+    const { eventRetentionCommand } = await import("./event-retention.js");
+    process.stdout.write(`${JSON.stringify(eventRetentionCommand(command,values))}\n`); return;
+  }
   if(command && ["transfer-prepare","transfer-status","transfer-activate","transfer-recover","transfer-restore"].includes(command)) {
     if(positionals.length!==1 || !values.state || values.project || (command==="transfer-restore"?!values.input:values.input) || values.output || values.skill || values.version || values.tool || values.folder || values.from || values.expect
       || (command==="transfer-prepare" ? !values.db || !values["project-id"] : values.db || values["project-id"]))

@@ -23,6 +23,7 @@ import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { eventImportSchemaSql } from "../sqlite/event-imports.js";
 import { readEvents, validateEventPair, validateEventStore } from "./events.js";
 import { putAuthority, readAuthority, hasAuthority, authoritySql, type AuthorityRow } from "../sqlite/project-authority.js";
+import { requireLegacyEventTransfer } from "../sqlite/event-retention.js";
 
 type Row = Record<string, SQLOutputValue>;
 function columns(table: Table): string[] { return Object.keys(rowSchemas[table].shape); }
@@ -61,6 +62,7 @@ function parsedRow(table: Table, value: unknown, projectId: string, runs: Set<st
 export function exportProject(path: string, projectId: string, output: string) {
   const snapshots = openSnapshots(path, true);
   try {
+    requireLegacyEventTransfer(snapshots.events);
     const project = snapshots.main.prepare("SELECT project_key FROM projects WHERE id = ?").get(projectId);
     if (!project) fail("not_found", "Project ID not found in this DB.");
     newDirectory(output);
@@ -158,7 +160,7 @@ export async function importProject(input: string, output: string, base?: string
       eventFd = fileDescriptor(join(input, "events.ndjson"), MAX_DATA_BYTES);
       scanProjectEvents(eventFd, manifest, eventScope, () => {});
     }
-    if (base) await copyDatabase(base, output);
+    if (base) await copyDatabase(base, output, { legacyEventsOnly: true });
     else newDirectory(output);
     const mainPath = join(output, "memory.sqlite"), journalPath = `${mainPath}.recovery.sqlite`;
     if (!base) writeNew(mainPath, "");

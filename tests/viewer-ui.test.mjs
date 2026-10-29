@@ -124,6 +124,19 @@ test("current events and imported interruption history remain separate in the re
   }
 });
 
+test('hook capacity distinguishes stopped collection, retained history and unknown gaps',async()=>{
+  const {renderEventRetention,renderTaskRecording}=await import('../ui/task-recording.js');
+  const element=(tag,className='',text)=>{const n=new Element(tag);n.className=className;if(text!==undefined)n.textContent=text;return n;};
+  const capacity={capture_status:'activation_required',total_events:10000,active_events:10000,archived_events:0,window_limit:10000,windows:1,max_windows:1,body_bytes:1048576,body_limit_bytes:67108864,task_link_status:'ready'};
+  const stopped=renderEventRetention(capacity,{element});assert.match(stopped.textContent,/수집 중단 · 기존 1만 건 한도/);
+  assert.match(stopped.textContent,/새 이벤트는 저장·대기되지 않습니다/);assert.match(stopped.textContent,/받지 못한 이벤트의 수와 내용은 알 수 없습니다/);
+  const ready=renderEventRetention({...capacity,capture_status:'ready',total_events:10001,active_events:1,archived_events:10000,windows:2,max_windows:8},{element});
+  assert.match(ready.textContent,/수신 가능/);assert.match(ready.textContent,/과거 보관 10,000건/);assert.doesNotMatch(ready.textContent,/새 이벤트는 저장·대기되지 않습니다/);
+  const unknown=renderEventRetention({capture_status:'unavailable'},{element});assert.match(unknown.textContent,/조회하지 못했습니다/);assert.doesNotMatch(unknown.textContent,/NaN|0건/);
+  const historical=renderTaskRecording({linkage:'historical_retained',last_saved:{},events:[]},{element,date:x=>x});
+  assert.match(historical.textContent,/이전 연결은 보관됐습니다/);assert.match(historical.textContent,/새 관측으로 연결을 갱신/);
+});
+
 async function viewer({ structured = false, manyFeatures = false, lateFeatureKey = "feature-41", active = false, partial = false, failSecondProject = false, historyPage = false, initialEmpty = false,
   hash = `#token=${"a".repeat(64)}`, storage = new Map(), httpStatus = 200, requestFailure = "", reducedMotion = false, extraActiveTasks = 0,
   recovery = { status: "available", items: [], next_offset: null }, planData=null, planRows=null, plansSupported=true, featureDetail = null, taskSkills = { items: [], next_offset: null }, taskSkillPage = null, executions = { items: [], next_offset: null }, holdScopedRuns = false, holdMoreFeatures = false,writeAuthority } = {}) {

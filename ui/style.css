@@ -619,3 +619,9 @@ kbd { font: 10px var(--mono); border: 1px solid var(--line); border-radius: 3px;
   .service-panel { max-height:220px; overflow-y:auto; align-content:start; }
   .work-panel,.detail-panel { min-height:0; overflow-y:auto; }
 }
+.event-retention { margin: 12px 0 18px; padding: 14px 16px; border: 1px solid var(--border, #dce2ec); border-radius: 12px; background: var(--surface, #fff); }
+.event-retention h4 { margin: 0 0 8px; font-size: 12px; }
+.event-retention-state { color: #217653; font-size: 13px; }
+.event-retention.is-stopped .event-retention-state { color: #a7551d; }
+.event-retention p { font-size: 12px; line-height: 1.65; }
+.event-retention-meter { display: block; width: 100%; height: 10px; margin: 8px 0; accent-color: #6867e8; }

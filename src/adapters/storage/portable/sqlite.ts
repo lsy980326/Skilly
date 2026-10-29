@@ -14,6 +14,8 @@ import { openSnapshots } from '../transfer/snapshot.js';
 import { safePath,newDirectory,writeNew,fail } from '../transfer/files.js';
 import { emptyLocal,type LocalProject } from './format.js';
 import type { JsonObject } from '../../../core/memory/model.js';
+import { requireLegacyEventTransfer } from '../sqlite/event-retention.js';
+import { openLifecycleStore } from '../sqlite/lifecycle.js';
 
 const parts:[AuthorityKind,string][]=[['main',''],['recovery','.recovery.sqlite'],['events','.events.sqlite']];
 export function localIdentity(path:string){safePath(path);const s=lstatSync(path);if(!s.isFile())fail('invalid_file','Regular SQLite file required.');return {dev:s.dev,ino:s.ino};}
@@ -26,6 +28,7 @@ export function setLocalAuthority(path:string,a:AuthorityRow){
   const db=new DatabaseSync(file);
   try{db.exec('PRAGMA synchronous=FULL; PRAGMA busy_timeout=1000; BEGIN IMMEDIATE');
    try{if(kind==='main'&&a.state==='blocked'&&db.prepare('SELECT 1 FROM executions WHERE project_id=? AND ended_at IS NULL LIMIT 1').get(a.project_id))fail('execution_in_progress','Unfinished execution; nothing was closed or rerun.');
+    if(kind==='main'&&existsSync(path+'.events.sqlite')){const events=openLifecycleStore(path+'.events.sqlite');try{requireLegacyEventTransfer(events);}finally{events.close();}}
     if(kind==='events')db.exec(taskLinkSchema);putAuthority(db,kind,a);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}
   }finally{db.close();}
  }
@@ -36,6 +39,7 @@ export function readLocalProject(path:string,project_id:string):LocalProject {
  const s=openSnapshots(path,true),out=emptyLocal(project_id);let count=0,bytes=0;
  const collect=(rows:Iterable<unknown>)=>{const kept:JsonObject[]=[];for(const value of rows){const r=value as JsonObject;bytes+=Buffer.byteLength(JSON.stringify(r));if(++count>2000||bytes>1024*1024)fail('resource_limit','Bounded bridge snapshot exceeded; no partial data returned.');kept.push(JSON.parse(JSON.stringify(r)) as JsonObject);}return kept;};
  try {
+  requireLegacyEventTransfer(s.events);
   const p=s.main.prepare('SELECT * FROM projects WHERE id=?').get(project_id);if(!p)fail('not_found','Project not found.');
   if(![15,16].includes(Number(s.main.prepare('PRAGMA user_version').get()?.['user_version'])))fail('unsupported_database','Bridge source must be explicit SQLite v15/v16; original is not migrated.');
   for(const t of tables){const db=t==='requests'?s.recovery:s.main;if(!db||!db.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get(t))continue;

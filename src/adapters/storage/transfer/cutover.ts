@@ -12,6 +12,8 @@ import { lifecycleSchemaSql } from "../sqlite/lifecycle.js";
 import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { authorityRow, hasAuthority, putAuthority, readAuthority, type AuthorityRow, type AuthorityKind } from "../sqlite/project-authority.js";
 import { prepareReturnCopy, returnPath } from "./return-copy.js";
+import { requireLegacyEventTransfer } from "../sqlite/event-retention.js";
+import { openLifecycleStore } from "../sqlite/lifecycle.js";
 
 const planSchema=z.strictObject({id:z.uuid(),project_id:z.uuid(),project_key:z.string().min(1).max(100),source:z.string(),
   source_dev:z.number().int(),source_ino:z.number().int(),generation:z.int().positive()});
@@ -46,6 +48,10 @@ function setPart(path:string,kind:AuthorityKind,a:AuthorityRow):void {
   try {
     db.exec("PRAGMA busy_timeout=1000; PRAGMA synchronous=FULL; BEGIN IMMEDIATE;");
     try {
+      if (kind === "main" && existsSync(path+".events.sqlite")) {
+        const events=openLifecycleStore(path+".events.sqlite");
+        try { requireLegacyEventTransfer(events); } finally { events.close(); }
+      }
       if(kind==="main" && a.state==="blocked" && db.prepare("SELECT 1 FROM executions WHERE project_id=? AND ended_at IS NULL LIMIT 1").get(a.project_id))
         fail("execution_in_progress","An unfinished execution observation exists. Do not interrupt or rerun its command to force transfer.");
       if(kind==="events")db.exec(taskLinkSchema);
@@ -99,6 +105,10 @@ function result(directory:string,p:Plan,phase:string) {
 }
 
 export async function prepareTransfer(source:string,projectId:string,directory:string) {
+  if (existsSync(source+".events.sqlite")) {
+    const events=readEvents(source+".events.sqlite");
+    try { requireLegacyEventTransfer(events); } finally { events.close(); }
+  }
   safePath(source);safePath(directory);const check=readDatabase(source);
   let plan:Plan;
   try {

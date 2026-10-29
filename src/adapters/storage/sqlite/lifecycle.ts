@@ -8,6 +8,7 @@ import type { ProjectBinding } from "../../../core/memory/binding.js";
 import { MemoryError } from "../../../core/memory/model.js";
 import { captureTaskEvent } from "./task-event-storage.js";
 import { hasEventImports, nativeOnly } from "./event-imports.js";
+import { assertEventBodyBudget, eventCapacity, prepareEventCapacity } from "./event-retention.js";
 
 export const lifecycleEvents = ["SessionStart", "PostToolUse", "PreCompact", "Stop", "Interrupt", "SessionEnd"] as const;
 const application = 1397446995;
@@ -61,15 +62,14 @@ export function recordLifecycle(dbPath: string, root: string, value: unknown) {
       const id = input.hook_event_name === "PostToolUse" && input.tool_use_id
         ? hash(JSON.stringify([binding.key, binding.repository, binding.environment, realpathSync(root), input.session_id, input.tool_use_id])) : randomUUID();
       if (db.prepare("SELECT id FROM events WHERE id=?").get(id)) { db.exec("COMMIT"); return receipt(id); }
-      if (Number(db.prepare("SELECT count(*) AS n FROM events").get()?.["n"]) >= 10_000) {
-        throw new MemoryError("event_store_full", "Event capacity reached. Existing observations were preserved; this event was not retained.");
-      }
+      prepareEventCapacity(db);
       const tool = input.tool_name === "Bash" ? "shell" : input.tool_name === "apply_patch" ? "edit"
         : input.tool_name?.startsWith("mcp__") ? "mcp" : input.tool_name ? "other" : null;
       db.prepare("INSERT INTO events VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id,
         binding.key, binding.repository, binding.environment, hash(realpathSync(root)), hash(input.session_id),
         input.turn_id ? hash(input.turn_id) : null, input.hook_event_name, input.source ?? null, tool, new Date().toISOString());
       captureTaskEvent(db, dbPath, id);
+      assertEventBodyBudget(db);
       db.exec("COMMIT"); return receipt(id);
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   } finally { db.close(); }
@@ -85,7 +85,7 @@ function regular(path: string) {
 }
 function validate(db: DatabaseSync) {
   if (db.prepare("PRAGMA application_id").get()?.["application_id"] !== application
-    || ![1, 2].includes(Number(db.prepare("PRAGMA user_version").get()?.["user_version"]))) {
+    || ![1, 2, 3].includes(Number(db.prepare("PRAGMA user_version").get()?.["user_version"]))) {
     throw new MemoryError("unsupported_event_store", "Unsupported event store; existing data was preserved.");
   }
 }
@@ -95,10 +95,19 @@ export function openLifecycleStore(path: string, writable = false) {
   const db = new DatabaseSync(path, { readOnly: !writable });
   try {
     db.exec("PRAGMA busy_timeout=200;");
-    if (!writable) db.exec("PRAGMA query_only=ON;");
+    if (!writable) db.exec("PRAGMA query_only=ON; BEGIN;");
     else db.exec("PRAGMA synchronous=FULL;");
     validate(db); return db;
   } catch (error) { db.close(); throw error; }
+}
+
+export function readEventCapacity(dbPath: string) {
+  let db: DatabaseSync | undefined;
+  try { db = openLifecycleStore(`${dbPath}.events.sqlite`); return eventCapacity(db); }
+  catch (error) {
+    return { capture_status: error instanceof Error && "code" in error && error.code === "ENOENT" ? "not_observed" : "unavailable",
+      missing_event_count: null, completeness: "unknown", claims_verified: false };
+  } finally { db?.close(); }
 }
 
 export function readLifecycle(dbPath: string, binding: ProjectBinding, root: string) {
@@ -114,14 +123,14 @@ export function readLifecycle(dbPath: string, binding: ProjectBinding, root: str
       throw error;
     }
     db = new DatabaseSync(path, { readOnly: true });
-    db.exec("PRAGMA query_only=ON; PRAGMA busy_timeout=200;"); validate(db);
+    db.exec("PRAGMA query_only=ON; PRAGMA busy_timeout=200; BEGIN;"); validate(db);
     const items = db.prepare(`SELECT id AS observation_id, session_hash, turn_hash, event, source, tool_group, received_at
       FROM events WHERE project_key=? AND repository=? AND environment=? AND root_hash=? ${nativeOnly(db, "event", "events.id")} ORDER BY seq DESC LIMIT 20`)
       .all(binding.key, binding.repository, binding.environment, hash(realpathSync(root))).map(row => observationSchema.parse(row));
     const imported = hasEventImports(db) ? db.prepare(`SELECT e.id AS observation_id,e.session_hash,e.turn_hash,e.event,e.source,e.tool_group,e.received_at
       FROM events e JOIN event_imports origin ON origin.kind='event' AND origin.id=e.id
       WHERE e.project_key=? AND e.repository=? AND e.environment=? ORDER BY e.seq DESC LIMIT 20`).all(binding.key,binding.repository,binding.environment).map(row => observationSchema.parse(row)) : [];
-    return { ...base, status: items.length ? "observations_available" : "not_observed", items,
+    return { ...base, status: items.length ? "observations_available" : "not_observed", items, event_retention: eventCapacity(db),
       ...(imported.length ? { imported_observations: { items: imported, current_session_binding: false, root_scope: "original_locations", provenance: "project_import_history" } } : {}),
       limit: 20, interruption_meaning: "Interrupt observes a user interruption, not a task finish. Stop is a turn boundary, not task completion." };
   } catch { return { ...base, status: "unavailable", error: "Event observations could not be read; no empty-success or retention claim is made." }; }

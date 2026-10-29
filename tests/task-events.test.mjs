@@ -125,7 +125,7 @@ test('fresh MCP accepts a delayed anchor and HTTP preserves the synthetic interr
   const anchor=f.event('PostToolUse','session-a',{turn_id:'first-host-group'});
   f.event('PostToolUse','session-a',{turn_id:'next-host-group'});
   const client=new Client({name:'delayed-anchor-test',version:'1'}),transport=new StdioClientTransport({command:process.execPath,
-    args:[realpathSync('dist/runtime/local/main.js'),'serve','--db',f.path,'--project',f.root],stderr:'pipe'});
+    args:[new URL('../dist/runtime/local/main.js',import.meta.url).pathname,'serve','--db',f.path,'--project',f.root],stderr:'pipe'});
   transport.stderr.on('data',()=>{});await client.connect(transport);t.after(()=>client.close());
   const call=async(name,args)=>{const response=await client.callTool({name,arguments:args});assert.notEqual(response.isError,true);return JSON.parse(response.content[0].text);};
   const identity=await call('memory_resolve_project',{});assert.equal(identity.project.id,f.p);

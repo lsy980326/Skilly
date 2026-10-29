@@ -7,6 +7,7 @@ import { readDatabase } from "./database.js";
 import { checkFile, digest, fail, newDirectory, readManifest, writeNew } from "./files.js";
 import { readEvents, validateEventPair } from "./events.js";
 import { hasAuthority } from "../sqlite/project-authority.js";
+import { requireLegacyEventTransfer } from "../sqlite/event-retention.js";
 
 export function openSnapshots(path: string, includeEvents = false) {
   let recovery: DatabaseSync | undefined, main: DatabaseSync | undefined, events: DatabaseSync | undefined;
@@ -43,9 +44,10 @@ export async function copySnapshot(db: DatabaseSync, path: string): Promise<void
     if(hasAuthority(copy))copy.prepare("UPDATE project_authority SET state='blocked'").run();
   } finally { copy.close(); }
 }
-export async function copyDatabase(path: string, output: string) {
+export async function copyDatabase(path: string, output: string, options: { legacyEventsOnly?: boolean } = {}) {
   const snapshots = openSnapshots(path, true);
   try {
+    if (options.legacyEventsOnly) requireLegacyEventTransfer(snapshots.events);
     newDirectory(output);
     const version = Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) as Manifest["schema_version"];
     // All views are already pinned and cross-checked. Release rollback-mode companions

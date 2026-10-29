@@ -82,7 +82,10 @@ test('merging into a new copy rebases three sequence spaces, retains native base
  const f=await fixture(t),base=await fixture(t),before=files(base.db),old=await base.status(),source=await f.status();
  const copy=await imported(t,f,base.db),s=await copy.status();
  const baseApp=openLocal(copy.result.db,base.a.binding,base.a.folder);t.after(()=>baseApp.close());
- assert.deepEqual((await baseApp.dispatcher.call('memory_get_status',{project_id:base.a.pid,run_id:base.a.run})).task_recording,old);
+ const mergedBase=(await baseApp.dispatcher.call('memory_get_status',{project_id:base.a.pid,run_id:base.a.run})).task_recording;
+ const {event_retention:oldCapacity,...oldTask}=old,{event_retention:mergedCapacity,...mergedTask}=mergedBase;
+ assert.deepEqual(mergedTask,oldTask);
+ assert.equal(mergedCapacity.scope,'shared_event_store');assert.ok(mergedCapacity.total_events>oldCapacity.total_events);
  assert.equal(s.imported_history.interruption.saved_during_event.source_seq,source.interruption.saved_during_event.seq);
  assert.notEqual(s.imported_history.interruption.saved_during_event.seq,source.interruption.saved_during_event.seq);
  const bundle=join(f.root,'second-bundle');exportProject(copy.result.db,f.a.pid,bundle);

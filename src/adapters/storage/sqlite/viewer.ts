@@ -27,6 +27,7 @@ import { componentSelection, type InstallationComponent } from "../../../core/vi
 import { recoveryRows } from "./recovery-components.js";
 import { componentProjection } from "./component-links.js";
 import { readAuthority } from "./project-authority.js";
+import { readEventCapacity } from "./lifecycle.js";
 
 type Row = Record<string, SQLOutputValue>;
 const PAGE_SIZE = 40;
@@ -315,6 +316,7 @@ export class SqliteViewer {
     this.requireProject(projectId);
     pageOffset(offset);
     componentSelection(component);listSort(sort);
+    const retention = { event_retention: readEventCapacity(this.path) };
     let journal: DatabaseSync | undefined;
     try {
       journal = readOnly(`${this.path}.recovery.sqlite`);
@@ -339,10 +341,10 @@ export class SqliteViewer {
           ...componentProjection(JSON.parse(text(row,"component_json")),text(row,"component_source")),
         };
       });
-      return { status: "available", recording_coverage: recordingCoverage(), ...page(items, offset) };
+      return { status: "available", ...retention, recording_coverage: recordingCoverage(), ...page(items, offset) };
     } catch (error) {
       const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-      return { status: missing ? "missing" : "unavailable", recording_coverage: recordingCoverage(), items: [], next_offset: null };
+      return { status: missing ? "missing" : "unavailable", ...retention, recording_coverage: recordingCoverage(), items: [], next_offset: null };
     } finally { journal?.close(); }
   }
 }

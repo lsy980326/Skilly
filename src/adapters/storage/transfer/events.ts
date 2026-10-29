@@ -7,6 +7,7 @@ import { eventImportSchemaSql, hasEventImports } from "../sqlite/event-imports.j
 import { eventRowSchemas, eventTables, savedPointSchema } from "../../../core/transfer/events.js";
 import { authoritySql, hasAuthority, validateAuthority } from "../sqlite/project-authority.js";
 import { validateEventReceipts, type EventReceiptReferences } from "./event-receipts.js";
+import { eventRetentionSchemaSql, eventCapacity, captureFloor, EVENT_RETAINED_LIMIT } from "../sqlite/event-retention.js";
 
 function schema(db: DatabaseSync) {
   return JSON.stringify(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name").all());
@@ -28,10 +29,11 @@ export function validateEventStore(db: DatabaseSync): void {
   try {
     const linked = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_links'").get());
     const version = Number(db.prepare("PRAGMA user_version").get()?.["user_version"]), imported = hasEventImports(db);
-    if (![1, 2].includes(version) || (version === 2 ? !linked || !imported : imported)) fail("invalid_event_store", "Unsupported event companion version.");
+    if (![1, 2, 3].includes(version) || (version >= 2 ? !linked || !imported : imported)) fail("invalid_event_store", "Unsupported event companion version.");
     expected.exec(lifecycleSchemaSql);
     if (linked) expected.exec(taskLinkSchema);
-    if (version === 2) expected.exec(eventImportSchemaSql + "PRAGMA user_version=2;");
+    if (version >= 2) expected.exec(eventImportSchemaSql + "PRAGMA user_version=2;");
+    if (version === 3) expected.exec(eventRetentionSchemaSql + "PRAGMA user_version=3;");
     if (hasAuthority(db)) { expected.exec(authoritySql("events",linked)); validateAuthority(db); }
     if (schema(db) !== schema(expected) || db.prepare("PRAGMA application_id").get()?.["application_id"] !== 1397446995
       || db.prepare("PRAGMA integrity_check").all().some(r => r["integrity_check"] !== "ok")) {
@@ -39,9 +41,11 @@ export function validateEventStore(db: DatabaseSync): void {
     }
     for (const table of eventTables) {
       if ((table !== "events" && !linked) || (table === "event_imports" && !imported)) continue;
-      if (Number(db.prepare(`SELECT count(*) n FROM ${table}`).get()?.["n"]) > (table === "event_imports" ? 20_000 : 10_000)) fail("transfer_limit", "Event companion exceeds its bounded capacity.");
+      const limit = version === 3 ? EVENT_RETAINED_LIMIT : 10_000;
+      if (Number(db.prepare(`SELECT count(*) n FROM ${table}`).get()?.["n"]) > (table === "event_imports" ? limit*2 : limit)) fail("transfer_limit", "Event companion exceeds its bounded capacity.");
       for (const row of db.prepare(`SELECT * FROM ${table}`).iterate()) eventRowSchemas[table].parse(row);
     }
+    if (version === 3 && eventCapacity(db,true).body_bytes > 64*1024*1024) fail("transfer_limit","Event DB body exceeds its retained budget.");
     if (imported) for (const row of db.prepare("SELECT * FROM event_imports").iterate()) {
       const exists = db.prepare(`SELECT 1 FROM ${row["kind"] === "event" ? "events" : "task_links"} WHERE id=?`).get(row["id"]!);
       if (!exists || (row["kind"] === "event" ? row["source_from_seq"] !== null : row["source_from_seq"] === null)) fail("invalid_event_link", "Import origin references a missing event or link.");
@@ -51,14 +55,18 @@ export function validateEventStore(db: DatabaseSync): void {
 
 export function validateEventPair(main: DatabaseSync, events: DatabaseSync): void {
   if (!events.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_links'").get()) return;
+  const floor = captureFloor(events);
   const required: EventReceiptReferences = new Map();
   for (const row of events.prepare("SELECT * FROM task_links").iterate()) {
     eventRowSchemas.task_links.parse(row);
     const run = main.prepare(`SELECT r.id FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.project_id=? AND r.id=?
       AND p.project_key=? AND r.repository=? AND r.environment=?`).get(row["project_id"]!, row["run_id"]!, row["project_key"]!, row["repository"]!, row["environment"]!);
-    const anchor = events.prepare(`SELECT 1 FROM events WHERE id=? AND project_key=? AND repository=? AND environment=?
+    const anchor = events.prepare(`SELECT seq FROM events WHERE id=? AND project_key=? AND repository=? AND environment=?
       AND root_hash=? AND session_hash=? AND seq<?`).get(row["anchor_id"]!, row["project_key"]!, row["repository"]!, row["environment"]!, row["root_hash"]!, row["session_hash"]!, row["from_seq"]!);
     if (!run || !anchor) fail("invalid_event_link", "Event link has no matching task scope or anchor.");
+    if (Number(row["seq"]) >= floor.link && floor.event > 1) {
+      if (Number(anchor["seq"]) < floor.event) fail("invalid_event_link","New retention binding uses a pre-activation observation.");
+    }
   }
   for (const table of ["event_task_links", "event_link_failures"]) {
     for (const row of events.prepare(`SELECT * FROM ${table}`).iterate()) {
@@ -66,6 +74,10 @@ export function validateEventPair(main: DatabaseSync, events: DatabaseSync): voi
         AND e.project_key=l.project_key AND e.repository=l.repository AND e.environment=l.environment
         AND e.root_hash=l.root_hash AND e.session_hash=l.session_hash`).get(row["event_id"]!, row["link_id"]!);
       if (!link) fail("invalid_event_link", "Event association has no matching task link.");
+      if (Number(link["seq"]) < floor.link) {
+        const associated = events.prepare("SELECT seq FROM events WHERE id=?").get(row["event_id"]!);
+        if (Number(associated?.["seq"]) >= floor.event) fail("invalid_event_link","Post-activation event inherited a historical binding.");
+      }
       if (table === "event_link_failures") {
         if (row["status"] !== "association_unconfirmed") fail("invalid_event_link", "Unknown event failure state.");
         continue;

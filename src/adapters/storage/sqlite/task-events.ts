@@ -6,6 +6,7 @@ import type { TaskEvents } from "../../../core/memory/task-events.js";
 import { openLifecycleStore } from "./lifecycle.js";
 import { taskLinkSchema, lastSavedReceipt } from "./task-event-storage.js";
 import { hasEventImports, nativeOnly } from "./event-imports.js";
+import { assertEventBodyBudget, captureFloor, eventCapacity } from "./event-retention.js";
 
 type Row = Record<string, SQLOutputValue>;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -37,13 +38,15 @@ export class SqliteTaskEvents implements TaskEvents {
           .get(observationId, text(run, "project_key"), text(run, "repository"), text(run, "environment"), rootHash);
         if (!anchor) throw new MemoryError("scope_mismatch", "Observation is absent or belongs to another project root or scope.");
         events.exec(taskLinkSchema);
+        const floor = captureFloor(events);
         const prior = events.prepare(`SELECT * FROM task_links WHERE project_key=? AND repository=? AND environment=? AND root_hash=? AND session_hash=? ${nativeOnly(events, "link", "task_links.id")} ORDER BY seq DESC LIMIT 1`)
           .get(text(run, "project_key"), text(run, "repository"), text(run, "environment"), rootHash, text(anchor, "session_hash"));
-        if (prior && prior["project_id"] === projectId && prior["run_id"] === runId) {
+        const same = prior && prior["project_id"] === projectId && prior["run_id"] === runId;
+        if (same && Number(prior["seq"]) >= floor.link) {
           events.exec("COMMIT"); return this.linkReceipt(prior);
         }
         if (run["state"] !== "active") throw new MemoryError("run_closed", "Only this session's active task can be linked.");
-        if (prior) {
+        if (prior && !same) {
           const old = this.db.prepare("SELECT state FROM runs WHERE project_id=? AND id=?").get(text(prior, "project_id"), text(prior, "run_id"));
           if (!old || old["state"] === "active") throw new MemoryError("link_conflict", "This session is already linked to an unfinished task. Do not take it over.");
         }
@@ -53,15 +56,17 @@ export class SqliteTaskEvents implements TaskEvents {
         const boundary = events.prepare(`SELECT 1 FROM events WHERE session_hash=? AND root_hash=? AND project_key=? AND repository=? AND environment=?
           AND seq>? AND event NOT IN ('PostToolUse','PreCompact') ${nativeOnly(events, "event", "events.id")} LIMIT 1`)
           .get(text(anchor, "session_hash"), rootHash, text(run, "project_key"), text(run, "repository"), text(run, "environment"), anchor["seq"]!);
-        if (boundary || !["SessionStart", "PostToolUse", "PreCompact"].includes(text(anchor, "event"))) {
+        if (Number(anchor["seq"]) < floor.event || boundary || !["SessionStart", "PostToolUse", "PreCompact"].includes(text(anchor, "event"))) {
           throw new MemoryError("stale_anchor", "Use an explicit observation from the current open session segment, after any interruption, stop or session restart.");
         }
-        if (Number(events.prepare("SELECT count(*) n FROM task_links").get()?.["n"]) >= 10_000) throw new MemoryError("link_store_full", "Link capacity reached; no existing data was removed.");
+        const capacity = eventCapacity(events);
+        if (capacity.task_link_status === "full") throw new MemoryError("link_store_full", "Link capacity reached; no existing data was removed.");
         const from = Number(events.prepare("SELECT coalesce(max(seq),0)+1 n FROM events").get()?.["n"]);
         const id = randomUUID();
         events.prepare("INSERT INTO task_links VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?)").run(id, projectId, runId,
           text(run, "project_key"), text(run, "repository"), text(run, "environment"), rootHash, text(anchor, "session_hash"), observationId, from, new Date().toISOString());
         const saved = events.prepare("SELECT * FROM task_links WHERE id=?").get(id)!;
+        assertEventBodyBudget(events);
         events.exec("COMMIT"); return this.linkReceipt(saved);
       } catch (error) { events.exec("ROLLBACK"); throw error; }
     } finally { events.close(); }
@@ -96,7 +101,8 @@ export class SqliteTaskEvents implements TaskEvents {
     let events: DatabaseSync | undefined;
     try {
       events = openLifecycleStore(`${this.path}.events.sqlite`);
-      if (!events.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_links'").get()) return { ...base, linkage: "not_linked", events: [] };
+      const retention = { event_retention: eventCapacity(events) };
+      if (!events.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_links'").get()) return { ...base, ...retention, linkage: "not_linked", events: [] };
       const scopeArgs = [projectId, runId, text(run, "project_key"), text(run, "repository"), text(run, "environment")];
       const scopeWhere = "l.project_id=? AND l.run_id=? AND l.project_key=? AND l.repository=? AND l.environment=?";
       const importedWhere = scopeWhere + " AND EXISTS(SELECT 1 FROM event_imports origin WHERE origin.kind='link' AND origin.id=l.id)";
@@ -107,8 +113,10 @@ export class SqliteTaskEvents implements TaskEvents {
         ...(this.root ? [hash(realpathSync(this.root))] : [])];
       const where = scopeWhere + (this.root ? " AND l.root_hash=?" : "") + nativeOnly(events, "link", "l.id");
       const linked = events.prepare(`SELECT 1 FROM task_links l WHERE ${where} LIMIT 1`).get(...args);
-      if (!linked) return { ...base, linkage: "not_linked", events: [], ...imported };
-      return { ...base, linkage: "explicit_agent_binding", ...this.projection(events, where, args), ...imported };
+      if (!linked) return { ...base, ...retention, linkage: "not_linked", events: [], ...imported };
+      const current = Boolean(events.prepare(`SELECT 1 FROM task_links l WHERE ${where} AND l.seq>=? LIMIT 1`).get(...args,captureFloor(events).link));
+      return { ...base, ...retention, linkage: current ? "explicit_agent_binding" : "historical_retained", capture_epoch_binding: current,
+        ...this.projection(events, where, args), ...imported };
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return { ...base, linkage: "not_linked", events: [] };
       return { ...base, linkage: "unavailable", events_status: "unavailable" };

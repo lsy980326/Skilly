@@ -13,7 +13,7 @@ import { renderFeatureList, renderFeatureDetail, renderMatchReasons } from "./fe
 import { createDocumentImport } from "./documents.js";
 import { createDocumentLibrary } from "./document-library.js";
 import "./layout.js";
-import { renderTaskRecording } from "./task-recording.js";
+import { renderTaskRecording, renderEventRetention } from "./task-recording.js";
 import { createDecisionLibrary } from "./decisions.js";
 import { createRemoteRecovery } from "./remote-recovery.js";
 
@@ -317,7 +317,7 @@ async function loadList(more = false) {
     if (!state.run && state.items[0]) {
       state.run = state.items[0].id; renderTasks(); await loadDetail();
     }
-  } else renderRecovery(data.status);
+  } else renderRecovery(data.status, data.event_retention);
 }
 function renderPlans() {
   renderPlanList($("#tasks"),state.items,selectedPlan?planIdentity(selectedPlan):null,{element,onSelect:p=>{lastPlan="";selectedPlanVersion=undefined;planRemainingOnly=false;void openPlan(p).catch(showError);}});
@@ -607,8 +607,9 @@ function renderDetail(task, counts = {}, animateNew = true) {
   for (const disclosure of panel.querySelectorAll("details")) if (disclosure.dataset.panel) disclosure.open = panelExpanded.get(disclosure.dataset.panel) ?? false;
   $("#detail").replaceChildren(panel);
 }
-function renderRecovery(status) {
+function renderRecovery(status, retention) {
   const container = $("#tasks"); container.replaceChildren();
+  if (retention) container.append(renderEventRetention(retention, { element }));
   const coverage = element("div", "recovery-note");
   coverage.append(element("strong", "", "기록 확인 범위"),
     element("p", "", "저장 확인: 본 DB 영수증이 있는 요청입니다. 복구 대기: 원래 입력을 보관했지만 저장은 확인되지 않은 요청입니다."),
