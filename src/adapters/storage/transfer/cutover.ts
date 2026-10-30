@@ -12,11 +12,13 @@ import { lifecycleSchemaSql } from "../sqlite/lifecycle.js";
 import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { authorityRow, hasAuthority, putAuthority, readAuthority, type AuthorityRow, type AuthorityKind } from "../sqlite/project-authority.js";
 import { prepareReturnCopy, returnPath } from "./return-copy.js";
-import { requireLegacyEventTransfer } from "../sqlite/event-retention.js";
-import { openLifecycleStore } from "../sqlite/lifecycle.js";
+import { quarantinePreparation } from "./preparation-recovery.js";
+import { sourceAuthority } from "./source-authority.js";
+import { assertEventBodyBudget } from "../sqlite/event-retention.js";
 
 const planSchema=z.strictObject({id:z.uuid(),project_id:z.uuid(),project_key:z.string().min(1).max(100),source:z.string(),
-  source_dev:z.number().int(),source_ino:z.number().int(),generation:z.int().positive()});
+  source_dev:z.number().int(),source_ino:z.number().int(),generation:z.int().positive(),
+  source_authority_sha256:z.string().regex(/^[a-f0-9]{64}$/).optional()});
 type Plan=z.infer<typeof planSchema>;
 const controlSql="CREATE TABLE operation (plan TEXT NOT NULL, phase TEXT NOT NULL) STRICT;";
 const phases=["preparing","prepared","active","aborted","returned"];
@@ -48,14 +50,12 @@ function setPart(path:string,kind:AuthorityKind,a:AuthorityRow):void {
   try {
     db.exec("PRAGMA busy_timeout=1000; PRAGMA synchronous=FULL; BEGIN IMMEDIATE;");
     try {
-      if (kind === "main" && existsSync(path+".events.sqlite")) {
-        const events=openLifecycleStore(path+".events.sqlite");
-        try { requireLegacyEventTransfer(events); } finally { events.close(); }
-      }
       if(kind==="main" && a.state==="blocked" && db.prepare("SELECT 1 FROM executions WHERE project_id=? AND ended_at IS NULL LIMIT 1").get(a.project_id))
         fail("execution_in_progress","An unfinished execution observation exists. Do not interrupt or rerun its command to force transfer.");
       if(kind==="events")db.exec(taskLinkSchema);
-      putAuthority(db,kind,a);db.exec("COMMIT");
+      putAuthority(db,kind,a);
+      if(kind==="events")assertEventBodyBudget(db);
+      db.exec("COMMIT");
     } catch(error){db.exec("ROLLBACK");throw error;}
   } finally { db.close(); }
 }
@@ -75,6 +75,11 @@ function assertCopy(path:string,plan:Plan,state:AuthorityRow["state"]|"recoverin
         fail("authority_conflict","A different generation or transfer controls this copy.");
     } finally{db.close();}
   }
+}
+function unchangedWritableSource(plan:Plan):boolean {
+  if(!plan.source_authority_sha256)return false;
+  const current=sourceAuthority(plan.source,plan.project_id);
+  return current.writable && current.sha256===plan.source_authority_sha256;
 }
 function control(directory:string) {
   safePath(directory);const path=join(directory,"operation.sqlite");closeSync(fileDescriptor(path,1024*1024));
@@ -105,24 +110,27 @@ function result(directory:string,p:Plan,phase:string) {
 }
 
 export async function prepareTransfer(source:string,projectId:string,directory:string) {
-  if (existsSync(source+".events.sqlite")) {
-    const events=readEvents(source+".events.sqlite");
-    try { requireLegacyEventTransfer(events); } finally { events.close(); }
-  }
   safePath(source);safePath(directory);const check=readDatabase(source);
   let plan:Plan;
   try {
     if(![15,16,17].includes(Number(check.prepare("PRAGMA user_version").get()?.["user_version"])))fail("unsupported_database","Transfer activation requires a current v15–v17 database; original was not migrated.");
     const project=check.prepare("SELECT project_key FROM projects WHERE id=?").get(projectId);if(!project)fail("not_found","Project absent.");
     const authority=readAuthority(check,projectId);if(authority["write_allowed"]!==true)fail("authority_conflict","Source is already fenced.");
+    const original=sourceAuthority(source,projectId);
+    if(!original.writable)fail("authority_conflict","A source companion is already fenced; recover its existing operation first.");
     const stat=lstatSync(source);plan={id:randomUUID(),project_id:projectId,project_key:String(project["project_key"]),source,
-      source_dev:stat.dev,source_ino:stat.ino,generation:Number(authority["generation"]??0)+1};
+      source_dev:stat.dev,source_ino:stat.ino,generation:original.generation+1,
+      source_authority_sha256:original.sha256};
   } finally{check.close();}
   newDirectory(directory);writeNew(join(directory,"operation.sqlite"),"");const init=new DatabaseSync(join(directory,"operation.sqlite"));
   try{init.exec(controlSql);init.prepare("INSERT INTO operation VALUES(?,'preparing')").run(JSON.stringify(plan));}finally{init.close();}
   const c=control(directory);
   try {
-    provision(plan);validateCopy(source);setCopy(source,row(plan,"source","blocked"));assertCopy(source,plan,"blocked","source");
+    provision(plan);validateCopy(source);
+    // Allocate event authority while source is still writable. If metadata would
+    // exceed its body budget, rollback before main/recovery receive a fence.
+    setPart(source+".events.sqlite","events",row(plan,"source","writable"));
+    setCopy(source,row(plan,"source","blocked"));assertCopy(source,plan,"blocked","source");
     exportProject(source,projectId,join(directory,"export"));
     await importProject(join(directory,"export"),join(directory,"target"),undefined,row(plan,"target","blocked"));
     assertCopy(paths(directory).target,plan,"blocked","target");
@@ -159,12 +167,21 @@ export async function recoverTransfer(directory:string,backup?:string) {
   const c=control(directory),p=c.plan,{target,returned}=paths(directory);
   try {
     if(backup!==undefined && !activationIntent(directory,p))fail("transfer_phase","Backup activation requires an existing target activation intent; the source was not reopened.");
-    if(c.phase==="aborted"){assertCopy(p.source,p,"writable","source");return result(directory,p,c.phase);}
+    if(c.phase==="aborted"){if(!unchangedWritableSource(p))assertCopy(p.source,p,"writable","source");return result(directory,p,c.phase);}
     if(c.phase==="returned"){
       assertCopy(p.source,p,"blocked","source");assertCopy(target,p,"blocked","target");
       if(existsSync(join(directory,"return-selection.json")))await prepareReturnCopy(directory,target,row(p,"return","blocked"),backup);
       else if(backup!==undefined)fail("transfer_phase","A legacy return is already active; do not select another backup.");
       assertCopy(returned,p,"writable","return");return result(directory,p,c.phase);
+    }
+    if(c.phase==="preparing" && !activationIntent(directory,p) && !existsSync(returned)) {
+      const source=readDatabase(p.source);let version:number;
+      try{version=Number(source.prepare("PRAGMA user_version").get()?.["user_version"]);}finally{source.close();}
+      quarantinePreparation(target,row(p,"target","blocked"),version);
+      if(!unchangedWritableSource(p)) {
+        provision(p);setCopy(p.source,row(p,"source","writable"));assertCopy(p.source,p,"writable","source");
+      }
+      c.db.prepare("UPDATE operation SET phase='aborted'").run();c.db.exec("COMMIT");return result(directory,p,"aborted");
     }
     // An active target may contain writes even if a crash left control.phase=prepared.
     let targetWasWritable=false;

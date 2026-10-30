@@ -2,9 +2,11 @@ import { closeSync, constants, fsyncSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync, SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { eventRowSchemas, eventTables, savedPointSchema, type EventTable } from "../../../core/transfer/events.js";
-import { MAX_DATA_BYTES, MAX_LINE_BYTES, MAX_ROWS, type Manifest } from "../../../core/transfer/format.js";
+import { MAX_DATA_BYTES, MAX_LINE_BYTES, MAX_ROWS, MAX_RETAINED_BUNDLE_ROWS, type Manifest } from "../../../core/transfer/format.js";
 import { bundleLines, digest, fail } from "./files.js";
 import { hasEventImports } from "../sqlite/event-imports.js";
+import { assertEventBodyBudget, eventCapacity, EVENT_RETAINED_LIMIT, EVENT_WINDOW_LIMIT, initializeEventRetention, prepareEventCapacity, retainedEvents } from "../sqlite/event-retention.js";
+import { MemoryError } from "../../../core/memory/model.js";
 
 type Row = Record<string, SQLOutputValue>;
 export type SourceRecords = Map<string, { seq: number; run: string; recordedAt: string }>;
@@ -22,12 +24,13 @@ export function exportProjectEvents(events: DatabaseSync, projectId: string, key
   const path = join(output, "events.ndjson"), fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   let bytes = usedBytes, count = usedRows;
   const linked = Boolean(events.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_links'").get());
+  const maxRows = retainedEvents(events) ? MAX_RETAINED_BUNDLE_ROWS : MAX_ROWS;
   try {
     for (const table of eventTables) {
       if ((table !== "events" && !linked) || (table === "event_imports" && !hasEventImports(events))) continue;
       for (const raw of events.prepare(selection(table)).iterate(projectId, key)) {
         const row = eventRowSchemas[table].parse(raw), line = Buffer.from(JSON.stringify({ table, row }) + "\n");
-        if (line.length > MAX_LINE_BYTES || (bytes += line.length) > MAX_DATA_BYTES || ++count > MAX_ROWS)
+        if (line.length > MAX_LINE_BYTES || (bytes += line.length) > MAX_DATA_BYTES || ++count > maxRows)
           fail("transfer_limit", "Project and event history exceed the bounded bundle size.");
         for (let offset = 0; offset < line.length;) offset += writeSync(fd, line, offset);
       }
@@ -40,16 +43,23 @@ export function exportProjectEvents(events: DatabaseSync, projectId: string, key
 export function scanProjectEvents(fd: number, manifest: Manifest, scope: Scope, visit: (table: EventTable, row: Row) => void) {
   const events = new Map<string, Row>(), links = new Map<string, Row>(), keys = new Map<EventTable, Set<string>>();
   let count = 0, last = -1;
+  const sequences = new Map<EventTable,number>();
   const sameScope = (event: Row, link: Row) => ["project_key", "repository", "environment", "root_hash", "session_hash"].every(k => event[k] === link[k]);
   for (const line of bundleLines(fd)) {
     const entry: unknown = JSON.parse(line);
     if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).sort().join() !== "row,table"
       || !("table" in entry) || !("row" in entry) || !eventTables.includes(entry.table as EventTable)) fail("invalid_bundle", "Unknown event entry.");
     const table = entry.table as EventTable, order = eventTables.indexOf(table), row: Row = eventRowSchemas[table].parse(entry.row);
-    if (order < last || ++count > MAX_ROWS) fail("invalid_bundle", "Invalid event row order or count."); last = order;
+    if (order < last || ++count > (manifest.version === 4 ? MAX_RETAINED_BUNDLE_ROWS : MAX_ROWS)) fail("invalid_bundle", "Invalid event row order or count."); last = order;
     const seen = keys.get(table) ?? new Set<string>(), key = String(table === "event_imports" ? row["kind"] + ":" + row["id"] : row["id"] ?? row["event_id"]);
     if (seen.has(key)) fail("import_conflict", "Duplicate event identity."); seen.add(key); keys.set(table, seen);
-    if (seen.size > (table === "event_imports" ? 20_000 : 10_000)) fail("transfer_limit", "Event table exceeds its bounded capacity.");
+    const limit = manifest.event_retention ? EVENT_RETAINED_LIMIT : EVENT_WINDOW_LIMIT;
+    if (seen.size > (table === "event_imports" ? limit*2 : limit)) fail("transfer_limit", "Event table exceeds its bounded capacity.");
+    if (manifest.version === 4 && (table === "events" || table === "task_links")) {
+      const seq = Number(row["seq"]);
+      if (seq <= (sequences.get(table) ?? 0)) fail("invalid_bundle","Retained event and link sequences must strictly increase.");
+      sequences.set(table,seq);
+    }
     if (table === "events") {
       if (row["project_key"] !== scope.key) fail("scope_mismatch", "Bundle contains another project's event.");
       events.set(String(row["id"]), row);
@@ -80,6 +90,16 @@ export function scanProjectEvents(fd: number, manifest: Manifest, scope: Scope, 
 }
 
 export function importProjectEvents(fd: number, manifest: Manifest, scope: Scope, main: DatabaseSync, target: DatabaseSync) {
+  if (manifest.event_retention && !retainedEvents(target)) initializeEventRetention(target);
+  const retained = retainedEvents(target);
+  let remaining = retained ? eventCapacity(target).remaining_in_window : 0, added = 0;
+  const bounded = (operation: () => void) => {
+    try { operation(); }
+    catch (error) {
+      if (error instanceof MemoryError && error.code === "event_store_full") fail("transfer_limit","Retained event history exceeds the destination budget. No history was truncated or activated.");
+      throw error;
+    }
+  };
   const eventOffset = Number(target.prepare("SELECT coalesce(max(seq),0) n FROM events").get()?.["n"]);
   const linkOffset = Number(target.prepare("SELECT coalesce(max(seq),0) n FROM task_links").get()?.["n"]);
   const origins = new Map<string, Row>();
@@ -89,6 +109,9 @@ export function importProjectEvents(fd: number, manifest: Manifest, scope: Scope
   scanProjectEvents(fd, manifest, scope, (table, source) => {
     if (table === "event_imports") { origins.set(String(source["kind"]) + ":" + String(source["id"]), source); return; }
     const row = { ...source };
+    if (table === "events" && retained && remaining === 0) {
+      bounded(() => prepareEventCapacity(target)); remaining = EVENT_WINDOW_LIMIT;
+    }
     if (table === "events" || table === "task_links") {
       const kind = table === "events" ? "event" : "link";
       origins.set(kind + ":" + source["id"], { kind, id: source["id"]!, source_seq: source["seq"]!,
@@ -105,7 +128,9 @@ export function importProjectEvents(fd: number, manifest: Manifest, scope: Scope
     }
     const names = columns(table);
     target.prepare(`INSERT INTO ${table} (${names.join(",")}) VALUES (${names.map(() => "?").join(",")})`).run(...names.map(name => row[name] as SQLInputValue));
+    if (table === "events" && retained) { remaining--; if (++added % 256 === 0) bounded(() => assertEventBodyBudget(target)); }
   });
   const names = columns("event_imports");
   for (const origin of origins.values()) target.prepare(`INSERT INTO event_imports (${names.join(",")}) VALUES (${names.map(() => "?").join(",")})`).run(...names.map(k => origin[k] as SQLInputValue));
+  if (retained) bounded(() => assertEventBodyBudget(target));
 }

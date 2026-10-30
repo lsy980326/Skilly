@@ -23,7 +23,7 @@ import { taskLinkSchema } from "../sqlite/task-event-storage.js";
 import { eventImportSchemaSql } from "../sqlite/event-imports.js";
 import { readEvents, validateEventPair, validateEventStore } from "./events.js";
 import { putAuthority, readAuthority, hasAuthority, authoritySql, type AuthorityRow } from "../sqlite/project-authority.js";
-import { requireLegacyEventTransfer } from "../sqlite/event-retention.js";
+import { retainedEvents, assertEventBodyBudget } from "../sqlite/event-retention.js";
 
 type Row = Record<string, SQLOutputValue>;
 function columns(table: Table): string[] { return Object.keys(rowSchemas[table].shape); }
@@ -62,7 +62,6 @@ function parsedRow(table: Table, value: unknown, projectId: string, runs: Set<st
 export function exportProject(path: string, projectId: string, output: string) {
   const snapshots = openSnapshots(path, true);
   try {
-    requireLegacyEventTransfer(snapshots.events);
     const project = snapshots.main.prepare("SELECT project_key FROM projects WHERE id = ?").get(projectId);
     if (!project) fail("not_found", "Project ID not found in this DB.");
     newDirectory(output);
@@ -97,11 +96,13 @@ export function exportProject(path: string, projectId: string, output: string) {
       fsyncSync(fd);
     } finally { closeSync(fd); }
     const eventData = snapshots.events ? exportProjectEvents(snapshots.events, projectId, String(project["project_key"]), output, bytes, count) : undefined;
-    const manifest: Manifest = { format: "skilly-local-transfer", version: eventData ? 3 : 1, kind: "project", schema_version: Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) as Manifest["schema_version"],
+    const retained = snapshots.events && retainedEvents(snapshots.events);
+    const manifest: Manifest = { format: "skilly-local-transfer", version: retained ? 4 : eventData ? 3 : 1, kind: "project", schema_version: Number(snapshots.main.prepare("PRAGMA user_version").get()?.["user_version"]) as Manifest["schema_version"],
       created_at: new Date().toISOString(), main_snapshot_at: snapshots.mainAt, recovery_snapshot_at: snapshots.recoveryAt,
       project_id: projectId, rows: count, files: { main: digest(join(output, "data.ndjson")), recovery: null,
         ...(eventData ? { events: eventData.descriptor } : {}) },
       ...(eventData ? { event_rows: eventData.rows, events_snapshot_at: snapshots.eventsAt! } : {}),
+      ...(retained ? { event_retention: "retained_windows_v1" as const } : {}),
       ...(readAuthority(snapshots.main,projectId)["managed"] ? {requires_activation:true as const} : {}) };
     writeNew(join(output, "manifest.json"), JSON.stringify(manifest));
     return { status: "completed", directory: output, project_id: projectId, rows: count, events: eventData ? "included" : "absent",
@@ -131,7 +132,7 @@ function scan(fd: number, manifest: Manifest, visit: (table: Table, row: Row) =>
     if (manifest.schema_version < 6 && table === "executions") fail("invalid_bundle", "Execution rows require schema v6.");
     if (manifest.schema_version < 12 && table === "execution_worktrees") fail("invalid_bundle", "Worktree fingerprints require schema v12.");
     if (manifest.schema_version < 11 && table.startsWith("plan_")) fail("invalid_bundle", "Plan data requires schema v11.");
-    const row = parsedRow(table, entry.row, manifest.project_id, runs, manifest.version === 3);
+    const row = parsedRow(table, entry.row, manifest.project_id, runs, manifest.version >= 3);
     if (table === "projects") projects++;
     visit(table, row);
   }
@@ -141,7 +142,7 @@ export async function importProject(input: string, output: string, base?: string
   const manifest = readManifest(input, "project"), data = join(input, "data.ndjson");
   if(manifest.requires_activation && !quarantine)fail("activation_required","A managed project requires the transfer workflow; a copy must not inherit write authority.");
   if (quarantine && (base || quarantine.project_id!==manifest.project_id || quarantine.state!=="blocked")) fail("invalid_input","Quarantine requires a fresh single-project blocked copy.");
-  rejectProjectCompanions(input, manifest.version === 3);
+  rejectProjectCompanions(input, manifest.version >= 3);
   if (manifest.files.main.bytes > MAX_DATA_BYTES) fail("transfer_limit", "Bundle exceeds the import limit.");
   checkFile(data, manifest.files.main);
   const fd = fileDescriptor(data, MAX_DATA_BYTES);
@@ -151,22 +152,23 @@ export async function importProject(input: string, output: string, base?: string
     scan(fd, manifest, (table, row) => {
       if (table === "projects") projectKey = String(row["project_key"]);
       if (table === "runs") sourceRuns.add(String(row["id"]));
-      if (table === "records" && manifest.version === 3) sourceRecords.set(String(row["id"]), { seq: Number(row["source_seq"]), run: String(row["run_id"]), recordedAt: String(row["recorded_at"]) });
+      if (table === "records" && manifest.version >= 3) sourceRecords.set(String(row["id"]), { seq: Number(row["source_seq"]), run: String(row["run_id"]), recordedAt: String(row["recorded_at"]) });
     });
     const eventScope = { id: manifest.project_id!, key: projectKey, runs: sourceRuns, records: sourceRecords };
     if (quarantine && quarantine.project_key!==projectKey) fail("scope_mismatch","Quarantine project differs.");
-    if (manifest.version === 3) {
+    if (manifest.version >= 3) {
       checkFile(join(input, "events.ndjson"), manifest.files.events!);
       eventFd = fileDescriptor(join(input, "events.ndjson"), MAX_DATA_BYTES);
       scanProjectEvents(eventFd, manifest, eventScope, () => {});
     }
-    if (base) await copyDatabase(base, output, { legacyEventsOnly: true });
+    if (base) await copyDatabase(base, output);
     else newDirectory(output);
     const mainPath = join(output, "memory.sqlite"), journalPath = `${mainPath}.recovery.sqlite`;
     if (!base) writeNew(mainPath, "");
     const main = new DatabaseSync(mainPath, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
     let journal: DatabaseSync | undefined;
     let events: DatabaseSync | undefined;
+    let baseBindingsRenewal = false;
     try {
       if (!base) initialize(main,false,manifest.schema_version>=16?manifest.schema_version:15);
       else if (Number(main.prepare("PRAGMA user_version").get()?.["user_version"]) === 4) main.exec(readFileSync(new URL("../../../../migrations/005-skill-library.sql", import.meta.url), "utf8"));
@@ -194,7 +196,12 @@ export async function importProject(input: string, output: string, base?: string
         const eventPath = `${mainPath}.events.sqlite`;
         try { writeNew(eventPath, ""); events = new DatabaseSync(eventPath); events.exec(lifecycleSchemaSql); }
         catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; events = new DatabaseSync(eventPath); }
-        events.exec(taskLinkSchema + eventImportSchemaSql + "PRAGMA user_version=2;");
+        const retained = retainedEvents(events);
+        baseBindingsRenewal = Boolean(base && !retained && manifest.event_retention
+          && events.prepare("SELECT 1 FROM sqlite_schema WHERE name='task_links'").get()
+          && events.prepare("SELECT 1 FROM task_links LIMIT 1").get());
+        events.exec(taskLinkSchema + eventImportSchemaSql + (retained ? "" : "PRAGMA user_version=2;"));
+        if (hasAuthority(events)) events.exec(authoritySql("events",true));
       }
       main.exec("PRAGMA busy_timeout = 1000; BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON;");
       journal.exec("BEGIN IMMEDIATE;");
@@ -221,11 +228,12 @@ export async function importProject(input: string, output: string, base?: string
           checkFile(join(input, "events.ndjson"), manifest.files.events!);
         }
         checkFile(data, manifest.files.main);
-        rejectProjectCompanions(input, manifest.version === 3);
+        rejectProjectCompanions(input, manifest.version >= 3);
         if(quarantine) {
           putAuthority(main,"main",quarantine); putAuthority(journal,"recovery",quarantine);
           if(events)putAuthority(events,"events",quarantine);
         }
+        if(events && retainedEvents(events))assertEventBodyBudget(events);
         main.exec("COMMIT"); journal.exec("COMMIT"); events?.exec("COMMIT");
       } catch (error) {
         if (main.isTransaction) main.exec("ROLLBACK");
@@ -240,19 +248,21 @@ export async function importProject(input: string, output: string, base?: string
     } finally { main.close(); journal?.close(); events?.close(); }
     const checked = readDatabase(mainPath);
     try {
-      if (manifest.version === 3) {
+      if (manifest.version >= 3) {
         const eventCheck = readEvents(`${mainPath}.events.sqlite`);
         try { validateEventPair(checked, eventCheck); } finally { eventCheck.close(); }
         checkFile(join(input, "events.ndjson"), manifest.files.events!);
       }
       checkFile(data, manifest.files.main);
-      rejectProjectCompanions(input, manifest.version === 3);
+      rejectProjectCompanions(input, manifest.version >= 3);
     } finally { checked.close(); }
     writeNew(join(output, "import.json"), JSON.stringify({ format: "skilly-project-import", version: 1, project_id: manifest.project_id,
       source_sha256: manifest.files.main.sha256, ...(manifest.files.events ? { source_events_sha256: manifest.files.events.sha256 } : {}),
+      ...(manifest.event_retention ? { source_event_retention: manifest.event_retention } : {}),
       created_at: new Date().toISOString(), automatic_replay: false }));
     return { status: "completed", directory: output, db: mainPath, project_id: manifest.project_id, rows: manifest.rows,
-      events: manifest.version === 3 ? "imported_history" : "not_in_bundle", event_rows: manifest.event_rows ?? 0,
+      events: manifest.version >= 3 ? "imported_history" : "not_in_bundle", event_rows: manifest.event_rows ?? 0,
+      base_bindings_renewal_required: baseBindingsRenewal,
       transfer: "copy_not_cutover", automatic_replay: false };
   } finally { closeSync(fd); if (eventFd !== undefined) closeSync(eventFd); }
 }

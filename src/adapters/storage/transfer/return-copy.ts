@@ -11,6 +11,7 @@ import type { AuthorityRow } from "../sqlite/project-authority.js";
 const selectionSchema = z.strictObject({ transfer_id: z.uuid(),
   slot: z.string().regex(/^return-attempt-[a-f0-9-]{36}$/),
   source_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  event_retention: z.literal("retained_windows_v1").optional(),
   backup: z.string().nullable() });
 type Selection = z.infer<typeof selectionSchema>;
 function selection(directory: string): Selection | undefined {
@@ -28,6 +29,7 @@ export function returnPath(directory: string): string {
 // and DB-local record sequences are not logical content or backup freshness.
 function contentHash(directory: string): string {
   const manifest = readManifest(directory, "project"), hash = createHash("sha256");
+  hash.update(JSON.stringify({event_retention:manifest.event_retention ?? null})+"\n");
   for (const [name, descriptor] of [["data.ndjson", manifest.files.main], ["events.ndjson", manifest.files.events]] as const) {
     hash.update(name + "\n");
     if (!descriptor) continue;
@@ -49,14 +51,17 @@ export async function prepareReturnCopy(directory: string, target: string, autho
     if (selected.transfer_id !== authority.transfer_id || (backup !== undefined && selected.backup !== backup))
       fail("authority_conflict", "A different recovery selection is already durable; nothing was reopened.");
     const root = join(directory, selected.slot), manifest = readManifest(join(root, "export"), "project");
-    if (manifest.project_id !== authority.project_id || manifest.files.main.sha256 !== selected.source_sha256)
+    if (manifest.project_id !== authority.project_id || manifest.files.main.sha256 !== selected.source_sha256
+      || manifest.event_retention !== selected.event_retention)
       fail("invalid_transfer", "Selected recovery bundle differs.");
     checkFile(join(root, "export", "data.ndjson"), manifest.files.main);
     if (manifest.files.events) checkFile(join(root, "export", "events.ndjson"), manifest.files.events);
     const fd = fileDescriptor(join(root, "copy", "import.json"), 4096);
     try {
-      const receipt = z.object({ project_id: z.uuid(), source_sha256: z.string(), source_events_sha256: z.string().optional() }).parse(JSON.parse(readFileSync(fd, "utf8")));
-      if (receipt.project_id !== authority.project_id || receipt.source_sha256 !== manifest.files.main.sha256 || receipt.source_events_sha256 !== manifest.files.events?.sha256)
+      const receipt = z.object({ project_id: z.uuid(), source_sha256: z.string(), source_events_sha256: z.string().optional(),
+        source_event_retention:z.literal("retained_windows_v1").optional() }).parse(JSON.parse(readFileSync(fd, "utf8")));
+      if (receipt.project_id !== authority.project_id || receipt.source_sha256 !== manifest.files.main.sha256 || receipt.source_events_sha256 !== manifest.files.events?.sha256
+        || receipt.source_event_retention !== manifest.event_retention)
         fail("invalid_transfer", "Recovery completion receipt differs from its selected bundle.");
     } finally { closeSync(fd); }
     return returnPath(directory);
@@ -80,6 +85,6 @@ export async function prepareReturnCopy(directory: string, target: string, autho
   await importProject(input, join(root, "copy"), undefined, authority);
   const manifest = readManifest(input, "project");
   writeNew(join(directory, "return-selection.json"), JSON.stringify({ transfer_id: authority.transfer_id, slot,
-    source_sha256: manifest.files.main.sha256, backup: backup ?? null }));
+    source_sha256: manifest.files.main.sha256, ...(manifest.event_retention ? {event_retention:manifest.event_retention} : {}), backup: backup ?? null }));
   return returnPath(directory);
 }

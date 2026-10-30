@@ -11,6 +11,9 @@ import { featureAlias, featureCodePath, workKey } from "../work/schema.js";
 export const MAX_DATA_BYTES = 64 * 1024 * 1024;
 export const MAX_LINE_BYTES = 256 * 1024;
 export const MAX_ROWS = 100_000;
+// Retained history adds explicit origin rows on its first import. Keep the
+// legacy budget, plus bounded room for 80k event and 80k link origins.
+export const MAX_RETAINED_BUNDLE_ROWS = 260_000;
 const text = z.string(), integer = z.number().int().safe();
 const id = z.string().uuid();
 const nullable = text.nullable();
@@ -58,15 +61,17 @@ export type Table = keyof typeof rowSchemas;
 export const tables = Object.keys(rowSchemas) as Table[];
 const file = z.strictObject({ sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: integer.nonnegative() });
 export const manifestSchema = z.strictObject({
-  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2), z.literal(3)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11), z.literal(12), z.literal(13), z.literal(14), z.literal(15), z.literal(16), z.literal(17)]),
+  format: z.literal("skilly-local-transfer"), version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]), kind: z.enum(["backup", "project"]), schema_version: z.union([z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(10), z.literal(11), z.literal(12), z.literal(13), z.literal(14), z.literal(15), z.literal(16), z.literal(17)]),
   created_at: text, recovery_snapshot_at: text.nullable(), main_snapshot_at: text,
   project_id: id.nullable(), files: z.strictObject({ main: file, recovery: file.nullable(), events: file.optional() }),
   rows: integer.nonnegative().max(MAX_ROWS).nullable(),
-  event_rows: integer.nonnegative().max(MAX_ROWS).optional(), events_snapshot_at: text.optional(),
+  event_rows: integer.nonnegative().max(MAX_RETAINED_BUNDLE_ROWS).optional(), events_snapshot_at: text.optional(),
   requires_activation: z.literal(true).optional(),
-}).refine(value => value.requires_activation === undefined || value.kind === "project", "Write activation applies only to project bundles.").refine(value => value.version === 3
+  event_retention: z.literal("retained_windows_v1").optional(),
+}).refine(value => (value.version === 4) === (value.event_retention !== undefined), "Retained project history requires format v4.")
+  .refine(value => value.requires_activation === undefined || value.kind === "project", "Write activation applies only to project bundles.").refine(value => value.version >= 3
   ? value.kind === "project" && value.files.events !== undefined && value.event_rows !== undefined && value.events_snapshot_at !== undefined
-    && value.rows !== null && value.rows + value.event_rows <= MAX_ROWS && value.files.main.bytes + value.files.events.bytes <= MAX_DATA_BYTES
+    && value.rows !== null && value.rows + value.event_rows <= (value.version === 4 ? MAX_RETAINED_BUNDLE_ROWS : MAX_ROWS) && value.files.main.bytes + value.files.events.bytes <= MAX_DATA_BYTES
   : value.event_rows === undefined && value.events_snapshot_at === undefined && (value.version === 2 ? value.kind === "backup" && value.files.events !== undefined : value.files.events === undefined),
-  "Event project bundles require format v3; event backups remain v2.");
+  "Event project bundles require format v3/v4; event backups remain v2.");
 export type Manifest = z.infer<typeof manifestSchema>;

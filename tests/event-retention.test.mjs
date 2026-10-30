@@ -163,18 +163,18 @@ test('capacity pins one snapshot across a concurrent WAL rollover and validates 
   assert.throws(()=>f.event(),e=>e.code==='invalid_event_retention');assert.equal((await f.status()).linkage,'unavailable');
 });
 
-test('activation after transfer preflight is caught before the source write fence',async t=>{
+test('activation after transfer preflight is preserved by the local transfer',async t=>{
   const f=await fixture(t),prepare=DatabaseSync.prototype.prepare;let activated=false;
   DatabaseSync.prototype.prepare=function(sql,...args){
     if(!activated && sql.startsWith('INSERT INTO operation VALUES')) {activated=true;f.enable();}
     return prepare.call(this,sql,...args);
   };
-  try{await assert.rejects(prepareTransfer(f.db,f.p,join(f.root,'raced-transfer')),e=>e.code==='unsupported_event_retention_transfer');}
+  try{assert.equal((await prepareTransfer(f.db,f.p,join(f.root,'raced-transfer'))).status,'prepared');}
   finally{DatabaseSync.prototype.prepare=prepare;}
   assert.equal(activated,true);const main=new DatabaseSync(f.db,{readOnly:true});
-  try{assert.equal(main.prepare("SELECT 1 FROM sqlite_schema WHERE name='project_authority'").get(),undefined);}finally{main.close();}
+  try{assert.equal(main.prepare("SELECT state FROM project_authority WHERE project_id=?").get(f.p).state,'blocked');}finally{main.close();}
   assert.equal(withCapacity(f).schema_version,3);
-  await f.call('memory_checkpoint',{project_id:f.p,run_id:f.run,kind:'note',topic:'synthetic',body:'동시 경계 후에도 원본 쓰기 허용',idempotency_key:'after-race'});
+  await assert.rejects(f.call('memory_checkpoint',{project_id:f.p,run_id:f.run,kind:'note',topic:'synthetic',body:'이전 중 원본 쓰기 차단',idempotency_key:'after-race'}),e=>e.code==='project_write_blocked');
 });
 
 test('pre-activation unfinished binding still fences another task; completion does not claim a current session',async t=>{
@@ -218,10 +218,10 @@ test('whole backup and fresh restore retain all windows, IDs, links and saved JS
   assert.deepEqual(data.task_recording.interruption,status.interruption);assert.equal(data.task_recording.event_retention.total_events,10002);
 });
 
-test('unsupported project transfer paths fail before output/fencing and retained metadata rejects mutation',async t=>{
+test('portable transfer remains blocked while local export preserves immutable retained metadata',async t=>{
   const f=await fixture(t);f.enable();const before=digest(side(f));
-  const output=join(f.root,'export');assert.throws(()=>exportProject(f.db,f.p,output),e=>e.code==='unsupported_event_retention_transfer');assert.equal(existsSync(output),false);
-  const operation=join(f.root,'transfer');await assert.rejects(prepareTransfer(f.db,f.p,operation),e=>e.code==='unsupported_event_retention_transfer');assert.equal(existsSync(operation),false);
+  const output=join(f.root,'export');assert.equal(exportProject(f.db,f.p,output).status,'completed');assert.equal(existsSync(output),true);
+  assert.equal(JSON.parse(readFileSync(join(output,'manifest.json'))).version,4);
   assert.throws(()=>readLocalProject(f.db,f.p),e=>e.code==='unsupported_event_retention_transfer');assert.equal(digest(side(f)),before);
   const db=new DatabaseSync(side(f));try{
     assert.throws(()=>db.exec('UPDATE event_windows SET first_seq=2 WHERE id=1'),/immutable_event_window/);

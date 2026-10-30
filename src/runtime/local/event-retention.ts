@@ -21,7 +21,7 @@ function preview(path: string, db: DatabaseSync) {
     event_store_managed: hasAuthority(db),
     change: capacity.mode === "legacy" ? "enable_retained_windows" : "already_enabled",
     existing_rows_changed: false, missed_events_recovered: false, needs_fresh_binding_after_enable: capacity.mode === "legacy",
-    limitation: "Whole-DB backup/restore supported. Project export/merge/cutover/portable transfer of retained windows is not supported yet." };
+    limitation: "Local SQLite backup/project exchange/cutover preserve retained history. Imported events remain historical. SQLite/D1 portable transfer is not supported." };
 }
 
 /** Explicit maintenance only. Hook readers/writers never enable retention. */
@@ -50,7 +50,7 @@ export function eventRetentionCommand(command: string, options: { db?: string; e
         const mainManaged = hasAuthority(main);
         if (before.change !== "already_enabled") {
           if (mainManaged || hasAuthority(db))
-            throw new MemoryError("unsupported_event_retention_transfer", "Managed transfer stores cannot enable retained windows until their recovery workflow supports this capability. No authority or data was changed.");
+            throw new MemoryError("unsupported_event_retention_transfer", "Managed stores cannot change collection policy in place. Transfer an already-retained store instead. No authority or data was changed.");
           db.exec(taskLinkSchema + eventImportSchemaSql);
           initializeEventRetention(db);
           validateEventStore(db);

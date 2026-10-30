@@ -122,5 +122,5 @@ export function assertEventBodyBudget(db: DatabaseSync) {
 
 export function requireLegacyEventTransfer(db: DatabaseSync | undefined) {
   if (db && retainedEvents(db)) throw new MemoryError("unsupported_event_retention_transfer",
-    "Retained event windows require a whole-DB backup. Project export/merge/portable transfer does not preserve this capability yet; no output or write transition was started.");
+    "SQLite/D1 portable transfer does not preserve retained event windows yet. Local SQLite project exchange is supported; no portable write transition was started.");
 }
